@@ -1,0 +1,69 @@
+name: conformance
+
+# Cross-language conformance gate (esio-9nb.9): the same loader + the same cached
+# corpus blob must decode to the SAME native arrays in Python, Julia, and Rust.
+# Strictly OFFLINE — the corpus is a pre-populated $EARTHSCIDATADIR and no step
+# touches the network. See conformance/CROSSLANG.md and spec/conformance.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-language:
+    name: Python / Julia / Rust native-array equality (offline)
+    runs-on: ubuntu-latest
+    env:
+      # Belt-and-suspenders: every track also honors this switch (the dumpers
+      # already force offline caches rooted at the corpus).
+      EARTHSCI_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Python track ---------------------------------------------------- #
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python track (+ netcdf reader stack, schema validator)
+        run: python -m pip install --upgrade pip && pip install -e ".[netcdf,test]"
+
+      # --- Julia track ----------------------------------------------------- #
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate Julia track
+        run: julia --project=julia -e 'using Pkg; Pkg.instantiate()'
+
+      # --- Rust track ------------------------------------------------------ #
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build Rust conformance dumper
+        run: cargo build --quiet --manifest-path rust/Cargo.toml --example conformance_dump
+
+      # --- The gate -------------------------------------------------------- #
+      - name: Corpus self-check (oracle + JSON schemas, offline)
+        run: python conformance/verify.py
+      - name: Cross-language native-array equality (offline)
+        run: ./conformance/run_conformance.sh "${{ runner.temp }}/conformance-dumps"
+      - name: Upload native-array dumps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-array-dumps
+          path: ${{ runner.temp }}/conformance-dumps/*.json
+          if-no-files-found: ignore

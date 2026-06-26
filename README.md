@@ -24,7 +24,9 @@ per-language implementations:
   [`spec/schemas/`](spec/schemas).
 - **[`conformance/`](conformance/)** — offline golden fixtures + expected native
   arrays + a reference runner. `python3 conformance/verify.py` validates the
-  corpus offline.
+  corpus offline; `./conformance/run_conformance.sh` runs all three providers
+  over it and asserts the decoded native arrays are **equal across Python, Julia,
+  and Rust** ([cross-language harness](conformance/CROSSLANG.md), CI-gated).
 
 Architecture is **idiomatic-per-language against the shared spec** (not a
 Rust+FFI core), extensible by construction so an S3 transport / object-store

@@ -81,7 +81,11 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
 
 ## 4. The runner (five checks — identical in every language)
 
-`esio-9nb.9`'s per-language harness performs exactly what
+The cross-language harness (`esio-9nb.9`, **shipped** —
+[`conformance/CROSSLANG.md`](../conformance/CROSSLANG.md)) drives each track's
+**provider** over the corpus offline, dumps its native arrays
+(`earthsciio/native-dump/v1`), and asserts equality across Python / Julia / Rust
+(and against the oracle). Each track performs exactly what
 [`verify.py`](../conformance/verify.py) does:
 
 1. **cache-key agreement** — `sha256(resolved_url) == case.cache_key`.
@@ -108,6 +112,7 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
 ```bash
 python3 conformance/verify.py     # offline; validates schemas + all cases, exit 1 on any failure
 python3 conformance/generate.py   # deterministically regenerates the corpus (needs numpy + netCDF4)
+./conformance/run_conformance.sh  # offline; run all 3 providers + assert cross-language array equality
 ```
 
 `generate.py` is committed for provenance and is **byte-deterministic**
