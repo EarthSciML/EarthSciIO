@@ -59,3 +59,34 @@ checksum / conditional-GET / TTL, writes atomically under a per-blob `flock`
 manifest. Auth is a pluggable realm → resolver seam
 (`StaticHeaderAuth.bearer(...)` / `.header(...)`); credentials never reach the
 manifest. Run the suite with `pytest` (fully offline/hermetic).
+
+### CDS / ERA5 (`cds` transport)
+
+The active `cds` transport speaks the Copernicus Climate Data Store API v1 —
+**submit → poll → download** — behind the same fetch seam (plain `requests`, no
+`cdsapi` SDK). A `cds://` URL encodes the dataset + request Dict as canonical
+JSON, so an identical request shares a cache key and a repeat is a hit, not a
+second CDS job. `earthsciio.era5` builds that request from ERA5 loader fields
+(variable list, pressure levels, `area` from the domain bbox, the month/day/hour
+span), ported from `EarthSciData.jl`.
+
+```python
+from earthsciio import Cache, cds_auth, era5
+
+url = era5.era5_cds_url(
+    2018, 11, [8], ["temperature", "u_component_of_wind"], [1000, 850, 500],
+    era5.era5_area_from_bbox(-100.5, 39.0, -80.2, 45.7),   # [N, W, S, E]
+)
+cache = Cache(auth={"cds": cds_auth()})                    # key from ~/.cdsapirc / $CDSAPI_KEY
+entry = cache.fetch(url, source_loader="era5", auth_realm="cds")
+```
+
+Auth is the `PRIVATE-TOKEN` header carried by the `cds` realm; the key is read
+from `$CDSAPI_KEY` or `~/.cdsapirc` and only the realm *name* reaches the
+manifest. CI is fully offline against a mock CDS server. The **live** pull is a
+manual smoke test (needs a real key + one-time ERA5 licence acceptance on the
+CDS portal):
+
+```bash
+EARTHSCI_LIVE=1 CDSAPI_KEY=<key> pytest -q -k live_cds
+```

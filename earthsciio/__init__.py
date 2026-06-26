@@ -56,6 +56,15 @@ from .cache import Cache, CacheEntry
 from .native import NativeDataset, NativeField
 from .readers import CSVReader, NetCDFReader, register_format_readers
 from .provider import DataLoader, LoaderTemporal, Provider, Window
+from .backends.cds import (
+    CdsTransport,
+    cds_api_key,
+    cds_api_url,
+    cds_auth,
+    decode_cds_url,
+    encode_cds_url,
+)
+from . import era5
 
 # Register backends on import (idempotent). Stubs first (esio-9nb.8), then the
 # active core backends (esio-9nb.2); order is irrelevant — names are orthogonal.
@@ -122,6 +131,14 @@ __all__ = [
     "AuthRegistry",
     "AuthResolver",
     "StaticHeaderAuth",
+    # CDS transport + ERA5 request mapping
+    "CdsTransport",
+    "cds_api_key",
+    "cds_api_url",
+    "cds_auth",
+    "encode_cds_url",
+    "decode_cds_url",
+    "era5",
     # backend package
     "backends",
 ]

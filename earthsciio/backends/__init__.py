@@ -17,6 +17,7 @@ themselves the same way when they land — no Provider change either way.)
 from __future__ import annotations
 
 from ..registry import format_registry, store_registry, transport_registry
+from .cds import CdsTransport
 from .file import FileTransport
 from .http import HttpTransport
 from .local import LocalStore
@@ -32,6 +33,7 @@ __all__ = [
     # active core backends
     "HttpTransport",
     "FileTransport",
+    "CdsTransport",
     "LocalStore",
     "register_active_backends",
 ]
@@ -93,6 +95,13 @@ def register_active_backends() -> None:
         keys=list(FileTransport.SCHEMES),
         status="active",
         notes="Local copy; expands ${EARTHSCIDATADIR} in file:// templates.",
+    )
+    transport_registry.register(
+        CdsTransport.NAME,
+        CdsTransport,
+        keys=list(CdsTransport.SCHEMES),
+        status="active",
+        notes="CDS API v1 submit/poll/download (ERA5 etc.); PRIVATE-TOKEN auth, mocked in CI.",
     )
     store_registry.register(
         "local",
