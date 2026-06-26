@@ -1,0 +1,29 @@
+name = "EarthSciIO"
+uuid = "180e2c70-dda6-501b-9997-3c819c50e0c3"
+authors = ["EarthSciML"]
+version = "0.1.0"
+
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+[compat]
+Dates = "1"
+Downloads = "1"
+FileWatching = "1"
+JSON = "1"
+SHA = "0.7, 1"
+UUIDs = "1"
+julia = "1.10"
+
+[extras]
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "Sockets", "Distributed"]
