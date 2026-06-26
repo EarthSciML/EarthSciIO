@@ -14,7 +14,9 @@ registry is a **name → implementation lookup**. The single load-bearing rule:
 This is what lets the future S3-proxy + NetCDF→Zarr cloud path slot in later.
 S3 and Zarr are registered **now as stubs** (`status:"stub"` in
 `registries.json`) and exercised through the registries by `esio-9nb.8`; their
-real implementations land later — with **zero** change to Provider code.
+real implementations land later — with **zero** change to Provider code. What
+those real implementations must deliver is charted in
+[`cloud-future.md`](cloud-future.md) (the `esio-cloud` epic).
 
 The three registries are orthogonal: a single fetch composes one entry from
 each — `transport` gets the bytes, `store` holds them, `format` decodes them.
