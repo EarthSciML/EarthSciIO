@@ -1,0 +1,19 @@
+{
+  "schema": "earthsciio/cases-index/v1",
+  "cache_format_version": "v1",
+  "cache_root": "cache/v1",
+  "cases": [
+    {
+      "id": "era5-grid-sub-tile",
+      "file": "cases/era5-grid-sub-tile.json",
+      "cache_key": "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1",
+      "blob_path": "cache/v1/blobs/11/11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1.nc"
+    },
+    {
+      "id": "openaq-points-slice",
+      "file": "cases/openaq-points-slice.json",
+      "cache_key": "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a",
+      "blob_path": "cache/v1/blobs/69/69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a.csv"
+    }
+  ]
+}

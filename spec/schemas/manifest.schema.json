@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://earthsci.dev/earthsciio/schemas/manifest.schema.json",
+  "title": "EarthSciIO cache manifest (meta/<key>.json)",
+  "description": "Per-blob validation/provenance record stored alongside every cached blob at cache/v1/meta/<sha256(resolved_url)>.json. Identical across Python/Julia/Rust so a blob fetched by one language is reused (and re-validated) by the others.",
+  "type": "object",
+  "required": ["url", "sha256_content", "bytes", "fetched_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "earthsciio/manifest/v1",
+      "description": "Manifest schema tag. Bump with the cache-format version."
+    },
+    "url": {
+      "type": "string",
+      "description": "The resolved source URL (after time-anchor + parameter expansion) whose sha256 is this blob's cache key. The key is sha256(url) encoded UTF-8, no trailing newline."
+    },
+    "etag": {
+      "type": ["string", "null"],
+      "description": "HTTP ETag from the response, if any. Used for conditional GET (If-None-Match) revalidation."
+    },
+    "last_modified": {
+      "type": ["string", "null"],
+      "description": "HTTP Last-Modified from the response, if any. Used for conditional GET (If-Modified-Since)."
+    },
+    "sha256_content": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the downloaded blob bytes (self-pinned integrity hash; loaders declare no checksum today)."
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Blob size in bytes (must equal the on-disk blob length)."
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 / ISO 8601 UTC timestamp the blob was fetched. Fixtures pin a constant value for reproducibility."
+    },
+    "source_loader": {
+      "type": ["string", "null"],
+      "description": "Name of the .esm loader that resolved this URL (debug/provenance; not part of the key)."
+    },
+    "auth_realm": {
+      "type": ["string", "null"],
+      "description": "Auth realm used to fetch (e.g. cds, openaq, rda), or null for unauthenticated. Credentials are never stored."
+    }
+  }
+}

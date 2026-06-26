@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://earthsci.dev/earthsciio/schemas/cache-case.schema.json",
+  "title": "EarthSciIO conformance case (corpus/cases/<id>.json)",
+  "description": "One golden conformance case: a resolved URL, its cached blob + manifest, the registry triple that reads it (transport/format/store), and the expected CF-decoded native arrays every language track must reproduce offline.",
+  "type": "object",
+  "required": [
+    "id", "loader", "kind", "format", "transport", "store",
+    "resolved_url", "cache_key", "blob_path", "manifest_path",
+    "content_sha256", "bytes", "expected"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"type": "string", "const": "earthsciio/cache-case/v1"},
+    "id": {"type": "string", "description": "Stable case identifier."},
+    "loader": {"type": "string", "description": "The .esm loader name this fixture stands in for (era5, openaq, ...)."},
+    "kind": {"type": "string", "enum": ["grid", "points", "static", "mesh"]},
+    "format": {"type": "string", "description": "FORMAT/READER registry key used to decode the blob (netcdf, geotiff, csv, json, zarr)."},
+    "transport": {"type": "string", "description": "TRANSPORT registry key that would have fetched resolved_url (http, file, s3). In the corpus everything is pre-fetched, so reads are file/store-only."},
+    "store": {"type": "string", "description": "STORE-BACKEND registry key holding the blob (local, s3)."},
+    "resolved_url": {"type": "string", "description": "The fully-resolved URL; sha256(resolved_url) MUST equal cache_key."},
+    "cache_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "blob_path": {"type": "string", "description": "Corpus-relative path to the cached blob (cache/v1/blobs/<key[:2]>/<key>.<ext>)."},
+    "manifest_path": {"type": "string", "description": "Corpus-relative path to the blob's manifest (cache/v1/meta/<key>.json)."},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the blob bytes; MUST equal manifest.sha256_content."},
+    "bytes": {"type": "integer", "minimum": 0},
+    "select": {
+      "type": "object",
+      "description": "Optional selection the reader applies before returning arrays (e.g. {time_index: 0}). Absent/empty = return all records.",
+      "additionalProperties": true
+    },
+    "decode": {
+      "type": "object",
+      "description": "Decode conventions exercised by this case (informational; pins the cross-language parity contract).",
+      "additionalProperties": true
+    },
+    "expected": {
+      "type": "object",
+      "required": ["variables"],
+      "additionalProperties": false,
+      "properties": {
+        "variables": {
+          "type": "object",
+          "description": "file_variable name -> native field.",
+          "additionalProperties": {"$ref": "native-field.schema.json"}
+        },
+        "coords": {
+          "type": "object",
+          "description": "coordinate name -> native field (with optional units/calendar for time).",
+          "additionalProperties": true
+        }
+      }
+    },
+    "notes": {"type": "string"}
+  }
+}

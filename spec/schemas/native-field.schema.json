@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://earthsci.dev/earthsciio/schemas/native-field.schema.json",
+  "title": "EarthSciIO native field (expected array)",
+  "description": "Language-neutral encoding of a native-grid array as a provider's FORMAT/READER returns it: CF-decoded values keyed by the on-disk file_variable name, on the loader's native grid. NO variable-name remap and NO unit_conversion are applied here (those stay in ESS). Used for the conformance corpus's expected arrays.",
+  "type": "object",
+  "required": ["dtype", "dims", "shape", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "dtype": {
+      "type": "string",
+      "enum": ["float64", "int64", "int32", "string", "bool"],
+      "description": "Logical element type of the native array. Numeric file variables are returned as float64 once CF scale_factor/add_offset are applied; integer file variables without packing are int64/int32; text columns (CSV/JSON) are string."
+    },
+    "dims": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Ordered dimension names (e.g. [time, latitude, longitude] for grids, [index] for points). Row-major (C order) flattening of data follows this order."
+    },
+    "shape": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "description": "Length of each dimension, in dims order."
+    },
+    "fill_value": {
+      "description": "The native fill/missing sentinel if one survives into the native array, else null. CF _FillValue cells are represented as null in data and compared as NaN.",
+      "type": ["number", "null"]
+    },
+    "data": {
+      "description": "Nested array of values with the shape given by shape. null marks a masked/fill element (compared as NaN for numeric fields).",
+      "type": "array"
+    }
+  }
+}

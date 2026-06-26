@@ -1,0 +1,155 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "era5-grid-sub-tile",
+  "loader": "era5",
+  "kind": "grid",
+  "format": "netcdf",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://data.earthsci.dev/era5/2018/11/20181108.nc",
+  "cache_key": "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1",
+  "blob_path": "cache/v1/blobs/11/11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1.nc",
+  "manifest_path": "cache/v1/meta/11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1.json",
+  "content_sha256": "fe1f8040ebd8688a4a16e80ef694a37ae2b1deb21b449eebfa90745cab95d3af",
+  "bytes": 1012,
+  "select": {
+    "all_records": true
+  },
+  "decode": {
+    "scale_factor_offset": true,
+    "fill_to_nan": true,
+    "time_decoded": false
+  },
+  "expected": {
+    "variables": {
+      "t2m": {
+        "dtype": "float64",
+        "dims": [
+          "time",
+          "latitude",
+          "longitude"
+        ],
+        "shape": [
+          2,
+          3,
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            [
+              282.5,
+              282.75,
+              283.0
+            ],
+            [
+              283.25,
+              283.5,
+              283.75
+            ],
+            [
+              284.0,
+              284.25,
+              284.5
+            ]
+          ],
+          [
+            [
+              282.6,
+              282.85,
+              283.1
+            ],
+            [
+              283.35,
+              283.6,
+              283.85
+            ],
+            [
+              284.1,
+              284.35,
+              null
+            ]
+          ]
+        ]
+      },
+      "sp": {
+        "dtype": "float64",
+        "dims": [
+          "time",
+          "latitude",
+          "longitude"
+        ],
+        "shape": [
+          2,
+          3,
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            [
+              100000.0,
+              100100.0,
+              100200.0
+            ],
+            [
+              100300.0,
+              100400.0,
+              100500.0
+            ],
+            [
+              100600.0,
+              100700.0,
+              100800.0
+            ]
+          ],
+          [
+            [
+              100050.0,
+              100150.0,
+              100250.0
+            ],
+            [
+              100350.0,
+              100450.0,
+              100550.0
+            ],
+            [
+              100650.0,
+              100750.0,
+              100850.0
+            ]
+          ]
+        ]
+      }
+    },
+    "coords": {
+      "latitude": {
+        "dtype": "float64",
+        "data": [
+          40.0,
+          39.5,
+          39.0
+        ]
+      },
+      "longitude": {
+        "dtype": "float64",
+        "data": [
+          -122.0,
+          -121.5,
+          -121.0
+        ]
+      },
+      "time": {
+        "dtype": "int32",
+        "units": "hours since 2018-11-08 00:00:00",
+        "calendar": "gregorian",
+        "data": [
+          0,
+          1
+        ]
+      }
+    }
+  },
+  "notes": "ERA5-like 2x3x3 sub-tile. t2m is int16-packed (scale_factor/add_offset/_FillValue) -> decoded float64; one masked cell. sp is plain float64. Pins CF scale/offset/fill decode parity."
+}

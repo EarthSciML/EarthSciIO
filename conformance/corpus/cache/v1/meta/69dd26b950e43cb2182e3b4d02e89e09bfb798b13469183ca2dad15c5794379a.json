@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 276,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "e39fd26f37e1355dbb9e36d1cebfc8149bd073b12bfe31803d06fbbf97c0f8d7",
+  "source_loader": "openaq",
+  "url": "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
+}

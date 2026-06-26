@@ -1,0 +1,37 @@
+{
+  "schema": "earthsciio/registries/v1",
+  "description": "Machine-readable descriptor of the three EarthSciIO extensibility registries. Each registry is a name->implementation lookup. New backends register under a new name WITHOUT touching the Provider API. 'active' entries ship now; 'stub' entries are registered now (exercised via the registries by esio-9nb.8) and implemented later. The Provider depends only on the three interfaces named here.",
+  "registries": {
+    "transport": {
+      "interface": "Transport",
+      "keyed_by": "url_scheme",
+      "purpose": "Fetch a resolved URL's bytes into the cache (conditional GET, auth, mirror failover). Bypassed entirely in offline mode.",
+      "entries": [
+        {"name": "http", "schemes": ["http", "https"], "status": "active"},
+        {"name": "file", "schemes": ["file"], "status": "active", "notes": "Expands ${EARTHSCIDATADIR} inside file:// templates; local copy into cache."},
+        {"name": "s3", "schemes": ["s3"], "status": "stub", "notes": "Object-store GET; the future S3-proxy/cloud path. Registered as a stub, no network impl yet."}
+      ]
+    },
+    "format": {
+      "interface": "Reader",
+      "keyed_by": "format_name",
+      "purpose": "Open a cached blob and return CF-decoded native-grid arrays keyed by file_variable. Does NOT remap variable names or apply unit_conversion (those stay in ESS).",
+      "entries": [
+        {"name": "netcdf", "extensions": ["nc", "nc4", "cdf"], "content_types": ["application/x-netcdf"], "status": "active", "notes": "CF decode: scale_factor/add_offset, _FillValue->NaN, time units/calendar retained raw."},
+        {"name": "geotiff", "extensions": ["tif", "tiff"], "content_types": ["image/tiff"], "status": "active", "notes": "Raster bands via GDAL; Python ships first, Julia/Rust may lag (R5). No binary fixture committed yet (no GDAL/git-lfs here)."},
+        {"name": "csv", "extensions": ["csv"], "content_types": ["text/csv"], "status": "active", "notes": "Points readers: numeric columns->float64 1-D arrays, others->string."},
+        {"name": "json", "extensions": ["json"], "content_types": ["application/json"], "status": "active", "notes": "Points readers (e.g. station discovery payloads)."},
+        {"name": "zarr", "extensions": ["zarr"], "content_types": [], "status": "stub", "notes": "Chunked array store; the future NetCDF->Zarr cloud path. Registered as a stub."}
+      ]
+    },
+    "store": {
+      "interface": "Store",
+      "keyed_by": "store_name",
+      "purpose": "Physical home of the content-addressed cache (blobs/meta/locks). Realizes the cache layout; the cache key (sha256(resolved_url)) is store-independent.",
+      "entries": [
+        {"name": "local", "status": "active", "notes": "$EARTHSCIDATADIR filesystem: blobs/<key[:2]>/<key>.<ext>, meta/<key>.json, locks/<key>.lock, tmp/<uuid>.part. flock advisory lock + atomic rename."},
+        {"name": "s3", "status": "stub", "notes": "Object-store backend (key->object). Conditional PUT / If-None-Match as the lock analog. Registered as a stub."}
+      ]
+    }
+  }
+}

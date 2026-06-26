@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Cache staging / scratch (never commit partial downloads)
+*.part
+.tmp_*
+
+# Local cache root (real $EARTHSCIDATADIR is on /scratch.local, never committed;
+# the conformance corpus under conformance/corpus/cache/ is committed on purpose)
+/earthsci-cache/
+
+# Editor / OS
+.DS_Store
+*.swp

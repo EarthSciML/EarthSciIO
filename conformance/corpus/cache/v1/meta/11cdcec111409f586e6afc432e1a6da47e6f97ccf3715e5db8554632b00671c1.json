@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 1012,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "fe1f8040ebd8688a4a16e80ef694a37ae2b1deb21b449eebfa90745cab95d3af",
+  "source_loader": "era5",
+  "url": "https://data.earthsci.dev/era5/2018/11/20181108.nc"
+}
