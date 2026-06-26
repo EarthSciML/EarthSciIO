@@ -9,6 +9,7 @@
       "entries": [
         {"name": "http", "schemes": ["http", "https"], "status": "active"},
         {"name": "file", "schemes": ["file"], "status": "active", "notes": "Expands ${EARTHSCIDATADIR} inside file:// templates; local copy into cache."},
+        {"name": "cds", "schemes": ["cds"], "status": "active", "notes": "Copernicus CDS API v1: cds://<dataset>?<canonical-request-json> is submitted (POST .../execution), the job is polled to completion, and the result asset href is downloaded into the cache. Auth via the 'cds' realm (PRIVATE-TOKEN from ~/.cdsapirc or $CDSAPI_KEY)."},
         {"name": "s3", "schemes": ["s3"], "status": "stub", "notes": "Object-store GET; the future S3-proxy/cloud path. Registered as a stub, no network impl yet."}
       ]
     },

@@ -61,6 +61,7 @@ FetchResult = {
 |---|---|---|---|
 | `http` | `http`, `https` | **active** | GET + conditional GET; mirror failover at the call site |
 | `file` | `file` | **active** | local copy; expands `${EARTHSCIDATADIR}` in `file://` templates |
+| `cds` | `cds` | **active** | Copernicus CDS API v1: `cds://<dataset>?<request-json>` → submit → poll job → download asset href; auth via the `cds` realm (`PRIVATE-TOKEN`) |
 | `s3` | `s3` | **stub** | object-store GET; the future cloud path |
 
 Registration key = **URL scheme**. The fetch layer reads the resolved URL's

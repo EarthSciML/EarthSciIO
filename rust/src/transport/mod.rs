@@ -4,9 +4,13 @@
 //! `tmp/<uuid>.part` staging path. Transports are **bypassed entirely in
 //! offline mode** — the cache never constructs or calls one when `offline`.
 
+mod cds;
 mod file;
 mod http;
 
+pub use cds::{
+    build_cds_url, cds_api_key, cds_auth, parse_cds_url, CdsTransport, CDS_API_URL, CDS_REALM,
+};
 pub use file::FileTransport;
 pub use http::HttpTransport;
 
@@ -86,11 +90,13 @@ impl TransportRegistry {
         Self::default()
     }
 
-    /// Registry with the built-in **active** transports: `http`/`https` + `file`.
+    /// Registry with the built-in **active** transports: `http`/`https`, `file`,
+    /// and `cds` (the Copernicus CDS API).
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(HttpTransport::new()));
         r.register(Arc::new(FileTransport::new()));
+        r.register(Arc::new(CdsTransport::new()));
         r
     }
 
@@ -119,11 +125,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtins_cover_http_https_file() {
+    fn builtins_cover_http_https_file_cds() {
         let r = TransportRegistry::with_builtins();
         assert!(r.get("http").is_some());
         assert!(r.get("https").is_some());
         assert!(r.get("file").is_some());
+        assert!(r.get("cds").is_some()); // Copernicus CDS API
         assert!(r.get("s3").is_none()); // stub, not active here
     }
 }

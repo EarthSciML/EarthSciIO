@@ -11,7 +11,9 @@
 //!   fetched by one language is reused and re-validated by the others;
 //! - the **transport** and **store** registries
 //!   ([`registries`](https://github.com/earthsci/earthsciio/blob/main/spec/registries.md)):
-//!   the active `http`/`https` + `file` transports and the `local` store;
+//!   the active `http`/`https`, `file`, and `cds` (Copernicus CDS API:
+//!   submit→poll→download) transports and the `local` store — with the ERA5
+//!   pressure-level request mapping ([`era5`]) building `cds://` URLs;
 //! - `$EARTHSCIDATADIR` resolution ([`data_dir`]), **offline mode**
 //!   ([`Cache::is_offline`], [`Error::CacheMiss`]), the ETag/checksum/TTL
 //!   validation ladder ([`validate`]), mirror failover, and the pluggable
@@ -55,6 +57,7 @@ pub mod auth;
 mod cache;
 mod clock;
 pub mod datadir;
+pub mod era5;
 mod error;
 pub mod format;
 mod key;
