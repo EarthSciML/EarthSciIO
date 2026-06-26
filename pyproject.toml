@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earthsciio"
+version = "0.1.0"
+description = "EarthSciIO — Python data-provider core: URL download + shared content-addressed cache behind the ESS opener/fetcher seam."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "EarthSciML" }]
+dependencies = [
+    "numpy>=1.21",
+    "requests>=2.20",
+]
+
+[project.optional-dependencies]
+# Format readers that need heavier stacks are optional so the cache/transport
+# core installs lean. The readers import these lazily (only when used).
+netcdf = ["xarray>=2022.3", "netCDF4>=1.5"]
+test = ["pytest>=7", "jsonschema>=4", "referencing>=0.30"]
+
+[tool.setuptools.packages.find]
+include = ["earthsciio*"]
+
+[tool.pytest.ini_options]
+# Make the in-repo `earthsciio` package importable without an install step so
+# the refinery (and any contributor) can run `pytest` straight from a checkout.
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

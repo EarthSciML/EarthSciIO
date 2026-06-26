@@ -29,3 +29,33 @@ per-language implementations:
 Architecture is **idiomatic-per-language against the shared spec** (not a
 Rust+FFI core), extensible by construction so an S3 transport / object-store
 backend / Zarr reader slot in without touching the Provider API.
+
+## Python (`earthsciio/`)
+
+The Python track ships the **URL download + content-addressed cache** behind the
+ESS opener/fetcher seam (`esio-9nb.2`). It registers the active `http`/`file`
+transports and the `local` store into the three registries, alongside the
+`s3`/`zarr` cloud stubs.
+
+```python
+from earthsciio import Cache
+
+cache = Cache()                                   # root = $EARTHSCIDATADIR
+entry = cache.fetch(
+    "https://data.earthsci.dev/era5/2018/11/20181108.nc",
+    source_loader="era5",
+    mirrors=["https://mirror.example/era5/20181108.nc"],   # tried in order
+)
+entry.path        # local blob (fetched once, shared across processes + languages)
+entry.status      # "downloaded" | "hit" | "not_modified"
+
+# Offline (cache-only, hermetic) — never touches the network:
+hit = Cache(offline=True).fetch(...)              # raises CacheMiss on a miss
+```
+
+`fetch` is content-addressed by `sha256(resolved_url)`, validates via
+checksum / conditional-GET / TTL, writes atomically under a per-blob `flock`
+(safe for many processes on one `/scratch.local` cache), and records a sidecar
+manifest. Auth is a pluggable realm → resolver seam
+(`StaticHeaderAuth.bearer(...)` / `.header(...)`); credentials never reach the
+manifest. Run the suite with `pytest` (fully offline/hermetic).
