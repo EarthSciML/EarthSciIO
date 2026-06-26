@@ -9,6 +9,7 @@ import JSON
     include("test_registries.jl")
     include("test_conformance.jl")   # defines CORPUS; checks 1, 2, 5
     include("test_http.jl")
+    include("test_cds.jl")
     include("test_concurrency.jl")
     # component (b): format readers + cadence provider (esio-9nb.5)
     include("test_readers.jl")       # checks 3, 4; defines the corpus comparison helpers

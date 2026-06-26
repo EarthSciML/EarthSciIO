@@ -49,6 +49,11 @@ export Manifest
 export Transport, HttpTransport, FileTransport, S3Transport
 export AuthResolver, NoAuth, BearerAuth
 
+# CDS (Copernicus CDS) transport + ERA5 request mapping (esio-9nb.11)
+export CdsTransport, CdsAuth, cds_url, cds_api_key, cds_api_endpoint, cds_retrieve
+export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
+export era5_area, era5_pressure_request, era5_pressure_url
+
 # format readers + native arrays (component b)
 export NetCDFReader, CSVReader, read_native
 export NativeField, NativeDataset, variable_names, coord_names
@@ -64,6 +69,8 @@ include("registries.jl")
 include("manifest.jl")
 include("store.jl")
 include("transport.jl")
+include("cds.jl")
+include("era5.jl")
 include("cache.jl")
 include("readers.jl")
 include("provider.jl")
@@ -78,6 +85,7 @@ function _register_defaults()
     # transport registry — keyed by URL scheme
     register!(TRANSPORT_REGISTRY, ("http", "https"), HttpTransport(); status = :active)
     register!(TRANSPORT_REGISTRY, "file", FileTransport(); status = :active)
+    register!(TRANSPORT_REGISTRY, "cds", CdsTransport(); status = :active)
     register!(TRANSPORT_REGISTRY, "s3", S3Transport(); status = :stub)
 
     # store registry — keyed by store name; value is a factory `(; root, …) -> Store`
