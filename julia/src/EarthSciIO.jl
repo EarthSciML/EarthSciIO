@@ -1,26 +1,31 @@
 """
     EarthSciIO
 
-Cross-language data-provider library — Julia track, component (a):
-URL download + a content-addressed cache that is **shared** across the
-Python / Julia / Rust tracks (key = `sha256(resolved_url)`), so a file
-fetched by one language is reused byte-for-byte by the others.
+Cross-language data-provider library — Julia track. It fulfils the ESS
+data-loader CONTRACT for `.esm` nodes (URL / vars / native-grid /
+temporal-cadence) on a content-addressed cache that is **shared** across the
+Python / Julia / Rust tracks (key = `sha256(resolved_url)`), so a file fetched
+by one language is reused byte-for-byte by the others.
 
-This is the first data-loader machinery in the Julia track. It implements
-the EarthSciIO spec (`spec/cache-format.md`, `spec/registries.md`,
-`spec/offline-mode.md`):
+This is the first data-loader machinery in the Julia track. It implements the
+EarthSciIO spec (`spec/cache-format.md`, `spec/registries.md`,
+`spec/offline-mode.md`, `spec/conformance.md`):
 
-  * content-addressed cache on `\$EARTHSCIDATADIR` (atomic-rename writes +
-    per-blob advisory `mkpidlock` for multi-process safety),
-  * ETag / Last-Modified conditional GET, content-hash integrity, TTL,
-  * OFFLINE mode (cache-only; a miss raises [`CacheMiss`]),
-  * the `transport` (http/file/+s3-stub) and `store` (local/+s3-stub)
-    registries — new backends register under a new name without touching
-    the Provider API.
+  * **component (a)** — `esio-9nb.4`: the cache. Content-addressed on
+    `\$EARTHSCIDATADIR` (atomic-rename writes + per-blob advisory `mkpidlock`),
+    ETag / Last-Modified conditional GET, content-hash integrity, TTL, OFFLINE
+    mode (cache-only; a miss raises [`CacheMiss`]); the `transport`
+    (http/file/+s3-stub) and `store` (local/+s3-stub) registries.
+  * **component (b)** — `esio-9nb.5`: the format readers and the cadence
+    [`Provider`]. [`NetCDFReader`] (NCDatasets) and [`CSVReader`] register into
+    [`FORMAT_REGISTRY`] and return RAW native-grid arrays ([`read_native`]);
+    [`Provider`] resolves+fetches+decodes per [`Cadence`] ([`CONST`]/[`DISCRETE`])
+    and exposes [`materialize`]/[`refresh`]/[`refresh_times`]/[`prefetch`]. The
+    library provides DATA, not a solver: it exposes `refresh_times`; the
+    user/solver drives the discrete-cadence update (no solver embedded).
 
-The `format` registry (readers returning native arrays) and the cadence
-`Provider` are component (b) — `esio-9nb.5` — and register into
-[`FORMAT_REGISTRY`] without changing anything here.
+Variable remap and unit conversion stay in ESS; regrid stays in ESD/C4 — the
+readers return arrays keyed by the on-disk `file_variable` name, unremapped.
 """
 module EarthSciIO
 
@@ -30,6 +35,7 @@ using UUIDs: uuid4
 import Downloads
 import JSON
 using FileWatching.Pidfile: mkpidlock
+import NCDatasets
 
 # interfaces + the three extensibility registries
 export Registry, register!, registered_names, status_of
@@ -43,6 +49,14 @@ export Manifest
 export Transport, HttpTransport, FileTransport, S3Transport
 export AuthResolver, NoAuth, BearerAuth
 
+# format readers + native arrays (component b)
+export NetCDFReader, CSVReader, read_native
+export NativeField, NativeDataset, variable_names, coord_names
+
+# cadence provider (component b)
+export Provider, const_provider, discrete_provider, Cadence, CONST, DISCRETE
+export materialize, refresh, refresh_times, prefetch, is_const
+
 # errors
 export CacheMiss, IntegrityError
 
@@ -51,6 +65,8 @@ include("manifest.jl")
 include("store.jl")
 include("transport.jl")
 include("cache.jl")
+include("readers.jl")
+include("provider.jl")
 
 """Register the built-in transports + stores into the shared registries.
 
@@ -69,8 +85,12 @@ function _register_defaults()
               (; root = datadir(), _kw...) -> LocalStore(root); status = :active)
     register!(STORE_REGISTRY, "s3", (; _kw...) -> S3Store(); status = :stub)
 
-    # format registry — readers are component (b) (esio-9nb.5); the future
-    # NetCDF→Zarr path is registered now as a stub so the seam is provable.
+    # format registry — readers returning native arrays (component b). NetCDF
+    # (NCDatasets) + CSV are active; the future NetCDF→Zarr path stays a stub so
+    # the seam is provable. A new format is one more register! line — never a
+    # Provider change.
+    register!(FORMAT_REGISTRY, "netcdf", NetCDFReader(); status = :active)
+    register!(FORMAT_REGISTRY, "csv", CSVReader(); status = :active)
     register!(FORMAT_REGISTRY, "zarr",
               StubReader("zarr", "chunked store; reader impl lands with esio-9nb.8");
               status = :stub)

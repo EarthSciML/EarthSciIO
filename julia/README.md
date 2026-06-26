@@ -1,13 +1,18 @@
 # EarthSciIO.jl
 
 The Julia track of [EarthSciIO](../README.md) — the cross-language data-provider
-library. This package is **component (a)** (`esio-9nb.4`): URL download + a
-content-addressed cache that is **shared** with the Python and Rust tracks, so a
-file fetched by one language is reused byte-for-byte by the others.
+library. It fulfils the ESS data-loader contract for `.esm` nodes (URL / vars /
+native-grid / temporal-cadence) on a content-addressed cache **shared** with the
+Python and Rust tracks, so a file fetched by one language is reused byte-for-byte
+by the others.
 
 It is the first data-loader machinery in the Julia track, implemented against
 the language-neutral spec in [`../spec`](../spec) and the conformance corpus in
-[`../conformance`](../conformance).
+[`../conformance`](../conformance). Two components ship here:
+
+- **component (a)** (`esio-9nb.4`): URL download + the content-addressed cache.
+- **component (b)** (`esio-9nb.5`): the format readers (native-array decode) and
+  the cadence `Provider`.
 
 ## What's here
 
@@ -15,19 +20,21 @@ the language-neutral spec in [`../spec`](../spec) and the conformance corpus in
 |---|---|---|
 | Content-addressed cache | [cache-format.md](../spec/cache-format.md) | key = `sha256(resolved_url)`; `$EARTHSCIDATADIR` layout; atomic-rename writes + `mkpidlock` advisory lock |
 | Offline mode | [offline-mode.md](../spec/offline-mode.md) | cache-only; a miss raises `CacheMiss`; no socket opened |
-| `transport` / `format` / `store` registries | [registries.md](../spec/registries.md) | `http`/`file` transports + `local` store active; `s3`/`zarr` registered as stubs |
+| `transport` / `format` / `store` registries | [registries.md](../spec/registries.md) | `http`/`file` transports + `local` store + `netcdf`/`csv` readers active; `s3`/`zarr` registered as stubs |
+| Format readers (`read_native`) | [conformance.md](../spec/conformance.md) | `NetCDFReader` (NCDatasets) + `CSVReader` → RAW native-grid arrays keyed by the on-disk `file_variable`; CF scale/offset + `_FillValue`→NaN; time axis kept raw (calendar decode is ESS's job) |
+| Cadence `Provider` | [conformance.md](../spec/conformance.md) | `materialize`/`refresh`/`refresh_times`/`prefetch` over `CONST`/`DISCRETE`; provides DATA, not a solver |
 | Manifest | [schemas/manifest.schema.json](../spec/schemas/manifest.schema.json) | per-blob validation/provenance; never stores credentials |
 
-The `format` readers (native-array decode) and the cadence `Provider` are
-**component (b)** (`esio-9nb.5`); they register into `FORMAT_REGISTRY` without
-changing anything here.
+Variable remap and unit conversion stay in ESS; regrid stays in ESD/C4. A new
+format is one more `register!(FORMAT_REGISTRY, …)` line — never a `Provider`
+change.
 
 ## Usage
 
 ```julia
 using EarthSciIO
 
-# online: fetch a resolved URL into the shared cache
+# --- component (a): fetch a resolved URL into the shared cache ---
 cache = Cache(; root = "/scratch.local/$(ENV["USER"])/earthsci-cache")
 entry = fetch_blob(cache, "https://data.earthsci.dev/era5/2018/11/20181108.nc")
 entry.path        # path to the cached blob (native source bytes)
@@ -35,7 +42,19 @@ entry.status      # :downloaded | :hit | :not_modified
 
 # offline (hermetic CI / conformance): cache-only, a miss raises CacheMiss
 offline = Cache(; root = corpus_cache_dir, offline = true)
-fetch_blob(offline, url)
+
+# --- component (b): a Provider returns RAW native arrays ---
+# CONST: time-invariant; refresh_times is empty, materialized once.
+p = const_provider(offline, url; format = "netcdf", source_loader = "era5")
+nds = materialize(p)              # NativeDataset
+nds["t2m"].data                   # Float64 array, NaN at _FillValue cells
+nds["time"].data                  # raw Int32 axis; nds["time"].attrs["units"]/["calendar"]
+
+# DISCRETE: time-varying; the library EXPOSES the cadence, the solver drives it.
+pd = discrete_provider(offline, url, times; format = "netcdf", time_dim = "time")
+refresh_times(pd)                 # the cadence grid (matches `times`)
+# e.g. PresetTimeCallback(refresh_times(pd), integ -> use(refresh(pd, integ.t)))
+prefetch(pd)                      # warm the cache for every tick's URL, no decode
 ```
 
 `offline` defaults to the `EARTHSCI_OFFLINE` environment variable; an explicit
@@ -50,5 +69,7 @@ EARTHSCI_LIVE=1 julia --project=julia -e 'using Pkg; Pkg.test()'  # + opt-in liv
 ```
 
 The suite covers the fetch/cache/offline cycle, the cross-language reuse of the
-committed corpus (shared `sha256` layout), registry dispatch, and the
-multi-process locking contract.
+committed corpus (shared `sha256` layout), registry dispatch, the multi-process
+locking contract, and — for component (b) — the format-decode conformance
+(corpus checks 3–4: native-array equality with the Python oracle) plus the
+`CONST`/`DISCRETE` cadence Provider over the shared fixture.
