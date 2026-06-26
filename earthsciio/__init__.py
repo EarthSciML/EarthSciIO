@@ -53,6 +53,9 @@ from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
 from .validate import Temporal
 from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
 from .cache import Cache, CacheEntry
+from .native import NativeDataset, NativeField
+from .readers import CSVReader, NetCDFReader, register_format_readers
+from .provider import DataLoader, LoaderTemporal, Provider, Window
 
 # Register backends on import (idempotent). Stubs first (esio-9nb.8), then the
 # active core backends (esio-9nb.2); order is irrelevant — names are orthogonal.
@@ -60,6 +63,10 @@ from . import backends
 
 backends.register_stub_backends()
 backends.register_active_backends()
+
+# Register the active netcdf/csv format readers (esio-9nb.3) — the decode half
+# the Provider reads through. Idempotent; orthogonal to the zarr stub.
+register_format_readers()
 
 __all__ = [
     # errors — registry seam
@@ -95,6 +102,17 @@ __all__ = [
     "sha256_file",
     "utc_now_rfc3339",
     "parse_rfc3339",
+    # native arrays + format readers (esio-9nb.3)
+    "NativeField",
+    "NativeDataset",
+    "NetCDFReader",
+    "CSVReader",
+    "register_format_readers",
+    # provider API (esio-9nb.3)
+    "Provider",
+    "DataLoader",
+    "LoaderTemporal",
+    "Window",
     # config
     "CACHE_FORMAT_VERSION",
     "resolve_cache_root",
