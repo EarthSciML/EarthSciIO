@@ -19,8 +19,11 @@
 //! - the concurrency contract — advisory `flock` + atomic rename — so multiple
 //!   processes sharing one `/scratch.local` cache download a URL exactly once.
 //!
-//! Format **readers** (decoding a cached blob into native-grid arrays) are
-//! component (b); this crate stops at returning the cached blob + manifest.
+//! Component (b) builds on this core: the [`FormatRegistry`]'s **readers**
+//! decode a cached blob into native-grid arrays ([`NetcdfReader`]), and the
+//! cadence-aware [`Provider`] drives `materialize`/`refresh`/`refresh_times`/
+//! `prefetch` over them — returning **raw** native arrays (remap/regrid stay
+//! upstream/downstream).
 //!
 //! # Example — fetch (or reuse) a blob
 //!
@@ -53,9 +56,11 @@ mod cache;
 mod clock;
 pub mod datadir;
 mod error;
+pub mod format;
 mod key;
 pub mod manifest;
 mod offline;
+mod provider;
 pub mod store;
 pub mod transport;
 pub mod validate;
@@ -63,7 +68,12 @@ pub mod validate;
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 pub use error::{Error, Result};
+pub use format::{
+    ArrayData, Coord, DType, FormatRegistry, NativeDataset, NativeField, NetcdfReader, Reader,
+    Selection,
+};
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};
 pub use offline::{is_offline, OFFLINE_ENV};
+pub use provider::{DataLoader, LoaderTemporal, Provider, Window};
 pub use validate::{CacheDecision, Temporal};

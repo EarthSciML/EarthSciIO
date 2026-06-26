@@ -90,6 +90,22 @@ pub enum Error {
         /// The (de)serialization failure detail.
         detail: String,
     },
+
+    /// No reader is registered under the configured format name — a registration
+    /// gap, not a Provider change (`spec/registries.md` §2).
+    UnknownFormat {
+        /// The configured format name that was not found.
+        name: String,
+    },
+
+    /// A format reader failed to decode a cached blob (bad magic, truncated file,
+    /// an unsupported on-disk type, …). Decode parity is `spec/conformance.md` §3.
+    Format {
+        /// The reader's format name (e.g. `netcdf`).
+        format: String,
+        /// What went wrong while decoding.
+        detail: String,
+    },
 }
 
 impl Error {
@@ -133,6 +149,10 @@ impl std::fmt::Display for Error {
                 None => write!(f, "io error: {source}"),
             },
             Error::Manifest { detail } => write!(f, "manifest error: {detail}"),
+            Error::UnknownFormat { name } => write!(f, "no reader registered for format '{name}'"),
+            Error::Format { format, detail } => {
+                write!(f, "{format} decode error: {detail}")
+            }
         }
     }
 }
