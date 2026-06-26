@@ -1,0 +1,33 @@
+[package]
+name = "earthsciio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+description = "EarthSciIO Rust core: URL download + shared content-addressed cache (transport/store registries, offline mode)."
+repository = "https://github.com/earthsci/earthsciio"
+readme = "README.md"
+keywords = ["earth-science", "cache", "data-loader", "netcdf", "offline"]
+categories = ["caching", "science", "filesystem"]
+
+# First data-loader machinery in the Rust track (component (a) of esio-9nb.6).
+# Implements the language-neutral spec under ../spec: the shared cache + manifest
+# format, the transport + store registries, EARTHSCIDATADIR resolution, offline
+# mode, ETag/checksum/TTL validation, and the concurrency contract (advisory
+# flock + atomic rename). Format readers (native arrays) are component (b).
+
+[dependencies]
+sha2 = "0.10"                                          # cache key + content integrity (sha256)
+serde = { version = "1", features = ["derive"] }       # manifest (de)serialization
+serde_json = "1"                                        # manifest JSON (matches the Python writer)
+fs2 = "0.4"                                             # advisory file lock (flock) — spec §6
+tempfile = "3"                                          # tmp/<uuid>.part staging on the cache filesystem
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }  # RFC 3339 fetched_at + TTL math
+
+# HTTP(S) transport. rustls-tls pulls the *ring* crypto provider, which builds
+# with a C compiler alone (no clang/bindgen) — so https works out of the box.
+# default-features = false drops reqwest's native-tls (OpenSSL) default.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+
+[dev-dependencies]
+# Concurrency + mock-HTTP tests use only std (threads, TcpListener) — no extra deps.
