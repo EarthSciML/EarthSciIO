@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from earthsciio import decode_cds_url, encode_cds_url
+from earthsciio import cache_key, decode_cds_url, encode_cds_url
 from earthsciio.backends.cds import (
     DEFAULT_CDS_API_URL,
     CdsTransport,
@@ -90,6 +90,46 @@ def test_url_is_deterministic_regardless_of_key_order():
     a = encode_cds_url("ds", {"b": [2], "a": [1]})
     b = encode_cds_url("ds", {"a": [1], "b": [2]})
     assert a == b  # canonical JSON ⇒ identical URL ⇒ identical cache key
+
+
+def test_cds_url_cross_language_byte_identity_golden():
+    # A FIXED canonical CDS request pinned to its EXACT resolved cds:// URL and
+    # sha256 cache key — the cross-language guard for the URL WRAPPER. The SAME
+    # request, url string, and key are asserted verbatim in the Julia
+    # (julia/test/test_cds.jl) and Rust (rust/src/transport/cds.rs) suites. The
+    # request is held fixed (not built via earthsciio.era5) so this golden
+    # isolates the wrapper: any track drifting off the spec's raw
+    # cds://<dataset>?<canonical-json> form (spec/registries.md §1) breaks the
+    # cross-language cache invariant key = sha256(resolved_url) and fails one of
+    # the three suites.
+    golden_dataset = "reanalysis-era5-pressure-levels"
+    golden_request = {
+        "variable": ["geopotential", "temperature"],
+        "pressure_level": ["1000", "500"],
+        "year": ["2018"],
+        "month": ["11"],
+        "day": ["01", "08"],
+        "time": ["00:00", "12:00"],
+        "data_format": "netcdf",
+        "area": [50, -130, 20, -60],
+    }
+    golden_url = (
+        "cds://reanalysis-era5-pressure-levels?"
+        '{"area":[50,-130,20,-60],"data_format":"netcdf",'
+        '"day":["01","08"],"month":["11"],'
+        '"pressure_level":["1000","500"],"time":["00:00","12:00"],'
+        '"variable":["geopotential","temperature"],"year":["2018"]}'
+    )
+    golden_key = "435456602e5af8b3d0dd1015fc2c2a024229efd19d5081563ea275c37001bb89"
+
+    # encode → the exact golden URL; its sha256 → the exact pinned key
+    assert encode_cds_url(golden_dataset, golden_request) == golden_url
+    assert cache_key(golden_url) == golden_key
+    # parse round-trips; re-encoding the recovered request reproduces the URL
+    ds, req = decode_cds_url(golden_url)
+    assert ds == golden_dataset
+    assert req == golden_request
+    assert encode_cds_url(ds, req) == golden_url
 
 
 def test_decode_rejects_non_cds_and_malformed():

@@ -9,11 +9,13 @@
 # transport's only input channel — and the cache content-addresses on that URL,
 # so an identical request is a fast-path hit (skip-if-exists) with no API call.
 #
-#   cds://<dataset>?request=<percent-encoded canonical-JSON of the request>
+#   cds://<dataset>?<canonical-JSON of the request>
 #
-# Canonical JSON (recursively sorted keys, no whitespace) makes the URL — and
-# thus the cache key — identical for the same logical request across the
-# Python / Julia / Rust tracks, so a file one track pulls from CDS is reused
+# The request rides as RAW canonical JSON — no `request=` parameter, no
+# percent-encoding (`spec/registries.md` §1). Canonical JSON (recursively sorted
+# keys, no whitespace) makes the URL — and thus the cache key
+# (`sha256(resolved_url)`) — BYTE-IDENTICAL for the same logical request across
+# the Python / Julia / Rust tracks, so a file one track pulls from CDS is reused
 # byte-for-byte by the others.
 
 const CDS_API_URL = "https://cds.climate.copernicus.eu/api"
@@ -100,64 +102,44 @@ function _canonical_json(d::AbstractDict)
     return string("{", join((string(JSON.json(k), ":", _canonical_json(d[k])) for k in ks), ","), "}")
 end
 
-# Percent-encode/decode (RFC 3986 unreserved set kept literal) so the canonical
-# JSON rides safely in the URL's query without a Base64 dependency.
-const _PCT_UNRESERVED = Set{UInt8}(codeunits(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"))
-
-function _pct_encode(s::AbstractString)
-    io = IOBuffer()
-    for b in codeunits(s)
-        if b in _PCT_UNRESERVED
-            write(io, b)
-        else
-            write(io, '%', uppercase(string(b, base = 16, pad = 2)))
-        end
-    end
-    return String(take!(io))
-end
-
-function _pct_decode(s::AbstractString)
-    io = IOBuffer()
-    b = codeunits(s)
-    i, n = 1, length(b)
-    while i <= n
-        if b[i] == UInt8('%') && i + 2 <= n
-            write(io, parse(UInt8, string(Char(b[i+1]), Char(b[i+2])); base = 16))
-            i += 3
-        else
-            write(io, b[i])
-            i += 1
-        end
-    end
-    return String(take!(io))
-end
-
 """
     cds_url(dataset, request) -> String
 
 Build the content-addressable `cds://` URL for a CDS retrieve. `request` is the
-`Dict` of CDS request parameters (see [`era5_pressure_request`]). The dataset
-and the canonical-JSON request are encoded into the URL so the `cds` transport
-can reconstruct the submit and the cache can key on the exact request."""
+`Dict` of CDS request parameters (see [`era5_pressure_request`]).
+
+The shared, cross-language form is `cds://<dataset>?<canonical-request-json>`
+(`spec/registries.md` §1): the canonical JSON is appended to the query verbatim
+— **no** `request=` parameter and **no** percent-encoding — so the URL string
+(and therefore `sha256(resolved_url)`) is byte-identical to the Rust
+([`build_cds_url`]) and Python ([`encode_cds_url`]) tracks for the same request,
+and a repeat is a cross-language cache hit."""
 cds_url(dataset::AbstractString, request) =
-    string("cds://", dataset, "?request=", _pct_encode(_canonical_json(request)))
+    string("cds://", dataset, "?", _canonical_json(request))
 
 """
     parse_cds_url(url) -> (dataset::String, request)
 
 Inverse of [`cds_url`]: recover the dataset and the request object from a
-`cds://` URL. Used by the transport to rebuild the CDS submit."""
+`cds://` URL. Splits on the first `?` (the JSON payload may itself contain `?`)
+and parses the raw query as JSON, mirroring Rust `parse_cds_url` / Python
+`decode_cds_url`. Used by the transport to rebuild the CDS submit; a malformed
+URL fails here at the cache boundary, not as an opaque CDS error later."""
 function parse_cds_url(url::AbstractString)
     startswith(url, "cds://") || error("not a cds:// URL: $url")
     rest = url[ncodeunits("cds://")+1:end]
     q = findfirst('?', rest)
-    q === nothing && error("cds:// URL has no request query: $url")
+    q === nothing && error("cds:// URL missing '?<request-json>': $url")
     dataset = rest[1:prevind(rest, q)]
-    query = rest[nextind(rest, q):end]
-    startswith(query, "request=") ||
-        error("cds:// URL query must be request=<encoded>: $url")
-    request = JSON.parse(_pct_decode(query[ncodeunits("request=")+1:end]))
+    payload = rest[nextind(rest, q):end]
+    isempty(dataset) && error("cds:// URL has an empty dataset: $url")
+    isempty(payload) && error("cds:// URL has an empty request: $url")
+    request = try
+        JSON.parse(payload)
+    catch
+        error("cds:// request is not valid JSON: $url")
+    end
+    request isa AbstractDict || error("cds:// request must be a JSON object: $url")
     return String(dataset), request
 end
 

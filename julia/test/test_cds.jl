@@ -120,9 +120,14 @@ end
     @test length(full["time"]) == 24
     @test full["time"][1] == "00:00" && full["time"][end] == "23:00"
 
-    # the cds:// URL round-trips back to the dataset + request
+    # the cds:// URL round-trips back to the dataset + request. RAW spec form
+    # cds://<dataset>?<canonical-json> (spec/registries.md §1): the query is the
+    # canonical JSON verbatim — no request= param, no percent-encoding — so the
+    # URL (hence sha256 cache key) is byte-identical to the Rust/Python tracks.
     url = cds_url(ERA5_PL_DATASET, req)
-    @test startswith(url, "cds://reanalysis-era5-pressure-levels?request=")
+    @test startswith(url, "cds://reanalysis-era5-pressure-levels?{")
+    @test !occursin("request=", url)
+    @test !occursin('%', url)
     ds, req2 = EarthSciIO.parse_cds_url(url)
     @test ds == ERA5_PL_DATASET
     @test req2["pressure_level"] == ["1000", "500"]
@@ -141,6 +146,52 @@ end
     @test haskey(TRANSPORT_REGISTRY, "cds")
     @test status_of(TRANSPORT_REGISTRY, "cds") == :active
     @test TRANSPORT_REGISTRY["cds"] isa CdsTransport
+end
+
+@testset "cds:// URL cross-language byte-identity golden (esio-9nb.13)" begin
+    # A FIXED canonical CDS request pinned to its EXACT resolved cds:// URL and
+    # sha256 cache key. This guards the URL WRAPPER (cds_url / parse_cds_url) —
+    # the layer that diverged across tracks (Julia had wrongly wrapped the JSON
+    # as ?request=<percent-encoded>). The SAME request, the SAME url string, and
+    # the SAME key are asserted verbatim in the Rust (rust/src/transport/cds.rs)
+    # and Python (tests/test_cds_transport.py) suites. The request is held fixed
+    # (not built via era5_pressure_request) so this golden isolates the wrapper:
+    # any track drifting off the spec's raw `cds://<dataset>?<canonical-json>`
+    # form (spec/registries.md §1) breaks the cross-language cache invariant
+    # key = sha256(resolved_url) and fails one of these three suites.
+    golden_dataset = "reanalysis-era5-pressure-levels"
+    golden_request = Dict{String,Any}(
+        "variable" => ["geopotential", "temperature"],
+        "pressure_level" => ["1000", "500"],
+        "year" => ["2018"],
+        "month" => ["11"],
+        "day" => ["01", "08"],
+        "time" => ["00:00", "12:00"],
+        "data_format" => "netcdf",
+        "area" => [50, -130, 20, -60],
+    )
+    golden_url = "cds://reanalysis-era5-pressure-levels?" *
+        "{\"area\":[50,-130,20,-60],\"data_format\":\"netcdf\"," *
+        "\"day\":[\"01\",\"08\"],\"month\":[\"11\"]," *
+        "\"pressure_level\":[\"1000\",\"500\"],\"time\":[\"00:00\",\"12:00\"]," *
+        "\"variable\":[\"geopotential\",\"temperature\"],\"year\":[\"2018\"]}"
+    golden_key = "435456602e5af8b3d0dd1015fc2c2a024229efd19d5081563ea275c37001bb89"
+
+    # encode → the exact golden URL; its sha256 → the exact pinned key
+    @test cds_url(golden_dataset, golden_request) == golden_url
+    @test cache_key(golden_url) == golden_key
+
+    # parse round-trips; re-encoding the parsed request reproduces the URL byte
+    # for byte (strongest round-trip check, independent of JSON element types)
+    ds, req = EarthSciIO.parse_cds_url(golden_url)
+    @test ds == golden_dataset
+    @test req["area"] == [50, -130, 20, -60]
+    @test req["variable"] == ["geopotential", "temperature"]
+    @test cds_url(ds, req) == golden_url
+
+    # canonical: caller key-order does not change the URL (shared-key parity)
+    shuffled = Dict{String,Any}(reverse(collect(golden_request)))
+    @test cds_url(golden_dataset, shuffled) == golden_url
 end
 
 @testset "cds auth — ~/.cdsapirc parsing + env precedence" begin

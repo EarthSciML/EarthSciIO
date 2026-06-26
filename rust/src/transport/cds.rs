@@ -417,6 +417,35 @@ mod tests {
     }
 
     #[test]
+    fn cross_language_url_byte_identity_golden() {
+        // A FIXED canonical CDS request pinned to its EXACT resolved cds:// URL
+        // and sha256 cache key — the cross-language guard for the URL WRAPPER.
+        // The SAME request, url string, and key are asserted verbatim in the
+        // Julia (julia/test/test_cds.jl) and Python (tests/test_cds_transport.py)
+        // suites. The request is a fixed canonical literal (not built via the
+        // era5 mapping) so this golden isolates the wrapper: any track drifting
+        // off the spec's raw `cds://<dataset>?<canonical-json>` form
+        // (spec/registries.md §1) breaks the cross-language cache invariant
+        // key = sha256(resolved_url) and fails one of the three suites.
+        let golden_request_json = r#"{"area":[50,-130,20,-60],"data_format":"netcdf","day":["01","08"],"month":["11"],"pressure_level":["1000","500"],"time":["00:00","12:00"],"variable":["geopotential","temperature"],"year":["2018"]}"#;
+        let golden_url = r#"cds://reanalysis-era5-pressure-levels?{"area":[50,-130,20,-60],"data_format":"netcdf","day":["01","08"],"month":["11"],"pressure_level":["1000","500"],"time":["00:00","12:00"],"variable":["geopotential","temperature"],"year":["2018"]}"#;
+        let golden_key = "435456602e5af8b3d0dd1015fc2c2a024229efd19d5081563ea275c37001bb89";
+
+        // build → the exact golden URL; its sha256 → the exact pinned key
+        assert_eq!(
+            build_cds_url("reanalysis-era5-pressure-levels", golden_request_json),
+            golden_url
+        );
+        assert_eq!(crate::cache_key(golden_url), golden_key);
+
+        // parse round-trips; re-building from the recovered parts reproduces it
+        let (dataset, request_json) = parse_cds_url(golden_url).unwrap();
+        assert_eq!(dataset, "reanalysis-era5-pressure-levels");
+        assert_eq!(request_json, golden_request_json);
+        assert_eq!(build_cds_url(&dataset, &request_json), golden_url);
+    }
+
+    #[test]
     fn parse_rejects_malformed_urls() {
         assert!(parse_cds_url("https://x/y").is_err()); // wrong scheme
         assert!(parse_cds_url("cds://dataset-only").is_err()); // no '?'
