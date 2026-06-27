@@ -22,14 +22,14 @@ imports them lazily so the cache/transport core stays lean.
 from __future__ import annotations
 
 import csv as _csv
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry
 
-__all__ = ["NetCDFReader", "CSVReader", "register_format_readers"]
+__all__ = ["NetCDFReader", "CSVReader", "GeoTIFFReader", "register_format_readers"]
 
 
 # --------------------------------------------------------------------------- #
@@ -226,12 +226,242 @@ class CSVReader:
 
 
 # --------------------------------------------------------------------------- #
+# GeoTIFF reader — raster bands + a domain-derived lon/lat (or x/y) grid.
+#
+# The decode half for the ArcGIS ImageServer ``exportImage`` rasters the ESS
+# loaders fetch (LANDFIRE fuel model, USGS 3DEP elevation) and any other GeoTIFF.
+# Prefers GDAL via ``rasterio`` (``spec/registries.md`` §registries: "raster
+# bands via GDAL"); falls back to pure-Python ``tifffile`` so a lean install
+# without the GDAL stack still reads the geo-referencing tags directly. Both
+# yield the SAME :class:`NativeDataset`, so the Provider/ESS see one shape.
+# --------------------------------------------------------------------------- #
+
+
+class _Raster:
+    """A decoded raster: band arrays + cell-center axes + georef flags."""
+
+    __slots__ = ("bands", "x_centers", "y_centers", "geographic", "nodata")
+
+    def __init__(
+        self,
+        bands: List[np.ndarray],
+        x_centers: np.ndarray,
+        y_centers: np.ndarray,
+        geographic: bool,
+        nodata: Optional[float],
+    ) -> None:
+        self.bands = bands
+        self.x_centers = x_centers
+        self.y_centers = y_centers
+        self.geographic = geographic
+        self.nodata = nodata
+
+
+def _geokey_value(geokeys: Optional[Sequence[int]], key_id: int) -> Optional[int]:
+    """Read an *inline* GeoKey from a flat ``GeoKeyDirectoryTag`` (or ``None``).
+
+    The directory is ``[version, keyRev, minorRev, nKeys, (KeyID, loc, count,
+    value) * nKeys]``; only inline keys (``loc == 0``) carry their value in the
+    4th slot. Used to detect ``GTModelTypeGeoKey`` (1024): 1=projected,
+    2=geographic.
+    """
+    if not geokeys or len(geokeys) < 4:
+        return None
+    g = [int(v) for v in geokeys]
+    n = g[3]
+    for k in range(n):
+        off = 4 + 4 * k
+        if off + 3 >= len(g):
+            break
+        if g[off] == key_id and g[off + 1] == 0:
+            return g[off + 3]
+    return None
+
+
+def _parse_nodata(tags: Dict[str, Any]) -> Optional[float]:
+    """The GDAL_NODATA sentinel (an ASCII tag), parsed to ``float`` or ``None``."""
+    raw = tags.get("GDAL_NoData", tags.get("GDAL_NODATA"))
+    if raw is None:
+        return None
+    text = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+    text = text.strip().strip("\x00").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _read_with_rasterio(path: Any) -> _Raster:
+    """Decode via GDAL (``rasterio``): bands, cell-center xy, CRS kind, nodata."""
+    import rasterio  # lazy: only this path needs the GDAL stack
+
+    with rasterio.open(path) as ds:
+        bands = [np.asarray(ds.read(i + 1)) for i in range(ds.count)]
+        height, width = ds.height, ds.width
+        # ds.xy(row, col) is the CELL CENTER in the dataset CRS (handles any
+        # north-up/affine transform); take the first row/col to get the axes.
+        xs = np.array([ds.xy(0, c)[0] for c in range(width)], dtype="float64")
+        ys = np.array([ds.xy(r, 0)[1] for r in range(height)], dtype="float64")
+        nodata = None if ds.nodata is None else float(ds.nodata)
+        crs = ds.crs
+        geographic = bool(crs.is_geographic) if crs is not None else True
+    return _Raster(bands, xs, ys, geographic, nodata)
+
+
+def _read_with_tifffile(path: Any) -> _Raster:
+    """Decode via pure-Python ``tifffile``, parsing the GeoTIFF georef tags.
+
+    Reads ``ModelPixelScaleTag`` (cell size) + ``ModelTiepointTag`` (a raster→
+    model anchor) to build north-up cell-center axes, ``GeoKeyDirectoryTag`` for
+    the geographic/projected flag, and ``GDAL_NODATA`` for the fill sentinel.
+    """
+    import tifffile  # lazy
+
+    with tifffile.TiffFile(path) as tif:
+        page = tif.pages[0]
+        arr = np.asarray(page.asarray())
+        spp = int(getattr(page, "samplesperpixel", 1) or 1)
+        if arr.ndim == 2:
+            bands = [arr]
+        elif arr.ndim == 3:
+            # contiguous (H, W, S) vs planar (S, H, W); pick the axis of length spp.
+            if arr.shape[-1] == spp:
+                bands = [arr[..., i] for i in range(arr.shape[-1])]
+            elif arr.shape[0] == spp:
+                bands = [arr[i] for i in range(arr.shape[0])]
+            else:
+                bands = [arr[..., i] for i in range(arr.shape[-1])]
+        else:
+            raise ValueError(f"unsupported GeoTIFF array ndim={arr.ndim}")
+        tags = {tg.name: tg.value for tg in page.tags.values()}
+        scale = tags.get("ModelPixelScaleTag")
+        tie = tags.get("ModelTiepointTag")
+        if scale is None or tie is None:
+            raise ValueError(
+                "GeoTIFF lacks ModelPixelScaleTag/ModelTiepointTag; cannot derive "
+                "a grid (install rasterio for non-tiepoint georeferencing)."
+            )
+        sx, sy = float(scale[0]), float(scale[1])
+        i0, j0 = float(tie[0]), float(tie[1])
+        x0, y0 = float(tie[3]), float(tie[4])
+        height, width = bands[0].shape
+        # GeoTIFF model space is y-up; raster rows increase downward (north-up).
+        xs = x0 + (np.arange(width, dtype="float64") - i0 + 0.5) * sx
+        ys = y0 - (np.arange(height, dtype="float64") - j0 + 0.5) * sy
+        geographic = _geokey_value(tags.get("GeoKeyDirectoryTag"), 1024) != 1
+        nodata = _parse_nodata(tags)
+    return _Raster(bands, xs, ys, geographic, nodata)
+
+
+def _open_raster(path: Any) -> _Raster:
+    """Decode a GeoTIFF, preferring GDAL/``rasterio`` then ``tifffile``."""
+    try:
+        import rasterio  # noqa: F401
+    except Exception:
+        rasterio = None  # type: ignore[assignment]
+    if rasterio is not None:
+        return _read_with_rasterio(path)
+    try:
+        import tifffile  # noqa: F401
+    except Exception as exc:  # pragma: no cover - exercised only with no backend
+        raise ImportError(
+            "the geotiff reader needs a raster backend: install rasterio "
+            "(GDAL) or tifffile — e.g. `pip install earthsciio[geotiff]`."
+        ) from exc
+    return _read_with_tifffile(path)
+
+
+class GeoTIFFReader:
+    """The active ``geotiff`` reader — raster bands on a native lon/lat grid.
+
+    Decodes a GeoTIFF blob into a :class:`NativeDataset`: one data variable per
+    raster band keyed ``Band1``..``BandN`` (1-based, the GDAL convention; the
+    LANDFIRE loader's ``file_variable: "Band1"`` matches), plus the cell-center
+    coordinate fields. Geographic rasters (the ArcGIS ImageServer ``imageSR=4326``
+    responses) get ``lon``/``lat`` axes; projected rasters get ``x``/``y``. Band
+    arrays are ``float64`` with the ``GDAL_NODATA`` sentinel mapped to ``NaN``
+    (``spec/conformance.md`` §3). Reader-only: no variable-name remap, no unit
+    conversion, no reprojection — those stay in ESS/ESD.
+
+    ``reader_kwargs``: pass ``band_names=[...]`` to rename the bands positionally
+    (e.g. a single-band elevation raster → ``["elevation"]``).
+    """
+
+    #: Registry name + format key(s) + extension sniff hints.
+    NAME = "geotiff"
+    FORMATS = ("geotiff",)
+    EXTENSIONS = ("tif", "tiff")
+
+    def formats(self) -> List[str]:
+        return list(self.FORMATS)
+
+    def extensions(self) -> List[str]:
+        return list(self.EXTENSIONS)
+
+    def open(self, blob_path: Any) -> Any:
+        return blob_path
+
+    def read_native(
+        self,
+        handle: Any,
+        variables: Optional[Sequence[str]] = None,
+        select: Optional[Any] = None,
+        *,
+        band_names: Optional[Sequence[str]] = None,
+        **_: Any,
+    ) -> NativeDataset:
+        """Decode ``handle`` into a :class:`NativeDataset` of raster bands + grid.
+
+        ``variables`` (band names) restricts the returned data variables; ``None``
+        returns all. A requested-but-absent band name is a :class:`KeyError`.
+        ``select`` is accepted for interface parity (the Provider owns slicing).
+        """
+        raster = _open_raster(handle)
+        nbands = len(raster.bands)
+        if band_names is not None:
+            names = [str(n) for n in band_names]
+            if len(names) != nbands:
+                raise ValueError(
+                    f"band_names has {len(names)} entries but the GeoTIFF has "
+                    f"{nbands} band(s)"
+                )
+        else:
+            names = [f"Band{i + 1}" for i in range(nbands)]
+
+        ydim, xdim = ("lat", "lon") if raster.geographic else ("y", "x")
+        want = {str(v) for v in variables} if variables else None
+        if want is not None:
+            missing = [v for v in want if v not in names]
+            if missing:
+                raise KeyError(
+                    f"requested bands not in GeoTIFF: {sorted(missing)}; "
+                    f"present bands: {names}"
+                )
+
+        out_vars: Dict[str, NativeField] = {}
+        for name, band in zip(names, raster.bands):
+            if want is not None and name not in want:
+                continue
+            data = np.asarray(band).astype("float64", copy=True)
+            if raster.nodata is not None and not np.isnan(raster.nodata):
+                data[data == raster.nodata] = np.nan
+            out_vars[name] = NativeField(data, (ydim, xdim), {})
+        out_coords: Dict[str, NativeField] = {
+            xdim: NativeField(np.asarray(raster.x_centers, dtype="float64"), (xdim,), {}),
+            ydim: NativeField(np.asarray(raster.y_centers, dtype="float64"), (ydim,), {}),
+        }
+        return NativeDataset(out_vars, out_coords)
+
+
+# --------------------------------------------------------------------------- #
 # Registration (idempotent) — called from earthsciio/__init__.py on import.
 # --------------------------------------------------------------------------- #
 
 
 def register_format_readers(registry: Optional[Registry] = None) -> None:
-    """Register the active ``netcdf`` + ``csv`` readers into the format registry.
+    """Register the active ``netcdf`` + ``csv`` + ``geotiff`` readers.
 
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same
     factory is re-registered, so importing the package twice is safe. Orthogonal
@@ -253,4 +483,12 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(CSVReader.EXTENSIONS),
         notes="Delimited text; numeric_columns->float64, other columns->string.",
+    )
+    reg.register(
+        GeoTIFFReader.NAME,
+        GeoTIFFReader,
+        keys=list(GeoTIFFReader.FORMATS),
+        status="active",
+        extensions=list(GeoTIFFReader.EXTENSIONS),
+        notes="Raster bands via GDAL/rasterio (tifffile fallback); GDAL_NODATA->NaN.",
     )
