@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -246,7 +246,7 @@ class Provider:
             self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
             self._current_file_anchor = file_anchor
 
-        rec = (anchor - file_anchor) // temporal.frequency
+        rec = _record_index(self._current_file, temporal, anchor, file_anchor)
         sliced = _slice_record(self._current_file, temporal.time_dim, rec)
         self._current = sliced
         self._current_anchor = anchor
@@ -368,3 +368,78 @@ def _slice_field(f: NativeField, time_dim: str, rec: int) -> NativeField:
     sliced = np.take(f.data, rec, axis=axis)
     new_dims = tuple(d for d in f.dims if d != time_dim)
     return NativeField(sliced, new_dims, f.attrs)
+
+
+def _to_naive_utc(d: _dt.datetime) -> _dt.datetime:
+    """Drop tz to naive UTC so decoded file times and cadence anchors compare."""
+    if getattr(d, "tzinfo", None) is not None:
+        return d.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    return d
+
+
+def _decode_file_times(coord: NativeField) -> Optional[List[_dt.datetime]]:
+    """Decode a raw CF time coordinate to naive-UTC datetimes, or ``None``.
+
+    The netcdf reader returns the time axis undecoded (raw integers + a CF
+    ``units`` like ``"seconds since 1970-01-01"``); decode it here so the record
+    is selected by real timestamp. ``None`` for an undecodable axis (no
+    ``units``, or a non-standard cftime calendar) — the caller falls back to the
+    cadence-grid offset."""
+    attrs = getattr(coord, "attrs", None) or {}
+    units = attrs.get("units")
+    if not units or "since" not in str(units):
+        return None
+    try:
+        from xarray.coding.times import decode_cf_datetime
+
+        decoded = np.asarray(
+            decode_cf_datetime(np.asarray(coord.data), str(units),
+                               attrs.get("calendar", "standard"))
+        )
+        if not np.issubdtype(decoded.dtype, np.datetime64):
+            return None  # cftime (non-standard calendar) — fall back
+        objs = decoded.astype("datetime64[s]").astype(object).ravel().tolist()
+        return [_to_naive_utc(d) for d in objs]
+    except Exception:
+        return None
+
+
+def _record_at_or_before(times: List[_dt.datetime], anchor: _dt.datetime) -> Optional[int]:
+    """Index of the latest record at or before ``anchor`` (clamped to the
+    earliest record when ``anchor`` precedes them all). Order-independent."""
+    if not times:
+        return None
+    a = _to_naive_utc(anchor)
+    best: Optional[int] = None
+    for i, ti in enumerate(times):
+        if ti <= a and (best is None or ti > times[best]):
+            best = i
+    if best is not None:
+        return best
+    return min(range(len(times)), key=lambda i: times[i])
+
+
+def _record_index(file_ds: NativeDataset, temporal: Any, anchor: _dt.datetime,
+                  file_anchor: _dt.datetime) -> int:
+    """The record index for ``anchor`` within ``file_ds``.
+
+    Prefer the file's REAL time axis (``temporal.time_dim`` coordinate): robust to
+    a trimmed file (fewer records than ``file_period / frequency``) and to a
+    ``file_period`` that only approximates a calendar month (so the computed
+    offset can land in the wrong file / out of range — e.g. ERA5's ``P1M`` from a
+    1940 epoch). Fall back to the cadence-grid offset when the axis can't be
+    decoded."""
+    coord = file_ds.coords.get(temporal.time_dim)
+    if coord is not None:
+        times = _decode_file_times(coord)
+        if times:
+            a = _to_naive_utc(anchor)
+            # Use the real axis only when the anchor falls within the file's
+            # actual span; an anchor beyond it is genuinely absent, so fall
+            # through to the cadence-grid offset (which raises — the documented
+            # out-of-range contract).
+            if min(times) <= a <= max(times):
+                idx = _record_at_or_before(times, a)
+                if idx is not None:
+                    return int(idx)
+    return (anchor - file_anchor) // temporal.frequency
