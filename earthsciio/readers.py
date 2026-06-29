@@ -73,6 +73,25 @@ def _field_from_dataarray(da: Any) -> NativeField:
     return NativeField(data, dims, attrs)
 
 
+def _netcdf_engine() -> Optional[str]:
+    """The xarray engine used to decode a NetCDF blob.
+
+    The shared cache stores content-addressed blobs *without* a file extension,
+    so xarray's extension-based engine auto-detection fails with "cannot guess
+    the engine". Pick the first installed engine explicitly: ``netcdf4`` and
+    ``h5netcdf`` read NetCDF4/HDF5 (what the CDS/ERA5 transport downloads) as well
+    as classic NetCDF3; ``scipy`` reads NetCDF3 only. ``None`` ⇒ fall back to
+    xarray's guess (which raises a clear error when no engine is installed)."""
+    import importlib.util
+
+    for engine, module in (("netcdf4", "netCDF4"),
+                           ("h5netcdf", "h5netcdf"),
+                           ("scipy", "scipy")):
+        if importlib.util.find_spec(module) is not None:
+            return engine
+    return None
+
+
 class NetCDFReader:
     """The active ``netcdf`` reader, backed by xarray (netCDF4 engine).
 
@@ -122,7 +141,8 @@ class NetCDFReader:
         want = {str(v) for v in variables} if variables else None
         out_vars: Dict[str, NativeField] = {}
         out_coords: Dict[str, NativeField] = {}
-        with xr.open_dataset(handle, decode_times=False, mask_and_scale=True) as ds:
+        with xr.open_dataset(handle, decode_times=False, mask_and_scale=True,
+                             engine=_netcdf_engine()) as ds:
             if want is not None:
                 missing = [v for v in want if v not in ds.data_vars]
                 if missing:
