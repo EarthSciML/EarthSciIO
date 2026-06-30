@@ -13,5 +13,6 @@ import JSON
     include("test_concurrency.jl")
     # component (b): format readers + cadence provider (esio-9nb.5)
     include("test_readers.jl")       # checks 3, 4; defines the corpus comparison helpers
+    include("test_geotiff_reader.jl")  # gap G3: geotiff reader via the TiffImages weakdep ext
     include("test_provider.jl")      # cadence + the full offline pipeline; reuses helpers
 end

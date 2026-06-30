@@ -55,7 +55,7 @@ export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
 export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
-export NetCDFReader, CSVReader, read_native
+export NetCDFReader, CSVReader, GeoTIFFReader, read_native
 export NativeField, NativeDataset, variable_names, coord_names
 
 # cadence provider (component b)
@@ -99,6 +99,11 @@ function _register_defaults()
     # Provider change.
     register!(FORMAT_REGISTRY, "netcdf", NetCDFReader(); status = :active)
     register!(FORMAT_REGISTRY, "csv", CSVReader(); status = :active)
+    # GeoTIFF (LANDFIRE / USGS 3DEP rasters): the decode is supplied by the
+    # `EarthSciIOTiffImagesExt` weakdep extension (`using TiffImages`); the format
+    # is active once that backend is loaded — without it, `read_native` errors with
+    # an install hint (the Python sibling lazy-imports `tifffile` the same way).
+    register!(FORMAT_REGISTRY, "geotiff", GeoTIFFReader(); status = :active)
     register!(FORMAT_REGISTRY, "zarr",
               StubReader("zarr", "chunked store; reader impl lands with esio-9nb.8");
               status = :stub)
