@@ -17,8 +17,10 @@
 //! [`crate::Provider`]** — exactly the extensibility invariant the three
 //! registries exist to guarantee.
 
+mod geotiff;
 mod netcdf;
 
+pub use geotiff::GeoTiffReader;
 pub use netcdf::NetcdfReader;
 
 use std::collections::HashMap;
@@ -228,11 +230,13 @@ impl FormatRegistry {
         Self::default()
     }
 
-    /// Registry with the built-in **active** readers. Component (b) ships
-    /// `netcdf`; further readers (csv/geotiff/zarr) register the same way.
+    /// Registry with the built-in **active** readers: `netcdf` (NetCDF-3
+    /// classic) and `geotiff` (single-/multi-band raster). Further readers
+    /// (csv/zarr) register the same way.
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(NetcdfReader::new()));
+        r.register(Arc::new(GeoTiffReader::new()));
         r
     }
 

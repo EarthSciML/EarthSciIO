@@ -29,5 +29,12 @@ time = { version = "0.3", default-features = false, features = ["std", "formatti
 # default-features = false drops reqwest's native-tls (OpenSSL) default.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
+# Pure-Rust GeoTIFF decode for the `geotiff` format reader (the USGS 3DEP /
+# LANDFIRE rasters). No GDAL/FFI — same "C compiler alone, no clang/bindgen"
+# build story as the rustls transport and the pure-Rust netcdf reader. 0.11
+# retains unknown IFD tags (ModelPixelScale/Tiepoint) that 0.9 dropped, so the
+# GeoTIFF georef axes (lon/lat) decode like the Python/Julia readers.
+tiff = "0.11"
+
 [dev-dependencies]
 # Concurrency + mock-HTTP tests use only std (threads, TcpListener) — no extra deps.
