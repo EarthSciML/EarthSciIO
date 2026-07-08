@@ -375,10 +375,13 @@ impl Provider {
         }
     }
 
-    /// Resolve a file URL for an anchor. A template without `[` is a literal URL.
+    /// Resolve a file URL for an anchor. A template without `[` is a literal URL,
+    /// as is a `cds://` URL — that scheme carries a fully-resolved CDS request
+    /// whose canonical JSON legitimately contains `[...]` arrays (e.g. `area`,
+    /// `variable`) that must NOT be read as `time` format components.
     fn resolve_url(&self, anchor: OffsetDateTime) -> Result<String> {
         let tmpl = &self.loader.url_template;
-        if !tmpl.contains('[') {
+        if !tmpl.contains('[') || tmpl.starts_with("cds://") {
             return Ok(tmpl.clone());
         }
         let desc =

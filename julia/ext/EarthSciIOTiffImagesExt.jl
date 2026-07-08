@@ -27,25 +27,34 @@ function _tiff_tags(img)
     return out
 end
 
+# Unwrap a single-field pixel wrapper down to its innermost RAW stored scalar, so the
+# pixel bits reinterpret to that scalar rather than to a normalized colour value.
+# TiffImages wraps a single band as `Gray{T}`, and — crucially — stores an integer
+# band (e.g. LANDFIRE's S16 fuel codes) as a FIXED-POINT pixel `Gray{Q0f15}` /
+# `Gray{N0f15}`, whose scalar `Float64` value is the raw code DIVIDED by 2^15. Reading
+# that fixed-point scalar as-is turns fuel codes 2..99 into 6e-5..3e-3 — degenerate.
+# Unwrapping to the raw `Int16`/`UInt16` storage recovers the true integer codes, while
+# a genuine float band (`Gray{Float32}` elevation) unwraps to `Float32` unchanged.
+function _raw_scalar_type(@nospecialize(T))
+    while isbitstype(T) && fieldcount(T) == 1 && fieldtype(T, 1) <: Real && fieldtype(T, 1) !== T
+        T = fieldtype(T, 1)
+    end
+    return T
+end
+
 # Decoded raster bands as `(height, width)` `Float64` matrices in file order
-# (rows = y/lat). TiffImages returns a single-channel raster as a `Gray{T}` matrix
-# (one isbits field of the stored scalar `T`); reinterpret to that scalar so a raw
-# integer/float pixel is preserved (no color normalization). A 3-D array carries
-# its bands on the trailing sample axis.
+# (rows = y/lat), each pixel reinterpreted to its raw stored scalar (see above — no
+# fixed-point/colour normalization). A 3-D array carries its bands on the trailing axis.
 function _tiff_bands(img)
     a = collect(img)
+    unwrap = m -> (R = _raw_scalar_type(eltype(m));
+        R <: Real ? Float64.(reinterpret(R, m)) :
+        error("unsupported GeoTIFF pixel type $(eltype(m)): the ESS loaders are " *
+              "single-band LANDFIRE/USGS rasters (multi-channel colour is not decoded)."))
     if ndims(a) == 2
-        T = eltype(a)
-        if T <: Real
-            return [Array{Float64}(a)]
-        elseif isbitstype(T) && fieldcount(T) == 1 && fieldtype(T, 1) <: Real
-            return [Float64.(reinterpret(fieldtype(T, 1), a))]
-        else
-            error("unsupported GeoTIFF pixel type $T: the ESS loaders are single-band " *
-                  "LANDFIRE/USGS rasters (multi-channel colour is not decoded).")
-        end
+        return [unwrap(a)]
     elseif ndims(a) == 3
-        return [Float64.(@view a[:, :, s]) for s in axes(a, 3)]
+        return [unwrap(collect(@view a[:, :, s])) for s in axes(a, 3)]
     else
         error("unsupported GeoTIFF array with ndims=$(ndims(a))")
     end
