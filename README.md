@@ -6,7 +6,7 @@ and caches the file in a **shared content-addressed cache**, and reads it into
 **native-grid arrays** the simulation consumes at its cadence.
 
 EarthSciIO is the sanctioned **impure I/O boundary** of the EarthSci stack — it
-provides *data*, never a solver. Variable-remap stays in EarthSciSerialization
+provides *data*, never a solver. Variable-remap stays in EarthSciAST
 (ESS); regrid stays in EarthSciDiscretizations (ESD). See the boundary writeup
 in [`spec/README.md`](spec/README.md).
 
