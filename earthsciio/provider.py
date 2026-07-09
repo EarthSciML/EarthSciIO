@@ -37,6 +37,7 @@ across all three tracks (conformance ``esio-9nb.9``).
 from __future__ import annotations
 
 import datetime as _dt
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -79,6 +80,17 @@ class LoaderTemporal:
     to ``start`` (the loader epoch). ``end`` (optional) is the exclusive end of
     available data and bounds :meth:`Provider.refresh_times` when no run window
     is given.
+
+    ``records_per_sample`` is HOW MANY time records :meth:`Provider.refresh`
+    returns per query time — pure I/O; the loader does not interpolate. ``None``
+    or ``1`` (default) returns the single at-or-before record with ``time_dim``
+    dropped (held piecewise-constant); ``2`` returns the two bracketing records
+    (floor + successor) with ``time_dim`` retained at length 2 and a canonical
+    2-element ``time_dim`` coordinate of Unix epoch seconds, so a downstream model
+    can interpolate in time. The successor is read across a file boundary when
+    needed; at the last available record the bracket degenerates to ``[last, last]``
+    so the downstream weight clamps. Only 1 and 2 are supported; higher-order
+    temporal stencils are future work. (Distinct from a per-file record count.)
     """
 
     start: _dt.datetime
@@ -86,12 +98,17 @@ class LoaderTemporal:
     file_period: _dt.timedelta
     end: Optional[_dt.datetime] = None
     time_dim: str = "time"
+    records_per_sample: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.frequency <= _ZERO:
             raise ValueError(f"frequency must be positive, got {self.frequency!r}")
         if self.file_period <= _ZERO:
             raise ValueError(f"file_period must be positive, got {self.file_period!r}")
+        if self.records_per_sample not in (None, 1, 2):
+            raise ValueError(
+                f"records_per_sample must be 1 or 2, got {self.records_per_sample!r}"
+            )
 
 
 @dataclass
@@ -192,6 +209,10 @@ class Provider:
         self._current_anchor: Optional[_dt.datetime] = None
         self._current_file_anchor: Optional[_dt.datetime] = None
         self._current_file: Optional[NativeDataset] = None
+        # Tiny LRU of decoded files keyed by file anchor — bracket mode may need
+        # two adjacent files open at a file-period seam (the "after" record of the
+        # last record in a file lives in the next file). Cap 2.
+        self._files: "OrderedDict[_dt.datetime, NativeDataset]" = OrderedDict()
 
     # -- introspection ------------------------------------------------------ #
 
@@ -241,6 +262,8 @@ class Provider:
             raise ValueError(
                 f"t={t!r} precedes the loader start {temporal.start!r}"
             )
+        if temporal.records_per_sample == 2:
+            return self._refresh_bracket(temporal, anchor)
         file_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
         if self._current_file is None or self._current_file_anchor != file_anchor:
             self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
@@ -338,6 +361,57 @@ class Provider:
         variables = list(self.loader.variables) if self.loader.variables else None
         return self._reader.read_native(handle, variables, **self.loader.reader_kwargs)
 
+    def _file_for(self, file_anchor: _dt.datetime) -> NativeDataset:
+        """Decode the file covering ``file_anchor``, via a 2-entry LRU so a
+        file-period seam (two adjacent files) decodes each at most once."""
+        ds = self._files.get(file_anchor)
+        if ds is None:
+            ds = self._read_file(self.loader.resolve_url(file_anchor))
+            self._files[file_anchor] = ds
+            while len(self._files) > 2:
+                self._files.popitem(last=False)
+        else:
+            self._files.move_to_end(file_anchor)
+        return ds
+
+    def _refresh_bracket(self, temporal: LoaderTemporal,
+                         anchor: _dt.datetime) -> NativeDataset:
+        """Return the two records bracketing ``anchor`` (floor + successor) with
+        ``time_dim`` retained at length 2 and a canonical epoch-seconds ``time``
+        coordinate. Handles the cross-file successor and the end-of-data clamp."""
+        time_dim = temporal.time_dim
+        file0_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
+        file0 = self._file_for(file0_anchor)
+        rec0 = _record_index(file0, temporal, anchor, file0_anchor)
+
+        next_anchor = anchor + temporal.frequency
+        has_succ = temporal.end is None or next_anchor < temporal.end
+        succ: Optional[Tuple[NativeDataset, int]] = None
+        if has_succ:
+            try:
+                if rec0 + 1 < _time_len(file0, time_dim):
+                    succ = (file0, rec0 + 1)  # successor in the same file
+                else:  # successor is record 0 of the next file
+                    n_anchor = _snap_down(temporal.start, next_anchor,
+                                          temporal.file_period)
+                    file1 = self._file_for(n_anchor)
+                    r1 = _record_index(file1, temporal, next_anchor, n_anchor)
+                    if 0 <= r1 < _time_len(file1, time_dim):
+                        succ = (file1, r1)
+            except Exception:
+                succ = None  # no reachable successor — clamp below
+        if succ is None:  # end-of-data: degenerate bracket, hold the last record
+            next_anchor = anchor
+            succ = (file0, rec0)
+
+        sliced = _bracket_record(
+            file0, rec0, succ[0], succ[1], time_dim,
+            _epoch_seconds(anchor), _epoch_seconds(next_anchor),
+        )
+        self._current = sliced
+        self._current_anchor = anchor
+        return sliced
+
 
 def _slice_record(ds: NativeDataset, time_dim: str, rec: int) -> NativeDataset:
     """Slice cadence record ``rec`` out of every field carrying ``time_dim``.
@@ -368,6 +442,59 @@ def _slice_field(f: NativeField, time_dim: str, rec: int) -> NativeField:
     sliced = np.take(f.data, rec, axis=axis)
     new_dims = tuple(d for d in f.dims if d != time_dim)
     return NativeField(sliced, new_dims, f.attrs)
+
+
+def _time_len(ds: NativeDataset, time_dim: str) -> int:
+    """Length of ``ds`` along ``time_dim`` (from the time coord, else the first
+    variable carrying it); 0 if no field carries it."""
+    coord = ds.coords.get(time_dim)
+    if coord is not None and time_dim in coord.dims:
+        return int(coord.data.shape[coord.dims.index(time_dim)])
+    for f in ds.variables.values():
+        if time_dim in f.dims:
+            return int(f.data.shape[f.dims.index(time_dim)])
+    return 0
+
+
+def _stack_two(f0: NativeField, f1: NativeField, time_dim: str,
+               rec0: int, rec1: int) -> NativeField:
+    """Stack record ``rec0`` of ``f0`` and ``rec1`` of ``f1`` along ``time_dim``,
+    keeping ``time_dim`` at length 2. Non-temporal fields pass through unchanged."""
+    if time_dim not in f0.dims:
+        return f0
+    axis = f0.dims.index(time_dim)
+    a = np.take(f0.data, rec0, axis=axis)
+    b = np.take(f1.data, rec1, axis=axis)
+    return NativeField(np.stack([a, b], axis=axis), f0.dims, f0.attrs)
+
+
+def _bracket_record(file0: NativeDataset, rec0: int, file1: NativeDataset, rec1: int,
+                    time_dim: str, t0_epoch: float, t1_epoch: float) -> NativeDataset:
+    """Assemble the 2-record bracket dataset: every temporal variable stacked to a
+    size-2 ``time_dim`` axis, non-temporal coords passed through, and a canonical
+    2-element ``time_dim`` coordinate of Unix epoch seconds ``[t0, t1]``."""
+    variables = {
+        name: _stack_two(f, file1.variables[name], time_dim, rec0, rec1)
+        for name, f in file0.variables.items()
+    }
+    coords = {
+        name: f for name, f in file0.coords.items() if name != time_dim
+    }
+    coords[time_dim] = NativeField(
+        np.array([t0_epoch, t1_epoch], dtype=np.float64),
+        (time_dim,),
+        {"units": "seconds since 1970-01-01T00:00:00Z", "calendar": "standard"},
+    )
+    return NativeDataset(variables, coords)
+
+
+_EPOCH_NAIVE = _dt.datetime(1970, 1, 1)
+
+
+def _epoch_seconds(d: _dt.datetime) -> float:
+    """Unix epoch seconds for a datetime (tz-aware normalized to UTC; naive
+    assumed UTC — matching :func:`_record_index`'s comparison convention)."""
+    return (_to_naive_utc(d) - _EPOCH_NAIVE).total_seconds()
 
 
 def _to_naive_utc(d: _dt.datetime) -> _dt.datetime:

@@ -160,6 +160,69 @@ def test_discrete_refresh_is_idempotent_within_interval(cache):
 
 
 # --------------------------------------------------------------------------- #
+# DISCRETE records_per_sample=2: the 2-record bracket for downstream time
+# interpolation (floor + successor, time axis retained, epoch-seconds time coord).
+# --------------------------------------------------------------------------- #
+
+
+def _interp_loader(end=None, file_period=2 * HOUR) -> DataLoader:
+    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=file_period,
+                              end=end, records_per_sample=2)
+    return DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal)
+
+
+def test_interp_bracket_returns_two_records_with_time_axis(cache):
+    p = Provider(_interp_loader(), cache, window=(_utc(0), _utc(2)))
+    b = p.refresh(_utc(0))
+    # time axis is RETAINED at length 2 (floor + successor), unlike the single slice
+    assert list(b["t2m"].dims) == ["time", "latitude", "longitude"]
+    assert b["t2m"].shape == (2, 3, 3)
+    assert b["t2m"].data[0, 0, 0] == pytest.approx(282.5)  # record 0 (hour 0)
+    assert b["t2m"].data[1, 0, 0] == pytest.approx(282.6)  # record 1 (hour 1)
+    # the time coordinate carries the two bracket timestamps as Unix epoch seconds
+    assert "time" in b
+    assert list(b["time"].data) == pytest.approx([START.timestamp(), _utc(1).timestamp()])
+    assert b["time"].attrs["units"] == "seconds since 1970-01-01T00:00:00Z"
+
+
+def test_interp_bracket_floors_within_interval(cache):
+    p = Provider(_interp_loader(), cache, window=(_utc(0), _utc(2)))
+    at = p.refresh(_utc(0))["t2m"].data
+    between = p.refresh(START + dt.timedelta(minutes=30))["t2m"].data  # same bracket
+    assert np.array_equal(at, between, equal_nan=True)  # masked cell in record 1
+    # ... but the bracket timestamps still describe hour 0 -> hour 1
+    b = p.refresh(START + dt.timedelta(minutes=30))
+    assert list(b["time"].data) == pytest.approx([START.timestamp(), _utc(1).timestamp()])
+
+
+def test_interp_bracket_crosses_file_boundary(cache):
+    # No temporal.end => a successor is assumed to exist; hour 1 is the last record
+    # in the 2-record file, so its "after" record is record 0 of the next file
+    # (the same corpus blob resolves for every anchor here).
+    p = Provider(_interp_loader(), cache)
+    b = p.refresh(_utc(1))
+    assert b["t2m"].shape == (2, 3, 3)
+    assert b["t2m"].data[0, 0, 0] == pytest.approx(282.6)  # this file, record 1
+    assert b["t2m"].data[1, 0, 0] == pytest.approx(282.5)  # next file, record 0
+    assert list(b["time"].data) == pytest.approx([_utc(1).timestamp(), _utc(2).timestamp()])
+
+
+def test_interp_bracket_end_clamp_degenerates(cache):
+    # temporal.end=hour 2 => hour 1 has no successor; the bracket holds [last, last]
+    p = Provider(_interp_loader(end=_utc(2)), cache, window=(_utc(0), _utc(2)))
+    b = p.refresh(_utc(1))
+    assert b["t2m"].data[0, 0, 0] == pytest.approx(282.6)
+    assert b["t2m"].data[1, 0, 0] == pytest.approx(282.6)  # successor == floor (held)
+    t0, t1 = b["time"].data
+    assert t0 == pytest.approx(t1)  # degenerate bracket => downstream weight clamps
+
+
+def test_interp_rejects_bad_records_per_sample():
+    with pytest.raises(ValueError):
+        LoaderTemporal(start=START, frequency=HOUR, file_period=HOUR, records_per_sample=3)
+
+
+# --------------------------------------------------------------------------- #
 # refresh_times bounds: window end, temporal.end, and the unbounded case.
 # --------------------------------------------------------------------------- #
 

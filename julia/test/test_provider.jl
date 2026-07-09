@@ -56,6 +56,82 @@
         @test materialize(p, 0.5)["t2m"].data == s0["t2m"].data
     end
 
+    @testset "DISCRETE records_per_sample=2: the 2-record bracket" begin
+        # cadence taken from the file's own (raw) time axis: [0.0, 1.0]. The axis is
+        # "hours since 2018-11-08 00:00:00", so raw hours 0/1/2 decode to these Unix
+        # epoch seconds (== datetime2unix(DateTime(2018,11,8,h))):
+        epoch_h0 = 1.5416352e9   # 2018-11-08 00:00:00Z
+        epoch_h1 = 1.5416388e9   # 2018-11-08 01:00:00Z
+        epoch_h2 = epoch_h1 + 3600.0   # 2018-11-08 02:00:00Z
+
+        full = materialize(const_provider(cache, era5; format = "netcdf"))
+        times = Float64.(full["time"].data)                          # [0.0, 1.0]
+        p = discrete_provider(cache, era5, times; format = "netcdf",
+                              time_dim = "time", records_per_sample = 2)
+
+        @testset "two records, time dim retained, epoch-seconds coord" begin
+            b = refresh(p, 0.0)
+            # time axis RETAINED at length 2 (floor + successor), not sliced out
+            @test b["t2m"].dims == ["time", "latitude", "longitude"]
+            @test size(b["t2m"].data) == (2, 3, 3)
+            @test b["t2m"].data[1, 1, 1] ≈ 282.5      # record 0 (hour 0)
+            @test b["t2m"].data[2, 1, 1] ≈ 282.6      # record 1 (hour 1)
+            @test isnan(b["t2m"].data[2, 3, 3])       # masked cell survives in record 1
+            # the time coord carries the two bracket timestamps as epoch seconds
+            @test haskey(b, "time")
+            @test length(b["time"].data) == 2
+            @test b["time"].data ≈ [epoch_h0, epoch_h1]
+            @test eltype(b["time"].data) == Float64
+            @test b["time"].attrs["units"] == "seconds since 1970-01-01T00:00:00Z"
+            @test Set(coord_names(b)) == Set(["latitude", "longitude", "time"])
+        end
+
+        @testset "flooring within an interval keeps the same bracket" begin
+            at = refresh(p, 0.0)["t2m"].data
+            between = materialize(p, 0.5)                 # snaps down to hour 0
+            @test size(between["t2m"].data) == (2, 3, 3)
+            @test isequal(at, between["t2m"].data)        # isequal: NaN == NaN
+            # ... the bracket timestamps still describe hour 0 -> hour 1
+            @test between["time"].data ≈ [epoch_h0, epoch_h1]
+        end
+
+        @testset "cross-file successor (url-function, cadence past the file axis)" begin
+            # 3-tick cadence over a 2-record file: hour 1 is the file's last record,
+            # so its successor is record 1 of the NEXT file (same corpus blob here).
+            pc = discrete_provider(cache, _ -> era5, [0.0, 1.0, 2.0];
+                                   format = "netcdf", time_dim = "time",
+                                   records_per_sample = 2)
+            b = refresh(pc, 1.0)
+            @test size(b["t2m"].data) == (2, 3, 3)
+            @test b["t2m"].data[1, 1, 1] ≈ 282.6      # this file, record 1 (hour 1)
+            @test b["t2m"].data[2, 1, 1] ≈ 282.5      # next file, record 0 (hour 0)
+            @test b["time"].data ≈ [epoch_h1, epoch_h2]
+        end
+
+        @testset "end clamp: last tick degenerates to [last, last]" begin
+            b = refresh(p, 1.0)                          # hour 1 is the last tick
+            @test size(b["t2m"].data) == (2, 3, 3)
+            @test b["t2m"].data[1, 1, 1] ≈ 282.6
+            @test b["t2m"].data[2, 1, 1] ≈ 282.6         # successor == floor (held)
+            @test b["time"].data[1] == b["time"].data[2] # degenerate → equal stamps
+            @test b["time"].data ≈ [epoch_h1, epoch_h1]
+
+            # a time PAST the last tick clamps to the same degenerate bracket (no throw)
+            past = materialize(p, 5.0)
+            @test past["t2m"].data[1, 1, 1] ≈ 282.6
+            @test past["time"].data[1] == past["time"].data[2]
+        end
+
+        @testset "records_per_sample guards" begin
+            # only nothing, 1, or 2 is accepted
+            @test_throws ArgumentError discrete_provider(cache, era5, [0.0];
+                format = "netcdf", time_dim = "time", records_per_sample = 3)
+            # records_per_sample=2 needs a time_dim to bracket along
+            @test_throws ArgumentError discrete_provider(cache, era5, [0.0];
+                format = "netcdf", records_per_sample = 2)
+        end
+    end
+
     @testset "DISCRETE per-tick URLs (url-function form, no internal slice)" begin
         # url resolver form: the same fixture stands in for every tick; without
         # time_dim the provider returns the file's full native arrays per tick.

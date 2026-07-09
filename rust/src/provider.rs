@@ -34,7 +34,9 @@ use time::{Duration, OffsetDateTime};
 
 use crate::cache::{Cache, FetchRequest};
 use crate::error::{Error, Result};
-use crate::format::{Coord, FormatRegistry, NativeDataset, NativeField, Reader, Selection};
+use crate::format::{
+    ArrayData, Coord, DType, FormatRegistry, NativeDataset, NativeField, Reader, Selection,
+};
 
 /// A run window `(start, end)` — half-open `[start, end)`.
 pub type Window = (OffsetDateTime, OffsetDateTime);
@@ -57,6 +59,17 @@ pub struct LoaderTemporal {
     pub file_period: Duration,
     /// Name of the record/time dimension to slice on (default `"time"`).
     pub time_dim: String,
+    /// Number of records [`Provider::refresh`] returns per sample. `None` or
+    /// `Some(1)` (default) returns the single at-or-before record with `time_dim`
+    /// dropped (held piecewise-constant); `Some(2)` returns the two bracketing
+    /// records (floor + successor) with `time_dim` retained at length 2 and a
+    /// canonical 2-element epoch-seconds `time` coordinate, so a downstream model
+    /// interpolates in time. The successor is read across a file boundary when
+    /// needed; at the last available record the bracket degenerates to
+    /// `[last, last]` so the downstream weight clamps. Only `1` / `2` are
+    /// supported (validated in [`Provider::refresh`]); higher-order temporal
+    /// stencils are future work.
+    pub records_per_sample: Option<u32>,
 }
 
 impl LoaderTemporal {
@@ -69,6 +82,7 @@ impl LoaderTemporal {
             frequency,
             file_period,
             time_dim: "time".to_string(),
+            records_per_sample: None,
         }
     }
 
@@ -81,6 +95,14 @@ impl LoaderTemporal {
     /// Override the record/time dimension name (default `"time"`).
     pub fn time_dim(mut self, dim: impl Into<String>) -> Self {
         self.time_dim = dim.into();
+        self
+    }
+
+    /// Set the number of records returned per sample. `1` (piecewise-constant
+    /// single record) or `2` (the 2-record bracket); any other value is
+    /// rejected when [`Provider::refresh`] validates the cadence.
+    pub fn records_per_sample(mut self, n: u32) -> Self {
+        self.records_per_sample = Some(n);
         self
     }
 }
@@ -178,6 +200,11 @@ pub struct Provider {
     current_anchor: Option<OffsetDateTime>,
     /// The file anchor currently open (avoids re-reading within a file).
     current_file_anchor: Option<OffsetDateTime>,
+    /// Tiny LRU of decoded files keyed by file anchor (cap 2), used only by
+    /// `records_per_sample = 2`: the successor of the last record in a file
+    /// lives in the next file, so the bracket may hold two adjacent files at a
+    /// file-period seam. Most-recently-used at the tail.
+    files: Vec<(OffsetDateTime, NativeDataset)>,
 }
 
 impl Provider {
@@ -211,6 +238,7 @@ impl Provider {
             current_dataset: None,
             current_anchor: None,
             current_file_anchor: None,
+            files: Vec::new(),
         })
     }
 
@@ -260,10 +288,22 @@ impl Provider {
                 detail: "loader cadence frequency/file_period must be positive".to_string(),
             });
         }
+        if !matches!(temporal.records_per_sample, None | Some(1) | Some(2)) {
+            return Err(Error::Format {
+                format: self.loader.format.clone(),
+                detail: format!(
+                    "records_per_sample must be 1 or 2, got {}",
+                    temporal.records_per_sample.unwrap()
+                ),
+            });
+        }
 
         let anchor = snap_down(temporal.start, t, freq_s);
         if self.current_anchor == Some(anchor) {
-            return Ok(None); // same cadence interval — unchanged
+            return Ok(None); // same cadence interval — unchanged (bracket too)
+        }
+        if temporal.records_per_sample == Some(2) {
+            return self.refresh_bracket(&temporal, anchor, freq_s, file_s);
         }
         let file_anchor = snap_down(temporal.start, anchor, file_s);
 
@@ -414,6 +454,202 @@ impl Provider {
         self.reader
             .read_native(&blob.path, &self.loader.variables, &Selection::All)
     }
+
+    /// Ensure the file covering `file_anchor` is decoded into the 2-entry LRU
+    /// (`self.files`), so a file-period seam decodes each adjacent file at most
+    /// once. On a hit the entry is moved to the tail (most-recently-used).
+    fn ensure_file(&mut self, file_anchor: OffsetDateTime) -> Result<()> {
+        if let Some(pos) = self.files.iter().position(|(a, _)| *a == file_anchor) {
+            let entry = self.files.remove(pos);
+            self.files.push(entry);
+            return Ok(());
+        }
+        let url = self.resolve_url(file_anchor)?;
+        let ds = self.read_file(url)?;
+        self.files.push((file_anchor, ds));
+        while self.files.len() > 2 {
+            self.files.remove(0); // evict the least-recently-used
+        }
+        Ok(())
+    }
+
+    /// The decoded file for `file_anchor` (must have been [`ensure_file`]d).
+    fn file_ref(&self, file_anchor: OffsetDateTime) -> &NativeDataset {
+        &self
+            .files
+            .iter()
+            .find(|(a, _)| *a == file_anchor)
+            .expect("file ensured before file_ref")
+            .1
+    }
+
+    /// The `records_per_sample = 2` path of [`refresh`](Self::refresh): produce
+    /// the two records bracketing `anchor` (floor + successor), retaining
+    /// `time_dim` at length 2, plus a canonical 2-element epoch-seconds `time`
+    /// coordinate. Handles the cross-file successor (record 0 of the next file
+    /// when the floor is the last record) and the end-of-data clamp (a degenerate
+    /// `[last, last]` bracket with equal timestamps — never an error).
+    fn refresh_bracket(
+        &mut self,
+        temporal: &LoaderTemporal,
+        anchor: OffsetDateTime,
+        freq_s: i64,
+        file_s: i64,
+    ) -> Result<Option<HashMap<String, NativeField>>> {
+        let time_dim = temporal.time_dim.clone();
+
+        // rec0 = the floor (at-or-before) record in file0, as the single path does.
+        let file0_anchor = snap_down(temporal.start, anchor, file_s);
+        self.ensure_file(file0_anchor)?;
+        let rec0 = ((anchor - file0_anchor).whole_seconds() / freq_s) as usize;
+        let file0_len = time_len(self.file_ref(file0_anchor), &time_dim);
+
+        // Successor rec1: rec0+1 in the same file, else record 0 of the next file.
+        // None => no reachable successor (end clamp): degenerate [rec0, rec0].
+        let next_anchor = anchor + Duration::seconds(freq_s);
+        let has_succ = temporal.end.map_or(true, |end| next_anchor < end);
+        let mut succ: Option<(OffsetDateTime, usize)> = None;
+        if has_succ {
+            if rec0 + 1 < file0_len {
+                succ = Some((file0_anchor, rec0 + 1)); // successor in the same file
+            } else {
+                // Successor is record 0 of the next file; read/decode it (a read
+                // failure at the seam is treated as end-of-data, not an error).
+                let next_file_anchor = snap_down(temporal.start, next_anchor, file_s);
+                if self.ensure_file(next_file_anchor).is_ok() {
+                    let r1 = ((next_anchor - next_file_anchor).whole_seconds() / freq_s) as usize;
+                    if r1 < time_len(self.file_ref(next_file_anchor), &time_dim) {
+                        succ = Some((next_file_anchor, r1));
+                    }
+                }
+            }
+        }
+        let (succ_anchor, rec1, t1_epoch) = match succ {
+            Some((a, r)) => (a, r, next_anchor.unix_timestamp() as f64),
+            // Degenerate bracket: hold the last record, equal timestamps.
+            None => (file0_anchor, rec0, anchor.unix_timestamp() as f64),
+        };
+        let t0_epoch = anchor.unix_timestamp() as f64;
+
+        // Stack rec0 (file0) and rec1 (successor file) along the leading time axis.
+        let file0 = self.file_ref(file0_anchor);
+        let file1 = self.file_ref(succ_anchor);
+        let mut buffers = HashMap::with_capacity(file0.variables.len());
+        for (name, field) in &file0.variables {
+            let is_temporal =
+                field.dims.first().map(String::as_str) == Some(time_dim.as_str());
+            let stacked = if is_temporal {
+                let f1 = file1.variables.get(name).unwrap_or(field);
+                stack_two_records(field, rec0, f1, rec1)?
+            } else {
+                field.clone() // non-temporal variables pass through whole
+            };
+            buffers.insert(name.clone(), stacked);
+        }
+        // Carry file0's coords, but replace the time coord with the 2-element
+        // epoch-seconds bracket timestamps (the seam the ESS adapter reads).
+        let mut coords = file0.coords.clone();
+        coords.insert(
+            time_dim.clone(),
+            Coord {
+                field: NativeField {
+                    dtype: DType::Float64,
+                    dims: vec![time_dim.clone()],
+                    shape: vec![2],
+                    data: ArrayData::F64(vec![t0_epoch, t1_epoch]),
+                    fill_value: None,
+                },
+                units: Some("seconds since 1970-01-01T00:00:00Z".to_string()),
+                calendar: Some("standard".to_string()),
+            },
+        );
+
+        self.coords = coords;
+        self.buffers = buffers;
+        self.current_anchor = Some(anchor);
+        Ok(Some(self.buffers.clone()))
+    }
+}
+
+/// Length of `ds` along `time_dim`: from the time coordinate if it carries it,
+/// else the first variable that does, else 0.
+fn time_len(ds: &NativeDataset, time_dim: &str) -> usize {
+    if let Some(coord) = ds.coords.get(time_dim) {
+        if let Some(pos) = coord.field.dims.iter().position(|d| d == time_dim) {
+            return coord.field.shape[pos];
+        }
+    }
+    for field in ds.variables.values() {
+        if let Some(pos) = field.dims.iter().position(|d| d == time_dim) {
+            return field.shape[pos];
+        }
+    }
+    0
+}
+
+/// Stack record `rec0` of `f0` and record `rec1` of `f1` along the leading axis,
+/// keeping that axis (the time dim) at length 2. `f0`/`f1` are the same variable
+/// across (possibly) adjacent files, so they share dtype/trailing shape.
+fn stack_two_records(
+    f0: &NativeField,
+    rec0: usize,
+    f1: &NativeField,
+    rec1: usize,
+) -> Result<NativeField> {
+    let a = f0.select_leading(rec0)?; // drops the leading dim -> one record
+    let b = f1.select_leading(rec1)?;
+    let data = concat_array(&a.data, &b.data)?;
+    let mut dims = Vec::with_capacity(a.dims.len() + 1);
+    dims.push(f0.dims[0].clone());
+    dims.extend(a.dims.iter().cloned());
+    let mut shape = Vec::with_capacity(a.shape.len() + 1);
+    shape.push(2);
+    shape.extend(a.shape.iter().cloned());
+    Ok(NativeField {
+        dtype: f0.dtype,
+        dims,
+        shape,
+        data,
+        fill_value: f0.fill_value,
+    })
+}
+
+/// Concatenate two same-dtype native arrays end-to-end (used to stack two records
+/// into a size-2 leading axis).
+fn concat_array(a: &ArrayData, b: &ArrayData) -> Result<ArrayData> {
+    Ok(match (a, b) {
+        (ArrayData::F64(x), ArrayData::F64(y)) => {
+            let mut v = x.clone();
+            v.extend_from_slice(y);
+            ArrayData::F64(v)
+        }
+        (ArrayData::I64(x), ArrayData::I64(y)) => {
+            let mut v = x.clone();
+            v.extend_from_slice(y);
+            ArrayData::I64(v)
+        }
+        (ArrayData::I32(x), ArrayData::I32(y)) => {
+            let mut v = x.clone();
+            v.extend_from_slice(y);
+            ArrayData::I32(v)
+        }
+        (ArrayData::Str(x), ArrayData::Str(y)) => {
+            let mut v = x.clone();
+            v.extend_from_slice(y);
+            ArrayData::Str(v)
+        }
+        (ArrayData::Bool(x), ArrayData::Bool(y)) => {
+            let mut v = x.clone();
+            v.extend_from_slice(y);
+            ArrayData::Bool(v)
+        }
+        _ => {
+            return Err(Error::Format {
+                format: "native".to_string(),
+                detail: "cannot stack bracket records of differing dtypes".to_string(),
+            })
+        }
+    })
 }
 
 /// `start + floor((t - start) / step) * step` — snap `t` down to the aligned

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use earthsciio::{ArrayData, Cache, DataLoader, Error, LoaderTemporal, NativeField, Provider};
 use time::macros::datetime;
-use time::Duration;
+use time::{Duration, OffsetDateTime};
 
 const ERA5_URL: &str = "https://data.earthsci.dev/era5/2018/11/20181108.nc";
 // Resolves the file (day) anchor to ERA5_URL via `time` formatting.
@@ -142,6 +142,178 @@ fn discrete_prefetch_warms_the_window_offline() {
     provider
         .prefetch(window)
         .expect("prefetch the window from the corpus");
+}
+
+// --- DISCRETE records_per_sample=2: the 2-record bracket --------------------
+//
+// With `records_per_sample = 2`, refresh returns the two bracketing records
+// (floor + successor) with the time axis RETAINED at length 2, plus a canonical
+// 2-element epoch-seconds `time` coordinate, so a downstream model interpolates
+// in time. `file_period = 2h` makes each file hold exactly the two hourly records
+// the corpus blob carries, so hour 1 is the last record in its file (its
+// successor is record 0 of the next file).
+
+fn interp_loader(end: Option<OffsetDateTime>) -> DataLoader {
+    let mut temporal = LoaderTemporal::new(
+        datetime!(2018-11-08 00:00:00 UTC),
+        Duration::hours(1),
+        Duration::hours(2),
+    )
+    .records_per_sample(2);
+    if let Some(e) = end {
+        temporal = temporal.end(e);
+    }
+    DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(temporal)
+}
+
+#[test]
+fn interp_bracket_returns_two_records_with_time_axis() {
+    let window = (
+        datetime!(2018-11-08 00:00:00 UTC),
+        datetime!(2018-11-08 02:00:00 UTC),
+    );
+    let mut provider = Provider::new(interp_loader(None), corpus_cache(), Some(window)).unwrap();
+
+    let buf = provider
+        .refresh(datetime!(2018-11-08 00:00:00 UTC))
+        .unwrap()
+        .expect("the first anchor produces a bracket");
+    let t2m = &buf["t2m"];
+    // The time axis is RETAINED at length 2 (floor + successor), unlike the
+    // single-record slice which drops it.
+    assert_eq!(
+        t2m.dims,
+        vec![
+            "time".to_string(),
+            "latitude".to_string(),
+            "longitude".to_string()
+        ]
+    );
+    assert_eq!(t2m.shape, vec![2, 3, 3], "[time=2, lat=3, lon=3] bracket");
+    assert_eq!(f64s(t2m)[0], 282.5); // record 0 (hour 0), first cell
+    assert_eq!(f64s(t2m)[9], 282.6); // record 1 (hour 1), first cell (offset 3*3)
+
+    // The time coordinate carries the two bracket timestamps as Unix epoch seconds.
+    let time = &provider.coords()["time"];
+    assert_eq!(
+        f64s(&time.field),
+        &[
+            datetime!(2018-11-08 00:00:00 UTC).unix_timestamp() as f64,
+            datetime!(2018-11-08 01:00:00 UTC).unix_timestamp() as f64,
+        ]
+    );
+    assert_eq!(
+        time.units.as_deref(),
+        Some("seconds since 1970-01-01T00:00:00Z")
+    );
+}
+
+#[test]
+fn interp_bracket_floors_within_interval() {
+    let window = (
+        datetime!(2018-11-08 00:00:00 UTC),
+        datetime!(2018-11-08 02:00:00 UTC),
+    );
+    let mut provider = Provider::new(interp_loader(None), corpus_cache(), Some(window)).unwrap();
+
+    let at = provider
+        .refresh(datetime!(2018-11-08 00:00:00 UTC))
+        .unwrap()
+        .expect("first anchor brackets");
+    let at0 = f64s(&at["t2m"])[0];
+
+    // Flooring within the same hour is the SAME bracket: the anchor is unchanged,
+    // so refresh reports no change (the buffer still holds the hour 0 -> 1 bracket).
+    assert!(
+        provider
+            .refresh(datetime!(2018-11-08 00:30:00 UTC))
+            .unwrap()
+            .is_none(),
+        "a t inside the same cadence interval keeps the same bracket"
+    );
+    // ... and the retained buffer is exactly that bracket.
+    assert_eq!(at0, 282.5);
+    let time = &provider.coords()["time"];
+    assert_eq!(
+        f64s(&time.field),
+        &[
+            datetime!(2018-11-08 00:00:00 UTC).unix_timestamp() as f64,
+            datetime!(2018-11-08 01:00:00 UTC).unix_timestamp() as f64,
+        ]
+    );
+}
+
+#[test]
+fn interp_bracket_crosses_file_boundary() {
+    // No temporal.end and no window => a successor is assumed to exist. Hour 1 is
+    // the last record in its 2-record file, so its successor is record 0 of the
+    // next file (the same corpus blob resolves for the next day-file anchor here).
+    let mut provider = Provider::new(interp_loader(None), corpus_cache(), None).unwrap();
+
+    let buf = provider
+        .refresh(datetime!(2018-11-08 01:00:00 UTC))
+        .unwrap()
+        .expect("hour 1 brackets across the file seam");
+    let t2m = &buf["t2m"];
+    assert_eq!(t2m.shape, vec![2, 3, 3]);
+    assert_eq!(f64s(t2m)[0], 282.6); // this file, record 1
+    assert_eq!(f64s(t2m)[9], 282.5); // next file, record 0
+    let time = &provider.coords()["time"];
+    assert_eq!(
+        f64s(&time.field),
+        &[
+            datetime!(2018-11-08 01:00:00 UTC).unix_timestamp() as f64,
+            datetime!(2018-11-08 02:00:00 UTC).unix_timestamp() as f64,
+        ]
+    );
+}
+
+#[test]
+fn interp_bracket_end_clamp_degenerates() {
+    // temporal.end = hour 2 => hour 1 has no successor; the bracket holds
+    // [last, last] with equal timestamps so the downstream weight clamps.
+    let window = (
+        datetime!(2018-11-08 00:00:00 UTC),
+        datetime!(2018-11-08 02:00:00 UTC),
+    );
+    let end = datetime!(2018-11-08 02:00:00 UTC);
+    let mut provider =
+        Provider::new(interp_loader(Some(end)), corpus_cache(), Some(window)).unwrap();
+
+    let buf = provider
+        .refresh(datetime!(2018-11-08 01:00:00 UTC))
+        .unwrap()
+        .expect("hour 1 brackets (degenerately) at the end of data");
+    let t2m = &buf["t2m"];
+    assert_eq!(t2m.shape, vec![2, 3, 3]);
+    assert_eq!(f64s(t2m)[0], 282.6);
+    assert_eq!(f64s(t2m)[9], 282.6, "successor == floor (held at the endpoint)");
+    let time = f64s(&provider.coords()["time"].field);
+    assert_eq!(time[0], time[1], "degenerate bracket has equal timestamps");
+    assert_eq!(
+        time[0],
+        datetime!(2018-11-08 01:00:00 UTC).unix_timestamp() as f64
+    );
+}
+
+#[test]
+fn interp_rejects_bad_mode() {
+    // An unsupported records-per-sample count is a clean error at refresh, not a panic.
+    let loader = DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(
+        LoaderTemporal::new(
+            datetime!(2018-11-08 00:00:00 UTC),
+            Duration::hours(1),
+            Duration::hours(1),
+        )
+        .records_per_sample(3),
+    );
+    let mut provider = Provider::new(loader, corpus_cache(), None).unwrap();
+    match provider.refresh(datetime!(2018-11-08 00:00:00 UTC)) {
+        Err(Error::Format { detail, .. }) => {
+            assert!(detail.contains("records_per_sample"), "detail: {detail}");
+        }
+        other => panic!("expected a Format error for a bad records_per_sample count, got {other:?}"),
+    }
 }
 
 // --- CONST (no temporal: read once, never refresh) --------------------------
