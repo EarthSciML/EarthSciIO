@@ -17,9 +17,11 @@
 //! [`crate::Provider`]** — exactly the extensibility invariant the three
 //! registries exist to guarantee.
 
+mod ff10;
 mod geotiff;
 mod netcdf;
 
+pub use ff10::Ff10Reader;
 pub use geotiff::GeoTiffReader;
 pub use netcdf::NetcdfReader;
 
@@ -237,6 +239,11 @@ impl FormatRegistry {
         let mut r = Self::new();
         r.register(Arc::new(NetcdfReader::new()));
         r.register(Arc::new(GeoTiffReader::new()));
+        // FF10 point (SMOKE/Emissions.jl FF10_POINT): the DEFAULT reader
+        // (member=None) decodes a bare `.csv` — the conformance/crosscheck path.
+        // A member-configured reader for the zipped tutorial input is injected via
+        // `Provider::with_formats` (no Provider/trait edit; see ff10.rs docs).
+        r.register(Arc::new(Ff10Reader::new()));
         r
     }
 

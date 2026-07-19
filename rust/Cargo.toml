@@ -36,6 +36,14 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # GeoTIFF georef axes (lon/lat) decode like the Python/Julia readers.
 tiff = "0.11"
 
+# Pure-Rust CSV + Zip decode for the `ff10` point reader. `csv` gives RFC-4180
+# quote handling (the free-text FACILITY_NAME may embed the delimiter); `zip`
+# extracts a named member from the `2016fd_inputs_point.zip` blob reader-side (the
+# member is reader config, never part of the cache key). Both are pure Rust — the
+# same "C compiler alone, no clang/bindgen" build story as the rest of the crate.
+csv = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 # Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
 # netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
 # NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle), with no
