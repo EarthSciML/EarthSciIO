@@ -104,11 +104,50 @@ function file_url_to_path(url::AbstractString)
     return startswith(rest, "/") ? rest : string("/", rest)
 end
 
-# --- s3 transport (STUB; esio-9nb.8) ----------------------------------------
+# --- s3 transport (ACTIVE: anonymous rewrite over the http transport) -------
 
-"""Registered stub for the future S3-proxy / object-store GET path. Registered
-now so the transport dispatch is complete; no network impl yet."""
-struct S3Transport <: Transport end
+"""Default S3 region — the pinned InMAP ISRM bucket lives in us-east-2."""
+const DEFAULT_S3_REGION = "us-east-2"
+
+"""Resolve the S3 region: explicit arg -> `\$EARTHSCI_S3_REGION` ->
+`\$AWS_REGION` -> [`DEFAULT_S3_REGION`]."""
+function resolve_s3_region(region::Union{Nothing,AbstractString} = nothing)
+    region === nothing || return String(region)
+    for k in ("EARTHSCI_S3_REGION", "AWS_REGION")
+        v = get(ENV, k, "")
+        isempty(v) || return v
+    end
+    return DEFAULT_S3_REGION
+end
+
+"""Rewrite `s3://<bucket>/<key…>` to regional virtual-hosted HTTPS
+(`https://<bucket>.s3.<region>.amazonaws.com/<key>`)."""
+function s3_https_url(s3_url::AbstractString, region::Union{Nothing,AbstractString} = nothing)
+    startswith(s3_url, "s3://") || error("not an s3:// URL: $s3_url")
+    rest = s3_url[6:end]                       # strip "s3://"
+    slash = findfirst('/', rest)
+    slash === nothing && error("s3:// URL has no object key: $s3_url")
+    bucket = rest[1:prevind(rest, slash)]
+    key = rest[nextind(rest, slash):end]
+    isempty(bucket) && error("s3:// URL has an empty bucket: $s3_url")
+    return "https://$bucket.s3.$(resolve_s3_region(region)).amazonaws.com/$key"
+end
+
+"""Anonymous `s3://` transport: rewrite `s3://<bucket>/<key>` to regional
+virtual-hosted HTTPS and delegate the plain GET to the `http` transport (no AWS
+SDK / SigV4). The canonical `s3://` URL stays in the cache key + manifest. The
+region defaults to us-east-2, overridable via `\$EARTHSCI_S3_REGION`/`\$AWS_REGION`
+or the `region` field. Conditional GET + auth thread through the delegate."""
+struct S3Transport <: Transport
+    region::Union{Nothing,String}
+    http::HttpTransport
+end
+S3Transport(; region = nothing) = S3Transport(region === nothing ? nothing : String(region),
+                                              HttpTransport())
 schemes(::S3Transport) = ["s3"]
-fetch!(::S3Transport, url::AbstractString, ::AbstractString; kwargs...) =
-    error("s3 transport is a registered STUB (esio-9nb.8); no network impl yet for $url")
+
+function fetch!(t::S3Transport, url::AbstractString, dest::AbstractString;
+                conditional = NamedTuple(), auth::AuthResolver = NoAuth())
+    https_url = s3_https_url(url, t.region)
+    return fetch!(t.http, https_url, dest; conditional = conditional, auth = auth)
+end

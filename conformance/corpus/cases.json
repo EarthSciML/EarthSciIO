@@ -20,6 +20,12 @@
       "file": "cases/ff10-point-slice.json",
       "cache_key": "d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2",
       "blob_path": "cache/v1/blobs/d0/d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2.csv"
+    },
+    {
+      "id": "isrm-zarr-tile",
+      "file": "cases/isrm-zarr-tile.json",
+      "cache_key": "229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d",
+      "blob_path": "cache/v1/blobs/22/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d"
     }
   ]
 }

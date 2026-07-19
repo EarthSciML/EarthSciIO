@@ -23,8 +23,14 @@ the change must be reconsidered — not the Provider.
 
 ## 1. `s3` transport (registry: `transport`, scheme `s3`)
 
-The future object-store GET path. Today: `S3Transport.fetch(...)` →
-`Unsupported`. Real implementation must:
+**LANDED (wave2-zarr-s3):** `status:"active"` in all three tracks. The anonymous
+read path is implemented as an `s3://<bucket>/<key>` → regional virtual-hosted
+HTTPS rewriter delegating to the `http` transport (region default `us-east-2`
+via `$EARTHSCI_S3_REGION`/`$AWS_REGION`); the `s3://` URL stays canonical in the
+cache key + manifest. **Still `esio-cloud` scope:** SigV4 / requester-pays auth
+(the `auth` resolver seam is threaded through unchanged so it plugs in with no
+transport edit) and a bucket→region probe. The original charter below stands for
+those:
 
 - **Object GET** for `s3://bucket/key` resolved URLs, returning bytes into the
   cache staging path (`tmp/<uuid>.part`) exactly as the `http` transport does;
@@ -66,9 +72,19 @@ The future object-store home for the content-addressed cache. Today every
 
 ## 3. `zarr` reader (registry: `format`, format `zarr`)
 
-The future chunked-array read path (and the NetCDF→Zarr conversion that feeds
-it). Today `ZarrReader.open(...)` / `read_native(...)` → `Unsupported`. Real
-implementation must:
+**LANDED (wave2-zarr-s3):** `status:"active"` in all three tracks as a
+**store-backed** reader (the Provider hands it `(cache, base_url, variables,
+select)` — a default-off, additive capability; active whole-file readers are
+untouched). It parses per-array `.zarray`/`.zattrs` (Zarr v2; **no** consolidated
+`.zmetadata`), computes the chunk set a lazy **orthogonal** selection intersects
+(`select = {axes: [...]}`), and fetches **only** those chunk objects (each its
+own `sha256(object_url)` blob) through the existing cache — blosc/lz4+shuffle
+decode, C-order unpack, `<f4`/`<f8`→float64, dims from `_ARRAY_DIMENSIONS`, no
+coords. **Deliberate deviation:** `fill_value` is **not** mapped to NaN (0.0 is
+real ISRM data). Proven by the `isrm-zarr-tile` conformance case (three-way
+byte/value equality). **Still `esio-cloud` scope:** Zarr **v3** + sharding, the
+NetCDF→Zarr conversion, non-`lz4` codecs, and `order:"F"`/filter pipelines
+(defended against but unexercised). The original charter below stands for those:
 
 - **Open a chunked store** — local directory *and* remote (`s3://…`) via the
   same `store`/transport seam; read **consolidated metadata** when present.

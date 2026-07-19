@@ -20,15 +20,18 @@
 mod ff10;
 mod geotiff;
 mod netcdf;
+mod zarr;
 
 pub use ff10::Ff10Reader;
 pub use geotiff::GeoTiffReader;
 pub use netcdf::NetcdfReader;
+pub use zarr::ZarrReader;
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::cache::Cache;
 use crate::error::Result;
 
 /// Logical element type of a native array (`spec/schemas/native-field.schema.json`).
@@ -184,14 +187,67 @@ pub struct NativeDataset {
 /// Which records/rows of a blob to read. `All` reads the whole blob — the
 /// conformance corpus default (`select.all_records` / `select.all_rows`).
 ///
-/// Extension point: a future variant can carry a record range or row predicate
-/// without changing the [`Reader`] trait shape.
+/// `Orthogonal` carries one selector per array dimension (in `dims`/positional
+/// order) — a lazy orthogonal selection for the store-backed [`ZarrReader`],
+/// where each axis independently picks indices/a range/all.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub enum Selection {
     /// Read every record/row in the blob.
     #[default]
     All,
+    /// A per-axis orthogonal selection (store-backed readers). One [`AxisSelect`]
+    /// per array dimension; applied to arrays whose rank matches the axis count.
+    Orthogonal(Vec<AxisSelect>),
+}
+
+/// One array dimension's selector in an orthogonal [`Selection::Orthogonal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AxisSelect {
+    /// The whole dimension.
+    All,
+    /// An explicit, possibly non-contiguous, ordered index list. The output
+    /// length along this axis is `indices.len()` in the given order.
+    Indices(Vec<usize>),
+    /// A strided range `[start, stop)` by `step` (`step >= 1`).
+    Range {
+        /// Inclusive start.
+        start: usize,
+        /// Exclusive stop.
+        stop: usize,
+        /// Stride (>= 1).
+        step: usize,
+    },
+}
+
+impl AxisSelect {
+    /// Resolve this selector to its ordered list of global indices over a
+    /// dimension of length `dim_len`.
+    pub fn resolve(&self, dim_len: usize) -> Result<Vec<usize>> {
+        match self {
+            AxisSelect::All => Ok((0..dim_len).collect()),
+            AxisSelect::Indices(v) => {
+                for &g in v {
+                    if g >= dim_len {
+                        return Err(crate::Error::Format {
+                            format: "zarr".to_string(),
+                            detail: format!("index {g} out of range for dimension length {dim_len}"),
+                        });
+                    }
+                }
+                Ok(v.clone())
+            }
+            AxisSelect::Range { start, stop, step } => {
+                if *step < 1 {
+                    return Err(crate::Error::Format {
+                        format: "zarr".to_string(),
+                        detail: format!("slice step must be >= 1, got {step}"),
+                    });
+                }
+                Ok((*start..*stop).step_by(*step).collect())
+            }
+        }
+    }
 }
 
 /// A format reader (`spec/registries.md` §2): opens a cached blob and returns
@@ -216,6 +272,30 @@ pub trait Reader: Send + Sync {
         variables: &[String],
         select: &Selection,
     ) -> Result<NativeDataset>;
+
+    /// Whether this reader is **store-backed**: its source is not one fetchable
+    /// blob but a directory-like store (a Zarr v2 store, whose `.zarray`/
+    /// `.zattrs`/chunks are each their own object). Default `false`; whole-file
+    /// readers (`netcdf`/`geotiff`) inherit it unchanged.
+    fn store_backed(&self) -> bool {
+        false
+    }
+
+    /// Decode a store at `base_url` into native arrays, fetching each object it
+    /// needs through `cache`. Only called by the Provider when
+    /// [`store_backed`](Reader::store_backed) is `true` (default: an error).
+    fn read_store(
+        &self,
+        _cache: &Cache,
+        _base_url: &str,
+        _variables: &[String],
+        _select: &Selection,
+    ) -> Result<NativeDataset> {
+        Err(crate::Error::Format {
+            format: "native".to_string(),
+            detail: "reader is not store-backed".to_string(),
+        })
+    }
 }
 
 /// Format-name → reader lookup (`spec/registries.md` §2). Adding a reader is a
@@ -244,6 +324,7 @@ impl FormatRegistry {
         // A member-configured reader for the zipped tutorial input is injected via
         // `Provider::with_formats` (no Provider/trait edit; see ff10.rs docs).
         r.register(Arc::new(Ff10Reader::new()));
+        r.register(Arc::new(ZarrReader::new()));
         r
     }
 
@@ -274,7 +355,9 @@ mod tests {
     fn builtins_cover_netcdf() {
         let r = FormatRegistry::with_builtins();
         assert!(r.get("netcdf").is_some());
-        assert!(r.get("zarr").is_none()); // stub, not active here
+        assert!(r.get("zarr").is_some()); // store-backed zarr reader is active
+        assert!(r.get("zarr").unwrap().store_backed());
+        assert!(!r.get("netcdf").unwrap().store_backed());
     }
 
     #[test]

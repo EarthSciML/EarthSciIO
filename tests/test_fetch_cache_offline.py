@@ -204,6 +204,17 @@ def test_conformance_corpus_resolves_offline():
     assert index["cases"], "corpus index is empty"
     for entry_idx in index["cases"]:
         case = json.loads((CORPUS / entry_idx["file"]).read_text())
+        # A store-backed (zarr) case's resolved_url is a directory-like store base,
+        # not a fetchable blob — each object in `objects` resolves offline instead.
+        targets = case.get("objects")
+        if targets:
+            for o in targets:
+                result = offline.fetch(o["url"])
+                assert result.status == "hit", (case["id"], o["url"])
+                assert result.key == o["cache_key"], (case["id"], o["url"])
+                assert sha256_file(result.path) == o["content_sha256"], o["url"]
+                assert os.path.getsize(result.path) == o["bytes"], o["url"]
+            continue
         result = offline.fetch(case["resolved_url"])
         assert result.status == "hit", case["id"]
         assert result.key == case["cache_key"], case["id"]

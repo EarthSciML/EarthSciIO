@@ -2,6 +2,7 @@ using EarthSciIO
 using Test
 using SHA: sha256
 import JSON
+import Blosc   # activates the EarthSciIOBloscExt weakdep ext for the zarr decode
 
 @testset "EarthSciIO — Julia track: cache + transport + store + readers + provider" begin
     # component (a): cache / transport / store
@@ -14,5 +15,6 @@ import JSON
     # component (b): format readers + cadence provider (esio-9nb.5)
     include("test_readers.jl")       # checks 3, 4; defines the corpus comparison helpers
     include("test_geotiff_reader.jl")  # gap G3: geotiff reader via the TiffImages weakdep ext
+    include("test_zarr.jl")          # store-backed zarr reader: lazy orthogonal selection
     include("test_provider.jl")      # cadence + the full offline pipeline; reuses helpers
 end

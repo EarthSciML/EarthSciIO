@@ -123,6 +123,7 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
     cache = Cache(root=CORPUS / "cache", offline=True, verify=True)
 
     reader_kwargs: Dict[str, Any] = {}
+    variables: List[str] = []
     if fmt == "csv":
         # numeric_columns is REQUIRED by the loader spec (digit-only text columns
         # like location_id must stay strings); the corpus case pins the list.
@@ -133,11 +134,18 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
         reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
         reader_kwargs["kind"] = case["decode"].get("kind", "point")
         reader_kwargs["member"] = case["decode"].get("member")
+    elif fmt == "zarr":
+        # Store-backed: the reader is handed (cache, base_url, variables, select).
+        # `variables` names the arrays (no .zmetadata to enumerate); `select` (the
+        # orthogonal selection) rides in reader_kwargs and drives lazy chunk fetch.
+        variables = list(case["variables"])
+        reader_kwargs["select"] = case.get("select")
 
     loader = DataLoader(
         name=case["loader"],
         format=fmt,
         url=case["resolved_url"],
+        variables=variables,
         reader_kwargs=reader_kwargs,
     )
     provider = Provider(loader, cache)

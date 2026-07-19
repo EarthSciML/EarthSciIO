@@ -24,6 +24,29 @@ const CORPUS = normpath(joinpath(@__DIR__, "..", "..", "conformance", "corpus"))
     for entry in cases
         case = JSON.parsefile(joinpath(CORPUS, entry["file"]))
         id = case["id"]
+
+        # A store-backed (zarr) case's resolved_url is a directory-like store base,
+        # not a fetchable blob — checks 1/2/5 run PER OBJECT over the objects array.
+        if haskey(case, "objects")
+            @testset "$id (store-backed, per-object)" begin
+                for o in case["objects"]
+                    k = cache_key(o["url"])
+                    @test k == o["cache_key"]
+                    bp = EarthSciIO.get_blob(store, k)
+                    @test bp !== nothing
+                    blob = read(bp)
+                    @test bytes2hex(sha256(blob)) == o["content_sha256"]
+                    @test length(blob) == o["bytes"]
+                    m = EarthSciIO.get_meta(store, k)
+                    @test m !== nothing && m.url == o["url"]
+                    @test m.sha256_content == o["content_sha256"]
+                    e = fetch_blob(cache, o["url"])
+                    @test e.status == :hit
+                end
+            end
+            continue
+        end
+
         url = case["resolved_url"]
         key = case["cache_key"]
 

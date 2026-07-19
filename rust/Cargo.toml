@@ -44,6 +44,14 @@ tiff = "0.11"
 csv = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# Pure-Rust LZ4 (raw block) decode for the `zarr` reader's blosc-lz4 chunks. The
+# blosc1 container is decoded by hand (16-byte header + block offsets + inverse
+# byte-shuffle, in rust/src/format/zarr.rs); lz4_flex decompresses each block.
+# Pure Rust, no C/FFI, no `unsafe` in this crate — so `#![forbid(unsafe_code)]`
+# is preserved. (The `blosc` crate is rejected here because its `decompress_bytes`
+# is an `unsafe fn` this crate could not call under forbid(unsafe_code).)
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode"] }
+
 # Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
 # netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
 # NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle), with no

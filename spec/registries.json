@@ -10,7 +10,7 @@
         {"name": "http", "schemes": ["http", "https"], "status": "active"},
         {"name": "file", "schemes": ["file"], "status": "active", "notes": "Expands ${EARTHSCIDATADIR} inside file:// templates; local copy into cache."},
         {"name": "cds", "schemes": ["cds"], "status": "active", "notes": "Copernicus CDS API v1: cds://<dataset>?<canonical-request-json> is submitted (POST .../execution), the job is polled to completion, and the result asset href is downloaded into the cache. Auth via the 'cds' realm (PRIVATE-TOKEN from ~/.cdsapirc or $CDSAPI_KEY)."},
-        {"name": "s3", "schemes": ["s3"], "status": "stub", "notes": "Object-store GET; the future S3-proxy/cloud path. Registered as a stub, no network impl yet."}
+        {"name": "s3", "schemes": ["s3"], "status": "active", "notes": "Anonymous object GET: rewrites s3://<bucket>/<key> to regional virtual-hosted HTTPS (https://<bucket>.s3.<region>.amazonaws.com/<key>, region default us-east-2 via $EARTHSCI_S3_REGION/$AWS_REGION) and delegates to the http transport. No AWS SDK / SigV4; the s3:// URL stays canonical in the cache key + manifest."}
       ]
     },
     "format": {
@@ -23,7 +23,7 @@
         {"name": "csv", "extensions": ["csv"], "content_types": ["text/csv"], "status": "active", "notes": "Points readers: numeric columns->float64 1-D arrays, others->string."},
         {"name": "json", "extensions": ["json"], "content_types": ["application/json"], "status": "active", "notes": "Points readers (e.g. station discovery payloads)."},
         {"name": "ff10", "extensions": ["ff10", "csv"], "content_types": ["text/csv"], "status": "active", "notes": "FF10 point long-format (SMOKE/Emissions.jl FF10_POINT); '#' header skipped; fixed 77-col schema; numeric->float64 (blank->NaN), ids/codes/text->string; zip member via reader `member` kwarg (member is NOT part of the cache key). Reader-only: no pivot/unit-convert/FIPS-SCC-normalize/EGU-filter."},
-        {"name": "zarr", "extensions": ["zarr"], "content_types": [], "status": "stub", "notes": "Chunked array store; the future NetCDF->Zarr cloud path. Registered as a stub."}
+        {"name": "zarr", "extensions": ["zarr"], "content_types": ["application/vnd+zarr"], "status": "active", "notes": "Store-backed Zarr v2 reader: parses per-array .zarray/.zattrs (no consolidated .zmetadata), fetches ONLY the chunk objects a lazy orthogonal selection intersects (each chunk its own object, keyed by sha256(object_url)), blosc/lz4+shuffle decode, C-order unpack, <f4/<f8 -> float64, dims from _ARRAY_DIMENSIONS, no coordinate arrays. fill_value is NOT mapped to NaN."}
       ]
     },
     "store": {

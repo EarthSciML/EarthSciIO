@@ -22,10 +22,13 @@ end
     @test TRANSPORT_REGISTRY["s3"] isa S3Transport
     @test status_of(TRANSPORT_REGISTRY, "http") == :active
     @test status_of(TRANSPORT_REGISTRY, "file") == :active
-    @test status_of(TRANSPORT_REGISTRY, "s3") == :stub
+    # the s3 transport is now ACTIVE: an anonymous s3:// -> regional-HTTPS rewriter
+    # over the http transport (the rewrite is pure + testable without a socket).
+    @test status_of(TRANSPORT_REGISTRY, "s3") == :active
     @test EarthSciIO.schemes(TRANSPORT_REGISTRY["http"]) == ["http", "https"]
-    # the s3 transport is a registered stub: present, but errors if used
-    @test_throws ErrorException EarthSciIO.fetch!(S3Transport(), "s3://b/k", tempname())
+    @test EarthSciIO.s3_https_url("s3://bucket/era5/2018/20181108.nc") ==
+          "https://bucket.s3.us-east-2.amazonaws.com/era5/2018/20181108.nc"
+    @test_throws ErrorException EarthSciIO.s3_https_url("https://not-s3/x")
 end
 
 @testset "store registry — keyed by store name, value is a factory" begin
@@ -39,8 +42,10 @@ end
     @test_throws ErrorException EarthSciIO.get_blob(S3Store(), "deadbeef")
 end
 
-@testset "format registry — zarr stub now; readers are esio-9nb.5" begin
+@testset "format registry — zarr active + store-backed" begin
     @test haskey(FORMAT_REGISTRY, "zarr")
-    @test status_of(FORMAT_REGISTRY, "zarr") == :stub
-    @test_throws ErrorException EarthSciIO.read_native(FORMAT_REGISTRY["zarr"])
+    @test status_of(FORMAT_REGISTRY, "zarr") == :active
+    @test FORMAT_REGISTRY["zarr"] isa ZarrReader
+    @test store_backed(FORMAT_REGISTRY["zarr"])          # handed (cache, base_url)
+    @test !store_backed(FORMAT_REGISTRY["netcdf"])       # whole-file readers untouched
 end

@@ -15,9 +15,32 @@
 use std::fs;
 use std::path::PathBuf;
 
-use earthsciio::{ArrayData, Coord, DType};
+use earthsciio::{ArrayData, AxisSelect, Coord, DType};
 use earthsciio::{Cache, FetchRequest, FormatRegistry, NativeField, Selection};
 use serde_json::Value;
+
+/// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
+/// zarr cases); absent ⇒ `Selection::All`.
+fn parse_selection(case: &Value) -> Selection {
+    match case.get("select").and_then(|s| s.get("axes")).and_then(Value::as_array) {
+        Some(arr) => Selection::Orthogonal(arr.iter().map(parse_axis).collect()),
+        None => Selection::All,
+    }
+}
+
+fn parse_axis(v: &Value) -> AxisSelect {
+    if v.as_str() == Some("all") {
+        return AxisSelect::All;
+    }
+    if let Some(idx) = v.get("indices").and_then(Value::as_array) {
+        return AxisSelect::Indices(idx.iter().map(|x| x.as_u64().unwrap() as usize).collect());
+    }
+    if let Some(s) = v.get("slice").and_then(Value::as_array) {
+        let g = |i: usize, d: u64| s.get(i).and_then(Value::as_u64).unwrap_or(d) as usize;
+        return AxisSelect::Range { start: g(0, 0), stop: g(1, 0), step: g(2, 1) };
+    }
+    panic!("unrecognized axis selector: {v}")
+}
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/corpus")
@@ -59,13 +82,30 @@ fn decodes_every_corpus_case_to_match_expected() {
         };
         decoded_any = true;
 
-        // Resolve the blob offline (reuses the Python-cached bytes), then decode.
-        let blob = cache
-            .fetch(&FetchRequest::new(case["resolved_url"].as_str().unwrap()))
-            .unwrap_or_else(|e| panic!("offline resolve failed for {id}: {e}"));
-        let ds = reader
-            .read_native(&blob.path, &[], &Selection::All)
-            .unwrap_or_else(|e| panic!("decode failed for {id}: {e}"));
+        // Store-backed (zarr): a Zarr store is many objects, not one blob — the
+        // reader is handed (cache, base_url, variables, select) and fetches only
+        // the intersecting chunk objects itself. Whole-file readers take the
+        // single-blob path.
+        let ds = if reader.store_backed() {
+            let vars: Vec<String> = case["variables"]
+                .as_array()
+                .expect("store-backed case has a variables array")
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect();
+            let sel = parse_selection(&case);
+            reader
+                .read_store(&cache, case["resolved_url"].as_str().unwrap(), &vars, &sel)
+                .unwrap_or_else(|e| panic!("store decode failed for {id}: {e}"))
+        } else {
+            // Resolve the blob offline (reuses the Python-cached bytes), then decode.
+            let blob = cache
+                .fetch(&FetchRequest::new(case["resolved_url"].as_str().unwrap()))
+                .unwrap_or_else(|e| panic!("offline resolve failed for {id}: {e}"));
+            reader
+                .read_native(&blob.path, &[], &Selection::All)
+                .unwrap_or_else(|e| panic!("decode failed for {id}: {e}"))
+        };
 
         // Check 4a: data variables.
         let exp_vars = case["expected"]["variables"].as_object().unwrap();

@@ -124,9 +124,18 @@ is_const(p::Provider) = p.cadence == CONST
 
 # Fetch (cache) + decode (format reader) for the URL resolved at `t`.
 function _load(p::Provider, t)
+    reader = FORMAT_REGISTRY[p.format]
+    # Store-backed readers (e.g. zarr) are handed (cache, base_url; variables,
+    # select): a Zarr `url` is a directory-like prefix, not a fetchable blob, so
+    # the reader fetches individual objects on demand. `select` rides in
+    # reader_kwargs. Active whole-file readers inherit `store_backed = false`.
+    if store_backed(reader)
+        return read_store(reader, p.cache, p.url_for(t);
+                          variables = p.variables, p.reader_kwargs...)
+    end
     entry = fetch_blob(p.cache, p.url_for(t);
                        source_loader = p.source_loader, auth_realm = p.auth_realm)
-    nds = read_native(FORMAT_REGISTRY[p.format], entry.path; p.reader_kwargs...)
+    nds = read_native(reader, entry.path; p.reader_kwargs...)
     return p.variables === nothing ? nds : _select(nds, p.variables)
 end
 

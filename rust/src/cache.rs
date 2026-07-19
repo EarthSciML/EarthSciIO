@@ -25,8 +25,8 @@ use crate::manifest::{Manifest, MANIFEST_SCHEMA};
 use crate::offline;
 use crate::store::{LocalStore, StagingFile, Store, StoreRegistry};
 use crate::transport::{
-    CdsTransport, Conditional, FetchResult, FetchStatus, FileTransport, HttpTransport, Transport,
-    TransportRegistry,
+    CdsTransport, Conditional, FetchResult, FetchStatus, FileTransport, HttpTransport, S3Transport,
+    Transport, TransportRegistry,
 };
 use crate::validate::{self, CacheDecision, Temporal};
 
@@ -493,6 +493,7 @@ impl CacheBuilder {
                 transports.register(Arc::new(HttpTransport::new()));
                 transports.register(Arc::new(FileTransport::new()));
                 transports.register(Arc::new(CdsTransport::new()));
+                transports.register(Arc::new(S3Transport::new()));
             }
             for transport in self.user_transports {
                 transports.register(transport);

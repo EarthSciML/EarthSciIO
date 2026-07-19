@@ -62,7 +62,7 @@ FetchResult = {
 | `http` | `http`, `https` | **active** | GET + conditional GET; mirror failover at the call site |
 | `file` | `file` | **active** | local copy; expands `${EARTHSCIDATADIR}` in `file://` templates |
 | `cds` | `cds` | **active** | Copernicus CDS API v1: `cds://<dataset>?<request-json>` → submit → poll job → download asset href; auth via the `cds` realm (`PRIVATE-TOKEN`) |
-| `s3` | `s3` | **stub** | object-store GET; the future cloud path |
+| `s3` | `s3` | **active** | anonymous `s3://<bucket>/<key>` → regional virtual-hosted HTTPS (region default `us-east-2` via `$EARTHSCI_S3_REGION`/`$AWS_REGION`); delegates to the `http` transport (no AWS SDK/SigV4). The `s3://` URL stays canonical in the cache key + manifest |
 
 Registration key = **URL scheme**. The fetch layer reads the resolved URL's
 scheme and looks up the transport; an unknown scheme is a registration gap, not
@@ -96,7 +96,7 @@ NativeField = { dtype, dims: [string], shape: [int], data, fill_value? }
 | `csv` | `csv` | **active** | points: numeric cols → float64, others → string |
 | `json` | `json` | **active** | points (e.g. station-discovery payloads) |
 | `ff10` | `ff10`,`csv` | **active** | FF10 point long-format (SMOKE/Emissions.jl `FF10_POINT`): `#` header skipped, fixed 77-col schema, numeric→float64 (blank→NaN), ids/codes/text→string; zip member via reader `member` kwarg. Reader-only (no pivot/convert/normalize/filter) |
-| `zarr` | `zarr` | **stub** | chunked store; the future NetCDF→Zarr path |
+| `zarr` | `zarr` | **active** | **store-backed** Zarr v2: per-array `.zarray`/`.zattrs`, lazy orthogonal chunk selection (fetch only intersecting chunk objects), blosc/lz4+shuffle decode, `<f4`/`<f8`→float64, dims from `_ARRAY_DIMENSIONS`, `fill_value` not→NaN, no coords |
 
 **Hard boundary (Risk R3):** the reader applies **read/decode** semantics only —
 CF `scale_factor`/`add_offset`, `_FillValue` → NaN, endianness, chunking. It

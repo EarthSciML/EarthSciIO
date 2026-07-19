@@ -44,6 +44,24 @@ fn reuses_python_cached_corpus_offline() {
         let case: serde_json::Value =
             serde_json::from_slice(&fs::read(&case_path).unwrap()).unwrap();
 
+        // A store-backed (zarr) case's resolved_url is a directory-like store
+        // base, not a fetchable blob — checks 1/2/5 run PER OBJECT.
+        if let Some(objects) = case.get("objects").and_then(|v| v.as_array()) {
+            for o in objects {
+                let ourl = o["url"].as_str().unwrap();
+                assert_eq!(cache_key(ourl), o["cache_key"].as_str().unwrap(), "obj key {ourl}");
+                let blob = cache
+                    .fetch(&FetchRequest::new(ourl))
+                    .unwrap_or_else(|e| panic!("offline reuse failed for {ourl}: {e}"));
+                assert_eq!(blob.key, o["cache_key"].as_str().unwrap());
+                assert_eq!(blob.manifest.sha256_content, o["content_sha256"].as_str().unwrap());
+                assert_eq!(blob.manifest.bytes, o["bytes"].as_u64().unwrap());
+                assert_eq!(blob.manifest.url, ourl);
+                assert_eq!(sha256_file(&blob.path).unwrap(), o["content_sha256"].as_str().unwrap());
+            }
+            continue;
+        }
+
         let url = case["resolved_url"].as_str().unwrap();
         let expected_key = case["cache_key"].as_str().unwrap();
         let expected_sha = case["content_sha256"].as_str().unwrap();

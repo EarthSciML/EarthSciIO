@@ -115,6 +115,17 @@ function staging_path end    # -> a fresh tmp/<uuid>.part staging path
 # Reader (format) — component (b)/esio-9nb.5.
 function read_native end
 
+# Store-backed reader capability (additive; default-off). A reader whose source
+# is NOT one fetchable blob but a directory-like store (a Zarr v2 store, whose
+# `.zarray`/`.zattrs`/chunks are each their own object) declares
+# `store_backed(::TheReader) = true` and implements `read_store(reader, cache,
+# base_url; variables, select, kwargs...)`. The Provider gates on
+# `store_backed(reader)` and, when true, hands the reader `(cache, base_url)` so
+# it fetches individual objects on demand — instead of pre-fetching one blob and
+# calling `read_native`. Active whole-file readers inherit the `false` default.
+store_backed(::Any) = false
+function read_store end
+
 """A registered-but-unimplemented reader (e.g. the `zarr` stub). Calling it is a
 clear error pointing at the bead that will implement it."""
 struct StubReader

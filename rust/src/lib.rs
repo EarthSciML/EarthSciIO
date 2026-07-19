@@ -72,8 +72,8 @@ pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 pub use error::{Error, Result};
 pub use format::{
-    ArrayData, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader, NativeDataset,
-    NativeField, NetcdfReader, Reader, Selection,
+    ArrayData, AxisSelect, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader, NativeDataset,
+    NativeField, NetcdfReader, Reader, Selection, ZarrReader,
 };
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};

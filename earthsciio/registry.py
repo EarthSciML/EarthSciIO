@@ -125,6 +125,23 @@ class Reader(Protocol):
         """Read ``variables`` (file_variable names) into native fields + coords."""
         ...
 
+    # --- optional: the store-backed capability (additive; default-off) ----- #
+    #
+    # A reader whose source is NOT one fetchable blob but a directory-like store
+    # (a Zarr v2 store, whose ``.zarray``/``.zattrs``/chunks are each their own
+    # object) may declare itself **store-backed** by exposing::
+    #
+    #     store_backed: bool = True
+    #     def read_store(self, cache, base_url, variables, select=None, **kwargs)
+    #             -> NativeDataset: ...
+    #
+    # The Provider gates on ``getattr(reader, "store_backed", False)`` and, when
+    # true, calls ``read_store(cache, base_url, variables, **reader_kwargs)`` —
+    # handing the reader the cache + the base URL so it can fetch individual
+    # objects on demand — instead of pre-fetching one blob and calling
+    # ``read_native`` (``earthsciio.provider.Provider._read_file``). Active
+    # whole-file readers define **neither** attribute and are wholly unaffected.
+
 
 @runtime_checkable
 class Store(Protocol):
