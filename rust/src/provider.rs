@@ -129,6 +129,10 @@ pub struct DataLoader {
     pub mirrors: Vec<String>,
     /// Auth realm to fetch under (resolved by the cache's auth registry).
     pub auth_realm: Option<String>,
+    /// Spatial/orthogonal selection for a **store-backed** reader (e.g. zarr).
+    /// Default [`Selection::All`]; ignored by whole-file readers (the Provider
+    /// still owns temporal record slicing).
+    pub select: Selection,
 }
 
 impl DataLoader {
@@ -147,7 +151,14 @@ impl DataLoader {
             url_template: url_template.into(),
             mirrors: Vec::new(),
             auth_realm: None,
+            select: Selection::All,
         }
+    }
+
+    /// Set the spatial/orthogonal selection for a store-backed reader (zarr).
+    pub fn select(mut self, select: Selection) -> Self {
+        self.select = select;
+        self
     }
 
     /// Restrict to specific on-disk variable names (empty keeps "all").
@@ -450,6 +461,18 @@ impl Provider {
 
     /// Fetch + decode a file into a native dataset.
     fn read_file(&self, url: String) -> Result<NativeDataset> {
+        // Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
+        // select): a Zarr `url` is a directory-like prefix, not a fetchable blob,
+        // so the reader fetches individual objects on demand. Additive + default-
+        // off: whole-file readers inherit `store_backed() == false`.
+        if self.reader.store_backed() {
+            return self.reader.read_store(
+                self.cache.as_ref(),
+                &url,
+                &self.loader.variables,
+                &self.loader.select,
+            );
+        }
         let blob = self.fetch_blob(&url)?;
         self.reader
             .read_native(&blob.path, &self.loader.variables, &Selection::All)

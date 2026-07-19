@@ -7,12 +7,14 @@
 mod cds;
 mod file;
 mod http;
+mod s3;
 
 pub use cds::{
     build_cds_url, cds_api_key, cds_auth, parse_cds_url, CdsTransport, CDS_API_URL, CDS_REALM,
 };
 pub use file::FileTransport;
 pub use http::HttpTransport;
+pub use s3::{resolve_region, s3_https_url, S3Transport, DEFAULT_S3_REGION};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -97,6 +99,7 @@ impl TransportRegistry {
         r.register(Arc::new(HttpTransport::new()));
         r.register(Arc::new(FileTransport::new()));
         r.register(Arc::new(CdsTransport::new()));
+        r.register(Arc::new(S3Transport::new()));
         r
     }
 
@@ -131,6 +134,6 @@ mod tests {
         assert!(r.get("https").is_some());
         assert!(r.get("file").is_some());
         assert!(r.get("cds").is_some()); // Copernicus CDS API
-        assert!(r.get("s3").is_none()); // stub, not active here
+        assert!(r.get("s3").is_some()); // anonymous s3:// -> regional HTTPS rewrite
     }
 }

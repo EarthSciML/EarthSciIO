@@ -172,6 +172,7 @@ name = "earthsciio"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "lz4_flex",
  "netcdf-reader",
  "reqwest",
  "serde",

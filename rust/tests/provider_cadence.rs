@@ -350,10 +350,10 @@ fn const_materialize_reads_whole_file_and_never_refreshes() {
 
 #[test]
 fn unknown_format_is_a_clean_error() {
-    let loader = DataLoader::new("mystery", "zarr", ERA5_URL); // no zarr reader yet
+    let loader = DataLoader::new("mystery", "grib", ERA5_URL); // no grib reader
                                                                // (Provider holds trait objects and isn't Debug, so match rather than unwrap_err.)
     match Provider::new(loader, corpus_cache(), None) {
-        Err(Error::UnknownFormat { name }) => assert_eq!(name, "zarr"),
+        Err(Error::UnknownFormat { name }) => assert_eq!(name, "grib"),
         Err(other) => panic!("expected UnknownFormat, got {other}"),
         Ok(_) => panic!("expected UnknownFormat error for an unregistered format"),
     }

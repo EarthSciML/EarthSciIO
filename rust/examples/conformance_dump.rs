@@ -20,8 +20,34 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use earthsciio::{ArrayData, Cache, Coord, DType, DataLoader, FormatRegistry, NativeField, Provider};
+use earthsciio::{
+    ArrayData, AxisSelect, Cache, Coord, DType, DataLoader, FormatRegistry, NativeField, Provider,
+    Selection,
+};
 use serde_json::{json, Map, Value};
+
+/// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
+/// zarr cases); absent ⇒ `Selection::All`.
+fn parse_selection(case: &Value) -> Selection {
+    match case.get("select").and_then(|s| s.get("axes")).and_then(Value::as_array) {
+        Some(arr) => Selection::Orthogonal(arr.iter().map(parse_axis).collect()),
+        None => Selection::All,
+    }
+}
+
+fn parse_axis(v: &Value) -> AxisSelect {
+    if v.as_str() == Some("all") {
+        return AxisSelect::All;
+    }
+    if let Some(idx) = v.get("indices").and_then(Value::as_array) {
+        return AxisSelect::Indices(idx.iter().map(|x| x.as_u64().unwrap() as usize).collect());
+    }
+    if let Some(s) = v.get("slice").and_then(Value::as_array) {
+        let g = |i: usize, d: u64| s.get(i).and_then(Value::as_u64).unwrap_or(d) as usize;
+        return AxisSelect::Range { start: g(0, 0), stop: g(1, 0), step: g(2, 1) };
+    }
+    panic!("unrecognized axis selector: {v}")
+}
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../conformance/corpus")
@@ -102,7 +128,18 @@ fn dump_case(corpus: &Path, case: &Value, formats: &FormatRegistry) -> Value {
         .expect("offline cache over the corpus");
 
     let url = case["resolved_url"].as_str().unwrap();
-    let loader = DataLoader::new(case["loader"].as_str().unwrap(), fmt, url);
+    let mut loader = DataLoader::new(case["loader"].as_str().unwrap(), fmt, url);
+    // Store-backed (zarr): name the arrays (no .zmetadata to enumerate) + carry
+    // the orthogonal selection that drives lazy chunk fetch.
+    if formats.get(fmt).map(|r| r.store_backed()).unwrap_or(false) {
+        let vars: Vec<String> = case["variables"]
+            .as_array()
+            .expect("store-backed case has a variables array")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        loader = loader.variables(vars).select(parse_selection(case));
+    }
     let mut provider =
         Provider::new(loader, Arc::new(cache), None).expect("provider over corpus");
     let buffers = provider.materialize().expect("materialize the corpus blob");

@@ -65,7 +65,11 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def blob_relpath(key: str, ext: str) -> str:
-    return f"cache/{CACHE_FORMAT_VERSION}/blobs/{key[:2]}/{key}.{ext}"
+    # A bare key (no extension, e.g. a Zarr chunk/metadata object) is stored
+    # WITHOUT a trailing dot, matching the real LocalStore (glob lookup is by
+    # <key>*, so the suffix is human-debug only).
+    suffix = f".{ext}" if ext else ""
+    return f"cache/{CACHE_FORMAT_VERSION}/blobs/{key[:2]}/{key}{suffix}"
 
 
 def meta_relpath(key: str) -> str:
