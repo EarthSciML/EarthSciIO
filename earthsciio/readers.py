@@ -22,6 +22,7 @@ imports them lazily so the cache/transport core stays lean.
 from __future__ import annotations
 
 import csv as _csv
+import zipfile as _zipfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -29,7 +30,13 @@ import numpy as np
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry
 
-__all__ = ["NetCDFReader", "CSVReader", "GeoTIFFReader", "register_format_readers"]
+__all__ = [
+    "NetCDFReader",
+    "CSVReader",
+    "GeoTIFFReader",
+    "FF10Reader",
+    "register_format_readers",
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -476,6 +483,165 @@ class GeoTIFFReader:
 
 
 # --------------------------------------------------------------------------- #
+# FF10 point reader — the RAW long-format FF10 point table (SMOKE/Emissions.jl).
+#
+# A NEW reader: the CSVReader skips only empty lines (not ``#`` comments) and does
+# not apply a fixed positional schema, so it cannot read FF10. The 77 column names
+# are copied from Emissions.jl ``src/ff10.jl`` ``FF10_POINT_COLUMNS``, with the
+# SMOKE FF10_POINT spec names COUNTRY_CD/REGION_CD for the first two (Emissions.jl:
+# COUNTRY/FIPS — identical values, a positional alias).
+# --------------------------------------------------------------------------- #
+
+FF10_POINT_COLUMNS = [
+    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
+    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
+    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
+    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
+    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
+    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
+    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
+    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
+    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
+    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
+    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
+    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
+    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
+    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COMMENT",
+]
+
+#: The 42 FF10 point columns decoded to ``float64`` (blank -> ``NaN``); every
+#: other column (ids/codes/free-text/temporal tokens) stays ``str`` so leading-
+#: zero codes (REGION_CD ``"01001"``, ZIPCODE ``"00000"``, SCC, POLID) and dates
+#: (DATE_UPDATED/CALC_YEAR) never become floats. Overridable via ``numeric_columns``.
+FF10_POINT_NUMERIC = frozenset({
+    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
+    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
+    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
+    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
+    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
+    "NOV_PCTRED", "DEC_PCTRED",
+})
+
+
+class FF10Reader:
+    """The active ``ff10`` reader — the RAW long-format FF10 **point** table.
+
+    Unlike :class:`CSVReader` (which only skips empty lines and does not apply a
+    fixed positional schema), this reader (a) skips the leading ``#`` comment
+    header block (``#FORMAT=…``, ``#COUNTRY``, …), (b) applies the fixed 77-column
+    :data:`FF10_POINT_COLUMNS` schema positionally — FF10 data rows carry no clean
+    header row, so the names come from the schema constant exactly as Emissions.jl
+    supplies them — and (c) does RFC-4180 quote handling (via :mod:`csv`) so a
+    free-text ``FACILITY_NAME`` may embed the delimiter.
+
+    Each of the 77 columns becomes one :class:`NativeField` on a single ``index``
+    dim (one index per data row); there are no coordinates (``LONGITUDE`` /
+    ``LATITUDE`` are ordinary variables — a points table has no gridded axis). The
+    42 numeric columns parse to ``float64`` (blank -> ``NaN``); the other 35 stay
+    ``str`` (blank -> ``""``).
+
+    READER-ONLY (Risk R3): no pollutant pivot (POLID stays a data column, rows are
+    not reshaped), no unit conversion (STKHGT/STKDIAM stay feet, STKTEMP °F,
+    STKFLOW ft³/s, STKVEL ft/s, ANN_VALUE tons/yr), no FIPS/SCC normalization, no
+    EGU/pollutant filter — those move downstream into the ``.esm``.
+
+    ``reader_kwargs``: ``member="path/in/zip"`` extracts a named member from a
+    ``.zip`` blob (the whole zip stays the content-addressed cached blob; the
+    member is reader config so it never enters the cache key). ``kind="point"``
+    selects the schema (only point ships). ``numeric_columns``, ``delimiter``,
+    ``comment`` override the defaults.
+    """
+
+    #: Registry name + format key(s) + extension sniff hints.
+    NAME = "ff10"
+    FORMATS = ("ff10",)
+    EXTENSIONS = ("ff10", "csv")
+
+    def formats(self) -> List[str]:
+        return list(self.FORMATS)
+
+    def extensions(self) -> List[str]:
+        return list(self.EXTENSIONS)
+
+    def open(self, blob_path: Any) -> Any:
+        return blob_path
+
+    def read_native(
+        self,
+        handle: Any,
+        variables: Optional[Sequence[str]] = None,
+        select: Optional[Any] = None,
+        *,
+        member: Optional[str] = None,
+        kind: str = "point",
+        numeric_columns: Optional[Sequence[str]] = None,
+        delimiter: str = ",",
+        comment: str = "#",
+        **_: Any,
+    ) -> NativeDataset:
+        """Decode an FF10 point blob into a ``points`` :class:`NativeDataset`."""
+        if kind != "point":
+            raise ValueError(
+                f"FF10Reader only supports kind='point' (got {kind!r}); the 45-col "
+                "nonpoint/onroad/nonroad schemas are not implemented yet"
+            )
+        if member is not None:
+            with _zipfile.ZipFile(handle) as zf:
+                text = zf.read(member).decode("utf-8")
+            lines = text.splitlines()
+        else:
+            with open(handle, newline="") as fh:
+                lines = fh.read().splitlines()
+
+        # Skip empty + '#' comment lines, then RFC-4180 parse each data line.
+        data_lines = [
+            ln for ln in lines
+            if ln.strip() and not ln.lstrip().startswith(comment)
+        ]
+        rows = list(_csv.reader(data_lines, delimiter=delimiter))
+        ncol = len(FF10_POINT_COLUMNS)
+        for r in rows:
+            if len(r) != ncol:
+                raise ValueError(
+                    f"FF10 point row has {len(r)} fields, expected {ncol}: {r!r}"
+                )
+
+        numset = (
+            set(numeric_columns) if numeric_columns is not None
+            else set(FF10_POINT_NUMERIC)
+        )
+        want = {str(v) for v in variables} if variables else None
+        if want is not None:
+            missing = [v for v in want if v not in FF10_POINT_COLUMNS]
+            if missing:
+                raise KeyError(f"requested FF10 columns not in schema: {sorted(missing)}")
+
+        out_vars: Dict[str, NativeField] = {}
+        for j, name in enumerate(FF10_POINT_COLUMNS):
+            if want is not None and name not in want:
+                continue
+            vals = [r[j] for r in rows]
+            if name in numset:
+                data: Any = np.array(
+                    [np.nan if v.strip() == "" else float(v) for v in vals],
+                    dtype="float64",
+                )
+            else:
+                data = [str(v) for v in vals]
+            out_vars[name] = NativeField(data, ("index",), {})
+        return NativeDataset(out_vars, {})
+
+
+# --------------------------------------------------------------------------- #
 # Registration (idempotent) — called from earthsciio/__init__.py on import.
 # --------------------------------------------------------------------------- #
 
@@ -511,4 +677,13 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(GeoTIFFReader.EXTENSIONS),
         notes="Raster bands via GDAL/rasterio (tifffile fallback); GDAL_NODATA->NaN.",
+    )
+    reg.register(
+        FF10Reader.NAME,
+        FF10Reader,
+        keys=list(FF10Reader.FORMATS),
+        status="active",
+        extensions=list(FF10Reader.EXTENSIONS),
+        notes="FF10 point long-format; '#' header skipped; fixed 77-col schema; "
+              "numeric->float64 (empty->NaN), ids/codes/text->string; zip member via `member`.",
     )
