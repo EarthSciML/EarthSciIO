@@ -43,7 +43,10 @@ def test_local_store_resolves_by_name(cache_root):
 
 
 def test_active_and_stub_backends_coexist():
-    assert transport_registry.is_stub("s3")
+    # The s3 transport is now active (anonymous rewrite -> HTTPS); the s3 STORE
+    # remains the stub, coexisting with the active core backends.
+    assert store_registry.is_stub("s3")
+    assert not transport_registry.is_stub("s3")
     assert not transport_registry.is_stub("http")
     assert set(transport_registry.keys()) >= {"http", "https", "file", "s3"}
     assert set(store_registry.names()) >= {"local", "s3"}

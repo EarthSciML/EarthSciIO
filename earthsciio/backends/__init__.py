@@ -43,20 +43,18 @@ STUB_TRACKING_EPIC = "esio-cloud"
 
 
 def register_stub_backends() -> None:
-    """Register the S3 (transport + store) and Zarr (reader) stubs.
+    """Register the remaining cloud **stub**: the S3 object-store backend.
+
+    The S3 *transport* and the Zarr *reader* are now **active** (registered by
+    :func:`register_active_backends`); the S3 *store* (the object store as the
+    content-addressed cache) stays a stub — it is not required to read the ISRM
+    zarr (the cache stays ``local``) and is tracked by ``esio-cloud``
+    (``spec/cloud-future.md`` §2).
 
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same
     factory is re-registered, so calling this twice (or importing the package
     twice) is safe.
     """
-    transport_registry.register(
-        S3Transport.NAME,
-        S3Transport,
-        keys=list(S3Transport.SCHEMES),
-        status="stub",
-        tracking=STUB_TRACKING_EPIC,
-        notes="Object-store GET; the future S3-proxy/cloud path.",
-    )
     store_registry.register(
         S3Store.NAME,
         S3Store,
@@ -64,24 +62,32 @@ def register_stub_backends() -> None:
         tracking=STUB_TRACKING_EPIC,
         notes="Object-store cache backend; conditional PUT / If-None-Match as the lock analog.",
     )
+
+
+def register_active_backends() -> None:
+    """Register the active ``http``/``file``/``cds``/``s3`` transports, the
+    ``local`` store, and (via :func:`register_format_readers`) the format
+    readers. The ``s3`` transport (anonymous rewrite → HTTPS) and the ``zarr``
+    store-backed reader land here.
+
+    Idempotent (the same factory re-registers as a no-op), so calling this twice
+    — or importing the package twice — is safe.
+    """
+    transport_registry.register(
+        S3Transport.NAME,
+        S3Transport,
+        keys=list(S3Transport.SCHEMES),
+        status="active",
+        notes="Anonymous s3:// -> regional virtual-hosted HTTPS; delegates to the http transport.",
+    )
     format_registry.register(
         ZarrReader.NAME,
         ZarrReader,
         keys=list(ZarrReader.FORMATS),
-        status="stub",
+        status="active",
         extensions=list(ZarrReader.EXTENSIONS),
-        tracking=STUB_TRACKING_EPIC,
-        notes="Chunked array store; the future NetCDF->Zarr cloud path.",
+        notes="Store-backed Zarr v2 reader; lazy orthogonal chunk selection, blosc decode.",
     )
-
-
-def register_active_backends() -> None:
-    """Register the active ``http``/``file`` transports and the ``local`` store.
-
-    Idempotent (the same factory re-registers as a no-op), so calling this twice
-    — or importing the package twice — is safe. Orthogonal to the stubs: the
-    active backends take new names/keys and never collide with ``s3``/``zarr``.
-    """
     transport_registry.register(
         HttpTransport.NAME,
         HttpTransport,

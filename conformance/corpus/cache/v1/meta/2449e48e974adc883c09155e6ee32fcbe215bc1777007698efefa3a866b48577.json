@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 232,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "82e1bdc910c0847d82a565dfa3fc4485bb9ecb9ee9b889c15d18314a44d54329",
+  "source_loader": "isrm",
+  "url": "s3://earthsci-fixtures/isrm-mini.zarr/pop1d/.zarray"
+}

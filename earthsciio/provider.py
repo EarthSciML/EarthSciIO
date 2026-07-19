@@ -356,9 +356,18 @@ class Provider:
         )
 
     def _read_file(self, url: str) -> NativeDataset:
+        variables = list(self.loader.variables) if self.loader.variables else None
+        # Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
+        # select) — a Zarr `url` is a directory-like prefix, not a fetchable blob,
+        # so the reader fetches individual objects on demand. Additive + default-
+        # off: active whole-file readers never define `store_backed` and take the
+        # existing path. `select` rides in reader_kwargs.
+        if getattr(self._reader, "store_backed", False):
+            return self._reader.read_store(
+                self.cache, url, variables, **self.loader.reader_kwargs
+            )
         entry = self._fetch(url)
         handle = self._reader.open(entry.path)
-        variables = list(self.loader.variables) if self.loader.variables else None
         return self._reader.read_native(handle, variables, **self.loader.reader_kwargs)
 
     def _file_for(self, file_anchor: _dt.datetime) -> NativeDataset:

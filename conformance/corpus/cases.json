@@ -14,6 +14,12 @@
       "file": "cases/openaq-points-slice.json",
       "cache_key": "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a",
       "blob_path": "cache/v1/blobs/69/69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a.csv"
+    },
+    {
+      "id": "isrm-zarr-tile",
+      "file": "cases/isrm-zarr-tile.json",
+      "cache_key": "229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d",
+      "blob_path": "cache/v1/blobs/22/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d."
     }
   ]
 }

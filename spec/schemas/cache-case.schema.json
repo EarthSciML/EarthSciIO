@@ -24,9 +24,30 @@
     "manifest_path": {"type": "string", "description": "Corpus-relative path to the blob's manifest (cache/v1/meta/<key>.json)."},
     "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the blob bytes; MUST equal manifest.sha256_content."},
     "bytes": {"type": "integer", "minimum": 0},
+    "variables": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Store-backed (zarr) cases: the ordered array names to read (the store cannot be enumerated without a consolidated .zmetadata). Absent for single-blob cases."
+    },
+    "objects": {
+      "type": "array",
+      "description": "Store-backed (zarr) cases: one record per store object (<array>/.zarray, <array>/.zattrs, each chunk). Each carries its own resolved URL + content-addressed cache key + committed blob, so the runner verifies key-agreement + integrity PER OBJECT. Absent for single-blob cases (whose blob_path/content_sha256/bytes describe the one blob).",
+      "items": {
+        "type": "object",
+        "required": ["url", "cache_key", "blob_path", "content_sha256", "bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "url": {"type": "string", "description": "The resolved object URL; sha256(url) MUST equal cache_key."},
+          "cache_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "blob_path": {"type": "string", "description": "Corpus-relative path to the object's cached blob."},
+          "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
     "select": {
       "type": "object",
-      "description": "Optional selection the reader applies before returning arrays (e.g. {time_index: 0}). Absent/empty = return all records.",
+      "description": "Optional selection the reader applies before returning arrays. Single-blob cases: e.g. {all_records: true}. Store-backed (zarr) cases: an orthogonal selection {axes: [<axis>, ...]} where each <axis> is \"all\", {indices: [...]}, or {slice: [start, stop, step?]} — applied to arrays whose rank matches the axis count.",
       "additionalProperties": true
     },
     "decode": {

@@ -67,22 +67,26 @@ def test_s3_store_resolves_by_name():
 # --------------------------------------------------------------------------- #
 
 
-def test_s3_transport_fetch_is_unsupported():
+def test_s3_transport_is_active_and_rewrites():
+    """The s3 transport is now ACTIVE: an anonymous s3:// -> regional-HTTPS
+    rewriter over the http transport (its fetch is exercised in
+    tests/test_s3_transport.py)."""
+    assert transport_registry.status("s3") == "active"
     impl = transport_registry.create("s3")
-    with pytest.raises(Unsupported) as ei:
-        impl.fetch("s3://bucket/era5/2018/20181108.nc", "/tmp/x.part")
-    err = ei.value
-    assert err.backend == "s3"
-    assert err.registry == "transport"
-    assert err.operation == "fetch"
-    assert err.tracking == "esio-cloud"
-    # message points operators at the tracking epic + the spec note
-    assert "esio-cloud" in str(err)
-    assert "cloud-future" in str(err)
+    from earthsciio.backends.s3 import s3_https_url
+
+    assert s3_https_url("s3://bucket/era5/2018/20181108.nc") == (
+        "https://bucket.s3.us-east-2.amazonaws.com/era5/2018/20181108.nc"
+    )
 
 
-def test_zarr_reader_operations_are_unsupported():
+def test_zarr_reader_is_active_and_store_backed():
+    """The zarr reader is now ACTIVE + store-backed; its whole-file open/
+    read_native entry points still raise Unsupported (the Provider calls
+    read_store instead — see tests/test_zarr_reader.py)."""
+    assert format_registry.status("zarr") == "active"
     impl = format_registry.create("zarr")
+    assert getattr(impl, "store_backed", False) is True
     with pytest.raises(Unsupported):
         impl.open("/tmp/blob.zarr")
     with pytest.raises(Unsupported):
@@ -91,6 +95,7 @@ def test_zarr_reader_operations_are_unsupported():
 
 @pytest.mark.parametrize("op", ["exists", "get_blob", "get_meta", "lock"])
 def test_s3_store_read_ops_are_unsupported(op):
+    # The s3 STORE remains a stub (out of scope for the ISRM zarr read).
     impl = store_registry.create("s3")
     with pytest.raises(Unsupported):
         getattr(impl, op)("11cdcec1deadbeef")
@@ -106,11 +111,11 @@ def test_s3_store_write_ops_are_unsupported():
 
 def test_unsupported_is_also_not_implemented_error():
     """Unsupported is catchable as NotImplementedError and EarthSciIOError."""
-    impl = transport_registry.create("s3")
+    impl = store_registry.create("s3")  # the s3 store is the remaining stub
     with pytest.raises(NotImplementedError):
-        impl.fetch("s3://b/k", "/tmp/x")
+        impl.get_blob("key")
     with pytest.raises(earthsciio.EarthSciIOError):
-        impl.fetch("s3://b/k", "/tmp/x")
+        impl.get_blob("key")
 
 
 # --------------------------------------------------------------------------- #
@@ -119,10 +124,10 @@ def test_unsupported_is_also_not_implemented_error():
 
 
 def test_stub_status_is_reported():
-    assert transport_registry.status("s3") == "stub"
-    assert transport_registry.is_stub("s3")
+    # s3 transport + zarr reader are now active; the s3 store is the last stub.
+    assert transport_registry.status("s3") == "active"
+    assert format_registry.status("zarr") == "active"
     assert store_registry.is_stub("s3")
-    assert format_registry.is_stub("zarr")
 
 
 def test_membership_checks():
@@ -196,11 +201,9 @@ def test_every_spec_stub_is_registered_as_a_stub():
             found.append((kind, name))
             assert name in reg.names(), f"{kind} stub {name!r} not registered"
             assert reg.is_stub(name), f"{kind} {name!r} should be a stub"
-    # the spec declares exactly the S3 (transport+store) and Zarr (format) stubs
+    # The s3 transport + zarr reader are now active; the s3 STORE is the last stub.
     assert set(found) == {
-        ("transport", "s3"),
         ("store", "s3"),
-        ("format", "zarr"),
     }
 
 
@@ -278,26 +281,26 @@ def test_provider_dispatch_is_identical_for_active_and_stub():
     s = Registry("store", keyed_by="store_name")
     f = Registry("format", keyed_by="format_name")
 
-    # Register an active transport + reuse the real stub classes for the rest.
-    from earthsciio.backends.s3 import S3Store, S3Transport
+    # Register an active transport + reuse the real backend classes for the rest.
+    # The s3 STORE is the remaining stub — the "resolves alike, only fails on use"
+    # demonstration now rides on it (the s3 transport + zarr reader are active).
+    from earthsciio.backends.s3 import S3Store
     from earthsciio.backends.zarr import ZarrReader
 
     t.register("memdummy", _FakeActiveTransport, keys=["memdummy"])
-    t.register("s3", S3Transport, keys=["s3"], status="stub")
     s.register("s3", S3Store, status="stub")
-    f.register("zarr", ZarrReader, keys=["zarr"], status="stub")
+    f.register("zarr", ZarrReader, keys=["zarr"])
 
-    # Resolve an ACTIVE-transport triple and a STUB-transport triple with the
-    # *same* dispatch function — no branching on backend identity.
+    # Resolve two triples that differ only in the transport, with the *same*
+    # dispatch function — no branching on backend identity.
     active = provider_dispatch(t, s, f, scheme="memdummy", store="s3", fmt="zarr")
-    stub = provider_dispatch(t, s, f, scheme="s3", store="s3", fmt="zarr")
 
     assert isinstance(active[0], Transport)
     assert active[0].fetch("memdummy://x", "/tmp/x")["status"] == "downloaded"
-    # the stub transport resolved through the identical path; it only fails on use
-    assert isinstance(stub[0], Transport)
+    # the s3 store resolved through the identical path is a stub; only fails on use
+    assert isinstance(active[1], Store)
     with pytest.raises(Unsupported):
-        stub[0].fetch("s3://b/k", "/tmp/x")
+        active[1].get_blob("deadbeef")
 
 
 def test_global_registry_accepts_and_releases_a_new_backend():
@@ -307,8 +310,8 @@ def test_global_registry_accepts_and_releases_a_new_backend():
     try:
         impl = transport_registry.create("memdummy")
         assert impl.fetch("memdummy://x", "/tmp/x")["status"] == "downloaded"
-        # the s3 stub is unaffected — orthogonal registration
-        assert transport_registry.is_stub("s3")
+        # the s3 store stub is unaffected — orthogonal registration
+        assert store_registry.is_stub("s3")
     finally:
         transport_registry.unregister("memdummy")
     assert "memdummy" not in transport_registry

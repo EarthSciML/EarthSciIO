@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import itertools
 import json
 import math
 import pathlib
@@ -102,39 +103,162 @@ def read_csv(path, expected):
     return out, {}
 
 
-READERS = {"netcdf": read_netcdf, "csv": read_csv}
+def _zarr_decompress(compressor, raw):
+    """Independent decode of one chunk object's bytes (the zarr oracle codec)."""
+    if compressor is None:
+        return bytes(raw)
+    cid = str(compressor.get("id", "")).lower()
+    if cid == "blosc":
+        from numcodecs import Blosc
+
+        return bytes(Blosc().decode(raw))
+    if cid == "zlib":
+        from numcodecs import Zlib
+
+        return bytes(Zlib().decode(raw))
+    if cid == "zstd":
+        from numcodecs import Zstd
+
+        return bytes(Zstd().decode(raw))
+    if cid in ("", "none"):
+        return bytes(raw)
+    raise ValueError(f"unsupported zarr compressor id {cid!r}")
+
+
+def _zarr_resolve_axis(spec, dim_len):
+    """Resolve one axis selector (from ``select.axes``) to a global index list."""
+    if spec is None or spec == "all":
+        return list(range(dim_len))
+    if isinstance(spec, dict) and "indices" in spec:
+        return [int(i) for i in spec["indices"]]
+    if isinstance(spec, dict) and "slice" in spec:
+        s = spec["slice"]
+        step = int(s[2]) if len(s) > 2 else 1
+        return list(range(int(s[0]), int(s[1]), step))
+    if isinstance(spec, (list, tuple)):
+        return [int(i) for i in spec]
+    raise ValueError(f"unrecognized axis selector: {spec!r}")
+
+
+def read_zarr(corpus, case):
+    """Reference (oracle) Zarr v2 reader: reconstruct each array from its committed
+    chunk objects and apply the case's orthogonal selection.
+
+    Independent of the production reader's chunk math — it rebuilds the FULL array
+    from every chunk object, then gathers ``full[np.ix_(*sel)]`` — so agreement is
+    a real cross-check, not a tautology. Runs offline against the committed blobs.
+    """
+    objmap = {o["url"]: o for o in case.get("objects", [])}
+    base = case["resolved_url"]
+    axes_spec = (case.get("select") or {}).get("axes")
+
+    def obj_bytes(url):
+        o = objmap.get(url)
+        return None if o is None else (corpus / o["blob_path"]).read_bytes()
+
+    out = {}
+    for array in case["variables"]:
+        zmeta = json.loads(obj_bytes(f"{base}/{array}/.zarray").decode("utf-8"))
+        shape = [int(s) for s in zmeta["shape"]]
+        chunks = [int(c) for c in zmeta["chunks"]]
+        dt = np.dtype(zmeta["dtype"])
+        order = zmeta.get("order", "C")
+        sep = "." if zmeta.get("dimension_separator") in (None, "") else zmeta["dimension_separator"]
+        ndim = len(shape)
+        out_dt = np.dtype("float64") if dt.kind == "f" else dt
+
+        if axes_spec is not None and len(axes_spec) == ndim:
+            sel = [_zarr_resolve_axis(axes_spec[d], shape[d]) for d in range(ndim)]
+        else:
+            sel = [list(range(shape[d])) for d in range(ndim)]
+
+        fill = zmeta.get("fill_value", 0.0) or 0.0
+        full = np.full(shape, fill, dtype=out_dt)
+        nchunks = [-(-shape[d] // chunks[d]) for d in range(ndim)]
+        for cidx in itertools.product(*[range(n) for n in nchunks]):
+            raw = obj_bytes(f"{base}/{array}/" + sep.join(str(c) for c in cidx))
+            if raw is None:
+                continue  # absent chunk object → keep fill
+            carr = np.frombuffer(_zarr_decompress(zmeta.get("compressor"), raw),
+                                 dtype=dt).reshape(chunks, order=order)
+            reg = tuple(slice(cidx[d] * chunks[d],
+                              min(cidx[d] * chunks[d] + chunks[d], shape[d]))
+                        for d in range(ndim))
+            loc = tuple(slice(0, r.stop - r.start) for r in reg)
+            full[reg] = carr[loc].astype(out_dt, copy=False)
+        out[array] = full[np.ix_(*sel)]
+    return out, {}
+
+
+READERS = {"netcdf": read_netcdf, "csv": read_csv, "zarr": read_zarr}
+
+
+def _verify_zarr_objects(case) -> list:
+    """Checks 1+2 PER OBJECT for a store-backed (zarr) case: a Zarr store is many
+    objects, not one blob, so key-agreement + integrity are verified for each
+    object in the case's ``objects`` array (sha256(url)==cache_key,
+    sha256(blob)==content_sha256==manifest.sha256_content, len==bytes, url match)."""
+    errs: list = []
+    for o in case["objects"]:
+        key = hashlib.sha256(o["url"].encode("utf-8")).hexdigest()
+        if key != o["cache_key"]:
+            errs.append(f"cache-key: sha256({o['url']})={key} != {o['cache_key']}")
+        blob = (CORPUS / o["blob_path"]).read_bytes()
+        content_sha = hashlib.sha256(blob).hexdigest()
+        if content_sha != o["content_sha256"]:
+            errs.append(f"integrity: {o['url']} blob sha256 {content_sha} != {o['content_sha256']}")
+        if len(blob) != o["bytes"]:
+            errs.append(f"integrity: {o['url']} blob bytes {len(blob)} != {o['bytes']}")
+        man_path = CORPUS / "cache" / "v1" / "meta" / f"{o['cache_key']}.json"
+        manifest = json.loads(man_path.read_text())
+        if manifest["sha256_content"] != o["content_sha256"]:
+            errs.append(f"integrity: {o['url']} manifest.sha256_content mismatch")
+        if manifest["bytes"] != o["bytes"]:
+            errs.append(f"integrity: {o['url']} manifest.bytes mismatch")
+        if manifest["url"] != o["url"]:
+            errs.append(f"integrity: {o['url']} manifest.url mismatch")
+    return errs
 
 
 def verify_case(case_path: pathlib.Path) -> list:
     errs: list = []
     case = json.loads(case_path.read_text())
 
-    # 1. cache-key agreement
-    key = hashlib.sha256(case["resolved_url"].encode("utf-8")).hexdigest()
-    if key != case["cache_key"]:
-        errs.append(f"cache-key: sha256(resolved_url)={key} != case.cache_key={case['cache_key']}")
+    if case.get("format") == "zarr":
+        # 1 + 2 per object (a Zarr case's resolved_url is a store base, not a blob).
+        errs += _verify_zarr_objects(case)
+    else:
+        # 1. cache-key agreement
+        key = hashlib.sha256(case["resolved_url"].encode("utf-8")).hexdigest()
+        if key != case["cache_key"]:
+            errs.append(f"cache-key: sha256(resolved_url)={key} != case.cache_key={case['cache_key']}")
 
-    # 2. manifest integrity
-    blob = (CORPUS / case["blob_path"]).read_bytes()
-    content_sha = hashlib.sha256(blob).hexdigest()
-    if content_sha != case["content_sha256"]:
-        errs.append(f"integrity: blob sha256 {content_sha} != case.content_sha256")
-    if len(blob) != case["bytes"]:
-        errs.append(f"integrity: blob bytes {len(blob)} != case.bytes {case['bytes']}")
-    manifest = json.loads((CORPUS / case["manifest_path"]).read_text())
-    if manifest["sha256_content"] != case["content_sha256"]:
-        errs.append("integrity: manifest.sha256_content != case.content_sha256")
-    if manifest["bytes"] != case["bytes"]:
-        errs.append("integrity: manifest.bytes != case.bytes")
-    if manifest["url"] != case["resolved_url"]:
-        errs.append("integrity: manifest.url != case.resolved_url")
+        # 2. manifest integrity
+        blob = (CORPUS / case["blob_path"]).read_bytes()
+        content_sha = hashlib.sha256(blob).hexdigest()
+        if content_sha != case["content_sha256"]:
+            errs.append(f"integrity: blob sha256 {content_sha} != case.content_sha256")
+        if len(blob) != case["bytes"]:
+            errs.append(f"integrity: blob bytes {len(blob)} != case.bytes {case['bytes']}")
+        manifest = json.loads((CORPUS / case["manifest_path"]).read_text())
+        if manifest["sha256_content"] != case["content_sha256"]:
+            errs.append("integrity: manifest.sha256_content != case.content_sha256")
+        if manifest["bytes"] != case["bytes"]:
+            errs.append("integrity: manifest.bytes != case.bytes")
+        if manifest["url"] != case["resolved_url"]:
+            errs.append("integrity: manifest.url != case.resolved_url")
 
     # 3 + 4. decode + native-array equality
     reader = READERS.get(case["format"])
     if reader is None:
         errs.append(f"format: no reference reader for '{case['format']}' (stub-only?)")
         return errs
-    got, coords = reader(CORPUS / case["blob_path"], case["expected"])
+    # A zarr case is a store (many objects), not a single blob: the oracle needs
+    # the objects + selection from the whole case, not just one blob_path.
+    if case["format"] == "zarr":
+        got, coords = read_zarr(CORPUS, case)
+    else:
+        got, coords = reader(CORPUS / case["blob_path"], case["expected"])
     for name, spec in case["expected"]["variables"].items():
         if name not in got:
             errs.append(f"{name}: missing from reader output")

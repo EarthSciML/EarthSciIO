@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 244,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "564cd50328fcec6d74477e4cca14377029773956348df7784049401a7417b9c1",
+  "source_loader": "isrm",
+  "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/.zarray"
+}

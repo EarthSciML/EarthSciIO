@@ -33,8 +33,9 @@ data tooling beyond the format reader.
 |---|---|---|---|---|---|---|
 | `era5-grid-sub-tile` | era5 | grid | netcdf | file | local | CF scale/offset + `_FillValue`→NaN + a masked cell; packed int16 → float64 |
 | `openaq-points-slice` | openaq | points | csv | file | local | a 2nd reader behind the `format` registry; numeric→float64, text→string |
+| `isrm-zarr-tile` | isrm | grid | zarr | s3 | local | **store-backed** Zarr v2: lazy orthogonal chunk selection (fetch only the intersecting chunk objects), blosc/lz4+shuffle decode, partial edge chunk, `fill_value` 0.0 NOT→NaN, no coords. `objects[]` per-object key/integrity. |
 
-GeoTIFF / Zarr / S3 corpus entries are **format-reserved**: the case + manifest
+GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
 shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are
 absent in this environment and binary-hosting (git-lfs vs `/projects`) is an
 open decision (plan §8). They are added by the GeoTIFF reader / `esio-9nb.8`
@@ -76,6 +77,44 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
 - **Variable identity** — arrays are keyed by the **on-disk `file_variable`**
   name. No remap, no `unit_conversion` (Risk R3 — those stay in ESS).
 - **Strings** — text columns (CSV/JSON) are returned as `string` arrays verbatim.
+
+### Zarr decode notes (store-backed reader)
+
+The `zarr` reader is **store-backed**: a Zarr v2 store is not one blob, so the
+Provider hands the reader `(cache, base_url, variables, select)` and the reader
+fetches each object it needs — `<base_url>/<array>/.zarray`, `…/.zattrs`
+(optional), and only the intersecting `…/<chunk_key>` chunk objects — through the
+existing content-addressed cache (each object keyed by `sha256(object_url)`; no
+byte-range machinery). Decode contract:
+
+- **Compression** — blosc (`cname` lz4/lz4hc/zlib/zstd/blosclz), zlib, zstd,
+  gzip, or none. The blosc container is self-describing (codec + shuffle filter +
+  multi-block layout are in its 16-byte header), so a c-blosc-backed library
+  (numcodecs / Blosc.jl / the `blosc` crate) undoes the shuffle internally.
+- **Chunk unpack** — C-order (or F-order per `.zarray` `order`). Zarr v2 edge
+  chunks are stored **full-size, fill-padded**; the padding is sliced off by the
+  selection's index math (only valid global indices are copied out).
+- **Numeric dtype / endianness** — from the `dtype` typestr: `<f4`/`<f8` →
+  **float64** (`<` little-endian, `>` byteswapped); integer zarr dtypes keep
+  int32/int64.
+- **`fill_value` is NOT mapped to NaN** — a deliberate deviation from the NetCDF
+  `_FillValue → NaN` rule: in the pinned ISRM store `fill_value == 0.0` is real
+  data. `fill_value` fills only the region of a chunk object that is **absent**
+  (a cache/transport miss for that chunk).
+- **Dims / coords** — dim names from `.zattrs` `_ARRAY_DIMENSIONS` (synthesized
+  `dim_0…` if absent); **no coordinate arrays** are produced (like the CSV
+  reader). `variables` is **required** (the store cannot be enumerated without a
+  consolidated `.zmetadata`).
+- **Selection (lazy, orthogonal)** — `select = {axes: [<axis>, …]}` where each
+  `<axis>` is `"all"`, `{indices: [...]}` (an explicit, possibly non-contiguous,
+  ordered index list), or `{slice: [start, stop, step?]}`. Applied to each
+  requested array whose rank matches the axis count (other-rank arrays read
+  whole). For each dim, every requested index `g` maps to chunk `g //
+  chunk_len`; the chunk keys fetched are the Cartesian product of the per-dim
+  chunk-id **sets** — so the reader fetches only the chunks the selection
+  intersects, **never** the whole array (the ISRM linchpin). A store-backed
+  case's `objects[]` gives every object its own `cache_key`/`content_sha256`, so
+  checks 1+2 (key agreement + integrity) are asserted **per object**.
 
 ---
 

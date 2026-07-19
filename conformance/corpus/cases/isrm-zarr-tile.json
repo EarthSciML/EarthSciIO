@@ -1,0 +1,176 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "isrm-zarr-tile",
+  "loader": "isrm",
+  "kind": "grid",
+  "format": "zarr",
+  "transport": "s3",
+  "store": "local",
+  "resolved_url": "s3://earthsci-fixtures/isrm-mini.zarr",
+  "cache_key": "229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d",
+  "blob_path": "cache/v1/blobs/22/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d.",
+  "manifest_path": "cache/v1/meta/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d.json",
+  "content_sha256": "564cd50328fcec6d74477e4cca14377029773956348df7784049401a7417b9c1",
+  "bytes": 244,
+  "variables": [
+    "field3d",
+    "pop1d"
+  ],
+  "objects": [
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/.zarray",
+      "cache_key": "229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d",
+      "blob_path": "cache/v1/blobs/22/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d.",
+      "content_sha256": "564cd50328fcec6d74477e4cca14377029773956348df7784049401a7417b9c1",
+      "bytes": 244
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/.zattrs",
+      "cache_key": "f84729f53193db83ae5fd8477e39badff43ef39e43a750e7af7b177c04574435",
+      "blob_path": "cache/v1/blobs/f8/f84729f53193db83ae5fd8477e39badff43ef39e43a750e7af7b177c04574435.",
+      "content_sha256": "009070264908587cb3e5e3acfee949b165fc6d7fa28868b362d69c94f240e276",
+      "bytes": 42
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/0.0.0",
+      "cache_key": "df1ae370b8b9f20c2fb28f6acaf8edb47fdbb219d6f67b33c3a77ca2fff93d20",
+      "blob_path": "cache/v1/blobs/df/df1ae370b8b9f20c2fb28f6acaf8edb47fdbb219d6f67b33c3a77ca2fff93d20.",
+      "content_sha256": "2d40f8a82d87b1b61d68251a8318cae5c822a57948328b403e5b20f1ca84af5f",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/0.1.0",
+      "cache_key": "b2cb7d8a0c013e7d0083bd160246a1c6914e885ac6275937580b4d5e987f724a",
+      "blob_path": "cache/v1/blobs/b2/b2cb7d8a0c013e7d0083bd160246a1c6914e885ac6275937580b4d5e987f724a.",
+      "content_sha256": "0022282d3f31234ab0b62f0e2cc787b2f0e5e8bad18c06d69bf7fa1b71580f4c",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/0.2.0",
+      "cache_key": "2937092b022c360847e95609069551e6e9bc59a31c2073944b7f39828db60050",
+      "blob_path": "cache/v1/blobs/29/2937092b022c360847e95609069551e6e9bc59a31c2073944b7f39828db60050.",
+      "content_sha256": "ad91dbdb63ddf40c6e4f4e540156353227909e0ca2d28c2009d9dd41137fd99e",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/1.0.0",
+      "cache_key": "6f3097790b8437fcfdab0475f0266a4efbc2ee981becc77e1d672352cbc64ee8",
+      "blob_path": "cache/v1/blobs/6f/6f3097790b8437fcfdab0475f0266a4efbc2ee981becc77e1d672352cbc64ee8.",
+      "content_sha256": "e7e468c4cbd19d41b13086e75cfb902d6baa2802d8bbb38f0b940793aabda8fb",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/1.1.0",
+      "cache_key": "27e194db004fc50ada0c0b7feb876a608628c9d624e643a2290fa254cc023e3b",
+      "blob_path": "cache/v1/blobs/27/27e194db004fc50ada0c0b7feb876a608628c9d624e643a2290fa254cc023e3b.",
+      "content_sha256": "e8b1f34a4fbb69af53757fb86f6d596e774c32fd4a2f0c4511bc877589672097",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/field3d/1.2.0",
+      "cache_key": "d0aa463f5859d2faccde4741923497c5a20b8bd4487f0faaf51b909988106544",
+      "blob_path": "cache/v1/blobs/d0/d0aa463f5859d2faccde4741923497c5a20b8bd4487f0faaf51b909988106544.",
+      "content_sha256": "45a3b4277937ba0c8262c1e70f19092685f82e299362b10e58a6b19c622df4e7",
+      "bytes": 48
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/pop1d/.zarray",
+      "cache_key": "2449e48e974adc883c09155e6ee32fcbe215bc1777007698efefa3a866b48577",
+      "blob_path": "cache/v1/blobs/24/2449e48e974adc883c09155e6ee32fcbe215bc1777007698efefa3a866b48577.",
+      "content_sha256": "82e1bdc910c0847d82a565dfa3fc4485bb9ecb9ee9b889c15d18314a44d54329",
+      "bytes": 232
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/pop1d/.zattrs",
+      "cache_key": "02c12b1071fd36b96b77c302cc3fd60b25a5a4dc664474d97a71c7b90d985eb1",
+      "blob_path": "cache/v1/blobs/02/02c12b1071fd36b96b77c302cc3fd60b25a5a4dc664474d97a71c7b90d985eb1.",
+      "content_sha256": "2378ed6729f1542efde897c732b6eab5203d255050135d9cd090c147e5ffdc12",
+      "bytes": 31
+    },
+    {
+      "url": "s3://earthsci-fixtures/isrm-mini.zarr/pop1d/0",
+      "cache_key": "74a573f1fb17d3d651b1b407130f63e3b3afb04ce522e1f2bdd97572f78e702d",
+      "blob_path": "cache/v1/blobs/74/74a573f1fb17d3d651b1b407130f63e3b3afb04ce522e1f2bdd97572f78e702d.",
+      "content_sha256": "2a644b62f75c63817d8c7b2bb2c53371d9906b2b1ac5f92059cfd0a691ac8da8",
+      "bytes": 80
+    }
+  ],
+  "select": {
+    "axes": [
+      {
+        "indices": [
+          1
+        ]
+      },
+      {
+        "indices": [
+          1,
+          4
+        ]
+      },
+      "all"
+    ]
+  },
+  "decode": {
+    "compressor": "blosc-lz4-shuffle",
+    "fill_to_nan": false,
+    "order": "C",
+    "zarr_format": 2
+  },
+  "expected": {
+    "variables": {
+      "field3d": {
+        "dtype": "float64",
+        "dims": [
+          "layer",
+          "y",
+          "x"
+        ],
+        "shape": [
+          1,
+          2,
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            [
+              110.0,
+              111.0,
+              112.0,
+              113.0
+            ],
+            [
+              140.0,
+              141.0,
+              142.0,
+              143.0
+            ]
+          ]
+        ]
+      },
+      "pop1d": {
+        "dtype": "float64",
+        "dims": [
+          "cell"
+        ],
+        "shape": [
+          8
+        ],
+        "fill_value": null,
+        "data": [
+          1.0,
+          3.0,
+          5.0,
+          7.0,
+          9.0,
+          11.0,
+          13.0,
+          15.0
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "Synthetic Zarr v2 store. field3d [2,5,4] chunked [1,2,4] (partial edge chunk on dim1); pop1d [8] chunked [8]. Orthogonal selection layer=[1], y=[1,4], x=all fetches ONLY field3d/1.0.0 + field3d/1.2.0 (2 of 6 chunks) \u2014 never layer 0, never the middle y-chunk field3d/1.1.0; pop1d (rank 1) reads whole. fill_value 0.0 is real data, NOT mapped to NaN. No coordinate arrays."
+}
