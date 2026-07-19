@@ -75,6 +75,9 @@ end
 
             kwargs = if fmt == "csv"
                 (; numeric_columns = String.(case["decode"]["numeric_columns"]))
+            elseif fmt == "ff10"
+                (; numeric_columns = String.(case["decode"]["numeric_columns"]),
+                   kind = String(get(case["decode"], "kind", "point")))
             else
                 NamedTuple()
             end
@@ -122,4 +125,100 @@ end
     @test eltype(nds["a"].data) == Float64
     @test nds["a"].data == [1.5, 3.5]
     @test eltype(nds["b"].data) == Float64
+end
+
+# --- FF10 point reader unit tests -------------------------------------------
+
+# A tiny FF10 point blob: a `#` header block + 3 data rows. Two rows (NOX/SO2)
+# share ONE stack (same F001/U1/R1/P1 + stack params + lon/lat), differing only
+# in POLID/ANN_VALUE — the reader must NOT pivot/aggregate. Row 1 has a quoted
+# FACILITY_NAME with an embedded comma and a blank DESIGN_CAPACITY (numeric->NaN).
+function _ff10_fixture_text()
+    cols = length(EarthSciIO.FF10_POINT_COLUMNS)
+    idx = Dict(n => j for (j, n) in enumerate(EarthSciIO.FF10_POINT_COLUMNS))
+    function mkrow(over)
+        r = fill("", cols)
+        for (k, v) in over
+            r[idx[k]] = v
+        end
+        # FACILITY_NAME may embed a comma -> RFC-4180 quote it.
+        nm = r[idx["FACILITY_NAME"]]
+        occursin(',', nm) && (r[idx["FACILITY_NAME"]] = "\"" * nm * "\"")
+        return join(r, ',')
+    end
+    stack = ["COUNTRY_CD"=>"US", "REGION_CD"=>"01001", "FACILITY_ID"=>"F001",
+             "UNIT_ID"=>"U1", "REL_POINT_ID"=>"R1", "PROCESS_ID"=>"P1",
+             "SCC"=>"0030700101", "FACILITY_NAME"=>"Autauga Plant, Unit 1",
+             "STKHGT"=>"100.0", "STKTEMP"=>"500.0", "LONGITUDE"=>"-86.51045",
+             "LATITUDE"=>"32.43878", "ZIPCODE"=>"00000"]
+    lines = ["#FORMAT=FF10_POINT", "#COUNTRY US", "",
+             mkrow([stack; ["POLID"=>"NOX", "ANN_VALUE"=>"123.45"]]),
+             mkrow([stack; ["POLID"=>"SO2", "ANN_VALUE"=>"67.89"]]),
+             mkrow(["COUNTRY_CD"=>"US", "REGION_CD"=>"01001", "FACILITY_ID"=>"F002",
+                    "POLID"=>"PM25", "ANN_VALUE"=>"4.2",
+                    "FACILITY_NAME"=>"Plain Name"])]
+    return join(lines, '\n') * '\n'
+end
+
+@testset "FF10 reader — header/quote/empty typing" begin
+    tmp = joinpath(mktempdir(), "ff10_point.csv")
+    write(tmp, _ff10_fixture_text())
+    nds = read_native(FF10Reader(), tmp)
+
+    # 77 columns, all on a single `index` dim, no coords.
+    @test length(nds.variables) == 77
+    @test isempty(nds.coords)
+    @test nds["ANN_VALUE"].dims == ["index"]
+
+    # `#` header + blank line skipped -> exactly 3 data rows.
+    @test length(nds["POLID"].data) == 3
+
+    # numeric vs string typing.
+    @test eltype(nds["ANN_VALUE"].data) == Float64
+    @test nds["ANN_VALUE"].data == [123.45, 67.89, 4.2]
+    @test eltype(nds["POLID"].data) <: AbstractString
+
+    # leading-zero codes stay strings (never floats).
+    @test nds["REGION_CD"].data == ["01001", "01001", "01001"]
+    @test nds["SCC"].data[1] == "0030700101"
+    @test nds["ZIPCODE"].data[1] == "00000"
+
+    # quoted comma preserved verbatim (quotes stripped).
+    @test nds["FACILITY_NAME"].data[1] == "Autauga Plant, Unit 1"
+    @test nds["FACILITY_NAME"].data[3] == "Plain Name"
+
+    # blank numeric cell -> NaN; blank string cell -> "".
+    @test isnan(nds["DESIGN_CAPACITY"].data[1])
+    @test nds["TRIBAL_CODE"].data[1] == ""
+
+    # multi-pollutant-same-stack: rows 1 & 2 share the stack, differ in POLID/ANN.
+    @test nds["FACILITY_ID"].data[1] == nds["FACILITY_ID"].data[2] == "F001"
+    @test nds["STKHGT"].data[1] == nds["STKHGT"].data[2] == 100.0
+    @test nds["POLID"].data[1:2] == ["NOX", "SO2"]
+    @test nds["ANN_VALUE"].data[1:2] == [123.45, 67.89]
+end
+
+import ZipFile
+
+@testset "FF10 reader — zip member extraction" begin
+    dir = mktempdir()
+    csvpath = joinpath(dir, "point.csv")
+    text = _ff10_fixture_text()
+    write(csvpath, text)
+    # bare-csv decode (the conformance path).
+    bare = read_native(FF10Reader(), csvpath)
+
+    # build a zip holding the CSV as member `inv/point.csv`.
+    zippath = joinpath(dir, "2016fd_inputs_point.zip")
+    w = ZipFile.Writer(zippath)
+    f = ZipFile.addfile(w, "inv/point.csv")
+    write(f, text)
+    close(w)
+
+    zipped = read_native(FF10Reader(), zippath; member = "inv/point.csv")
+    @test zipped["ANN_VALUE"].data == bare["ANN_VALUE"].data
+    @test zipped["POLID"].data == bare["POLID"].data
+    @test zipped["FACILITY_NAME"].data == bare["FACILITY_NAME"].data
+    # a missing member is a clear error, not a silent empty.
+    @test_throws ArgumentError read_native(FF10Reader(), zippath; member = "nope.csv")
 end

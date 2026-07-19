@@ -1,0 +1,1306 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "ff10-point-slice",
+  "loader": "nei2016",
+  "kind": "points",
+  "format": "ff10",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
+  "cache_key": "d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2",
+  "blob_path": "cache/v1/blobs/d0/d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2.csv",
+  "manifest_path": "cache/v1/meta/d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2.json",
+  "content_sha256": "16971be7ffe62f56191d9bc240b77c6dbc992adb60452842e2392b139623a44a",
+  "bytes": 850,
+  "select": {
+    "all_rows": true
+  },
+  "decode": {
+    "kind": "point",
+    "member": null,
+    "delimiter": ",",
+    "comment": "#",
+    "numeric_columns": [
+      "ANNUAL_AVG_HOURS_PER_YEAR",
+      "ANN_PCT_RED",
+      "ANN_VALUE",
+      "APR_PCTRED",
+      "APR_VALUE",
+      "AUG_PCTRED",
+      "AUG_VALUE",
+      "CUMULATIVE_COST",
+      "CURRENT_COST",
+      "DEC_PCTRED",
+      "DEC_VALUE",
+      "DESIGN_CAPACITY",
+      "FEB_PCTRED",
+      "FEB_VALUE",
+      "FUG_ANGLE",
+      "FUG_HEIGHT",
+      "FUG_LENGTH_YDIM",
+      "FUG_WIDTH_XDIM",
+      "JAN_PCTRED",
+      "JAN_VALUE",
+      "JUL_PCTRED",
+      "JUL_VALUE",
+      "JUN_PCTRED",
+      "JUN_VALUE",
+      "LATITUDE",
+      "LONGITUDE",
+      "MAR_PCTRED",
+      "MAR_VALUE",
+      "MAY_PCTRED",
+      "MAY_VALUE",
+      "NOV_PCTRED",
+      "NOV_VALUE",
+      "OCT_PCTRED",
+      "OCT_VALUE",
+      "PROJECTION_FACTOR",
+      "SEP_PCTRED",
+      "SEP_VALUE",
+      "STKDIAM",
+      "STKFLOW",
+      "STKHGT",
+      "STKTEMP",
+      "STKVEL"
+    ]
+  },
+  "expected": {
+    "variables": {
+      "COUNTRY_CD": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "US",
+          "US",
+          "US",
+          "US"
+        ]
+      },
+      "REGION_CD": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "01001",
+          "01001",
+          "01001",
+          "01001"
+        ]
+      },
+      "TRIBAL_CODE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "FACILITY_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "F001",
+          "F001",
+          "F001",
+          "F002"
+        ]
+      },
+      "UNIT_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "U1",
+          "U1",
+          "U1",
+          "U9"
+        ]
+      },
+      "REL_POINT_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "R1",
+          "R1",
+          "R1",
+          "R9"
+        ]
+      },
+      "PROCESS_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "P1",
+          "P1",
+          "P1",
+          "P9"
+        ]
+      },
+      "AGY_FACILITY_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "AGY_UNIT_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "AGY_REL_POINT_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "AGY_PROCESS_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "SCC": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "0030700101",
+          "0030700101",
+          "0030700101",
+          "0030700201"
+        ]
+      },
+      "POLID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "NOX",
+          "SO2",
+          "PM25",
+          "NOX"
+        ]
+      },
+      "ANN_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          123.45,
+          67.89,
+          4.2,
+          8.0
+        ]
+      },
+      "ANN_PCT_RED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "FACILITY_NAME": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "Autauga Plant, Unit 1",
+          "Autauga Plant, Unit 1",
+          "Autauga Plant, Unit 1",
+          "Prattville Facility"
+        ]
+      },
+      "ERPTYPE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "01",
+          "01",
+          "01",
+          "01"
+        ]
+      },
+      "STKHGT": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          100.0,
+          100.0,
+          100.0,
+          50.0
+        ]
+      },
+      "STKDIAM": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          5.0,
+          5.0,
+          5.0,
+          2.5
+        ]
+      },
+      "STKTEMP": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          500.0,
+          500.0,
+          500.0,
+          350.0
+        ]
+      },
+      "STKFLOW": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          25.0,
+          25.0,
+          25.0,
+          10.0
+        ]
+      },
+      "STKVEL": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          12.5,
+          12.5,
+          12.5,
+          6.0
+        ]
+      },
+      "NAICS": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "221112",
+          "221112",
+          "221112",
+          "221112"
+        ]
+      },
+      "LONGITUDE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          -86.51045,
+          -86.51045,
+          -86.51045,
+          -86.4
+        ]
+      },
+      "LATITUDE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          32.43878,
+          32.43878,
+          32.43878,
+          32.5
+        ]
+      },
+      "LL_DATUM": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "NAD83",
+          "NAD83",
+          "NAD83",
+          "NAD83"
+        ]
+      },
+      "HORIZ_COLL_MTHD": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "DESIGN_CAPACITY": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "DESIGN_CAPACITY_UNITS": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "REG_CODES": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "FAC_SOURCE_TYPE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "UNIT_TYPE_CODE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "CONTROL_IDS": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "CONTROL_MEASURES": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "CURRENT_COST": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "CUMULATIVE_COST": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "PROJECTION_FACTOR": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "SUBMITTER_FAC_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "CALC_METHOD": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "DATA_SET_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "FACIL_CATEGORY_CODE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "ORIS_FACILITY_CODE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "ORIS_BOILER_ID": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "IPM_YN": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "CALC_YEAR": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "2016",
+          "",
+          "",
+          ""
+        ]
+      },
+      "DATE_UPDATED": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "20130210",
+          "",
+          "",
+          ""
+        ]
+      },
+      "FUG_HEIGHT": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "FUG_WIDTH_XDIM": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "FUG_LENGTH_YDIM": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "FUG_ANGLE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "ZIPCODE": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "36066",
+          "36066",
+          "36066",
+          "00000"
+        ]
+      },
+      "ANNUAL_AVG_HOURS_PER_YEAR": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JAN_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          10.0,
+          null,
+          null,
+          null
+        ]
+      },
+      "FEB_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "MAR_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "APR_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "MAY_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JUN_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JUL_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "AUG_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "SEP_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "OCT_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "NOV_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "DEC_VALUE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JAN_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "FEB_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "MAR_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "APR_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "MAY_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JUN_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "JUL_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "AUG_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "SEP_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "OCT_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "NOV_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "DEC_PCTRED": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "COMMENT": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "FF10 point long-format slice (NEI 2016). '#' header skipped; fixed 77-col FF10_POINT schema applied positionally; 42 numeric cols -> float64 (blank->NaN), 35 ids/codes/text -> string; RFC-4180 quoted FACILITY_NAME with an embedded comma. 3 rows share one stack, differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/filter). member=null decodes the bare extracted CSV member."
+}

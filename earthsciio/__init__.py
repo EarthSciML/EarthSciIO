@@ -54,7 +54,13 @@ from .validate import Temporal
 from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
 from .cache import Cache, CacheEntry
 from .native import NativeDataset, NativeField
-from .readers import CSVReader, GeoTIFFReader, NetCDFReader, register_format_readers
+from .readers import (
+    CSVReader,
+    FF10Reader,
+    GeoTIFFReader,
+    NetCDFReader,
+    register_format_readers,
+)
 from .provider import DataLoader, LoaderTemporal, Provider, Window
 from .backends.cds import (
     CdsTransport,
@@ -117,6 +123,7 @@ __all__ = [
     "NetCDFReader",
     "CSVReader",
     "GeoTIFFReader",
+    "FF10Reader",
     "register_format_readers",
     # provider API (esio-9nb.3)
     "Provider",

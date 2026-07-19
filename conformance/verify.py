@@ -102,7 +102,61 @@ def read_csv(path, expected):
     return out, {}
 
 
-READERS = {"netcdf": read_netcdf, "csv": read_csv}
+# FF10 point column schema — copied from Emissions.jl `src/ff10.jl`
+# `FF10_POINT_COLUMNS` (SMOKE names COUNTRY_CD/REGION_CD for the first two).
+_FF10_POINT_COLUMNS = [
+    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
+    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
+    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
+    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
+    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
+    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
+    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
+    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
+    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
+    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
+    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
+    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
+    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
+    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COMMENT",
+]
+
+
+def read_ff10(path, expected):
+    """FF10 point decode oracle: skip '#'/blank lines, RFC-4180 split, assign the
+    77-column schema positionally, then type each column per the case's expected
+    dtype (blank -> NaN in a float64 column, str otherwise). Matches the
+    Julia/Python/Rust ff10 readers' bare-member (member=None) path."""
+    index = {name: j for j, name in enumerate(_FF10_POINT_COLUMNS)}
+    with open(path, newline="") as fh:
+        rows = [
+            r for r in csv.reader(fh)
+            if r and not (r[0].lstrip().startswith("#"))
+        ]
+    ncol = len(_FF10_POINT_COLUMNS)
+    for r in rows:
+        if len(r) != ncol:
+            raise ValueError(f"FF10 row has {len(r)} fields, expected {ncol}: {r!r}")
+    out = {}
+    for name, spec in expected["variables"].items():
+        vals = [r[index[name]] for r in rows]
+        if spec["dtype"] == "string":
+            out[name] = vals
+        else:
+            out[name] = np.array(
+                [math.nan if v.strip() == "" else float(v) for v in vals],
+                dtype="f8",
+            )
+    return out, {}
+
+
+READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10}
 
 
 def verify_case(case_path: pathlib.Path) -> list:

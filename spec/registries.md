@@ -95,6 +95,7 @@ NativeField = { dtype, dims: [string], shape: [int], data, fill_value? }
 | `geotiff` | `tif`,`tiff` | **active** | raster bands via GDAL; Py first, Jl/Rs may lag (R5) |
 | `csv` | `csv` | **active** | points: numeric cols → float64, others → string |
 | `json` | `json` | **active** | points (e.g. station-discovery payloads) |
+| `ff10` | `ff10`,`csv` | **active** | FF10 point long-format (SMOKE/Emissions.jl `FF10_POINT`): `#` header skipped, fixed 77-col schema, numeric→float64 (blank→NaN), ids/codes/text→string; zip member via reader `member` kwarg. Reader-only (no pivot/convert/normalize/filter) |
 | `zarr` | `zarr` | **stub** | chunked store; the future NetCDF→Zarr path |
 
 **Hard boundary (Risk R3):** the reader applies **read/decode** semantics only —

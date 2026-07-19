@@ -14,6 +14,12 @@
       "file": "cases/openaq-points-slice.json",
       "cache_key": "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a",
       "blob_path": "cache/v1/blobs/69/69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a.csv"
+    },
+    {
+      "id": "ff10-point-slice",
+      "file": "cases/ff10-point-slice.json",
+      "cache_key": "d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2",
+      "blob_path": "cache/v1/blobs/d0/d0064bf98cce6401a015c0d7b66bff285d6ac91c20c8a41fc2ea2c40e4c2b6d2.csv"
     }
   ]
 }

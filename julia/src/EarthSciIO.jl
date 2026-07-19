@@ -36,6 +36,7 @@ import Downloads
 import JSON
 using FileWatching.Pidfile: mkpidlock
 import NCDatasets
+import ZipFile
 
 # interfaces + the three extensibility registries
 export Registry, register!, registered_names, status_of
@@ -55,7 +56,7 @@ export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
 export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
-export NetCDFReader, CSVReader, GeoTIFFReader, read_native
+export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, read_native
 export NativeField, NativeDataset, variable_names, coord_names
 
 # cadence provider (component b)
@@ -104,6 +105,10 @@ function _register_defaults()
     # is active once that backend is loaded — without it, `read_native` errors with
     # an install hint (the Python sibling lazy-imports `tifffile` the same way).
     register!(FORMAT_REGISTRY, "geotiff", GeoTIFFReader(); status = :active)
+    # FF10 point (SMOKE / Emissions.jl FF10_POINT): '#' header skipped, fixed
+    # 77-col schema, numeric->Float64 (blank->NaN), ids/codes/text->String; a zip
+    # member is extracted reader-side via the `member` kwarg (ZipFile.jl).
+    register!(FORMAT_REGISTRY, "ff10", FF10Reader(); status = :active)
     register!(FORMAT_REGISTRY, "zarr",
               StubReader("zarr", "chunked store; reader impl lands with esio-9nb.8");
               status = :stub)
