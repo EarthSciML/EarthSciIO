@@ -309,3 +309,179 @@ function _assemble_geotiff(bands::AbstractVector, tags::AbstractDict;
         ydim => NativeField(ys, [ydim], Dict{String,Any}()))
     return NativeDataset(vars, coords)
 end
+
+# --- FF10 point reader (SMOKE FF10_POINT / Emissions.jl oracle) --------------
+
+# The 77 FF10 point column names, in file order. Copied from Emissions.jl
+# `src/ff10.jl` `FF10_POINT_COLUMNS`; the first two use the SMOKE FF10_POINT spec
+# names COUNTRY_CD / REGION_CD (Emissions.jl names them COUNTRY / FIPS — identical
+# values, a positional alias documented in conformance/ff10_oracle_emissions.jl).
+const FF10_POINT_COLUMNS = String[
+    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
+    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
+    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
+    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
+    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
+    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
+    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
+    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
+    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
+    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
+    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
+    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
+    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
+    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COMMENT",
+]
+
+# The 42 FF10 point columns decoded to Float64 (blank → NaN). Everything else
+# (IDs, codes, free-text FACILITY_NAME, temporal tokens CALC_YEAR/DATE_UPDATED)
+# stays String so leading-zero codes (REGION_CD "01001", ZIPCODE "00000", SCC,
+# POLID) never become floats. Overridable via the `numeric_columns` kwarg.
+const FF10_POINT_NUMERIC = Set{String}([
+    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
+    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
+    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
+    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
+    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
+    "NOV_PCTRED", "DEC_PCTRED",
+])
+
+"""
+    FF10Reader()
+
+The `ff10` format reader — the RAW long-format FF10 **point** table (SMOKE /
+Emissions.jl `FF10_POINT`) as a `points` [`NativeDataset`] in **native units**.
+
+Unlike [`CSVReader`] (which only skips empty lines and splits naively), this
+reader (a) skips the leading `#` comment header block (`#FORMAT=…`, `#COUNTRY`,
+…), (b) applies the fixed 77-column [`FF10_POINT_COLUMNS`] schema — FF10 data
+rows carry no clean header row, so the names come from the schema constant
+exactly as Emissions.jl supplies them — and (c) does RFC-4180 quote handling so a
+free-text `FACILITY_NAME` may embed the delimiter (`"Autauga Plant, Unit 1"`).
+
+Each of the 77 columns becomes one [`NativeField`] on a single `index` dim (one
+index per data row); there are no coordinates (`LONGITUDE`/`LATITUDE` are ordinary
+variables — a points table has no gridded axis). The 42 numeric columns parse to
+`Float64` (blank → `NaN`); the other 35 (IDs/codes/free-text) stay `String`
+(blank → `""`).
+
+READER-ONLY (Risk R3): NO pollutant pivot (POLID stays a data column, rows are
+not reshaped), NO unit conversion (`STKHGT`/`STKDIAM` stay feet, `STKTEMP` °F,
+`STKFLOW` ft³/s, `STKVEL` ft/s, `ANN_VALUE` tons/yr), NO FIPS/SCC normalization,
+NO EGU/pollutant filter — those transforms move DOWNSTREAM into the `.esm`.
+
+`reader_kwargs`: `member="path/in/zip"` extracts a named member from a `.zip`
+blob (the whole zip stays the cached content-addressed blob; the member is reader
+config so it never enters the cache key). `kind="point"` selects the schema (only
+point ships). `numeric_columns`, `delimiter`, `comment` override the defaults;
+`variables=[…]` restricts the returned columns (default = all 77)."""
+struct FF10Reader <: Reader end
+
+# RFC-4180 quote-aware split of ONE line into fields. A field may be wrapped in
+# `"`, may contain the delimiter inside quotes (the free-text FACILITY_NAME), and
+# `""` inside a quoted field is a literal quote. Quotes are stripped; the inner
+# content is verbatim. The CSVReader's naive `split` cannot do any of this — the
+# documented reason ff10 needs its own reader.
+function _split_ff10_fields(line::AbstractString, delim::AbstractChar)
+    fields = String[]
+    buf = IOBuffer()
+    inquote = false
+    chars = collect(line)
+    k = 1
+    L = length(chars)
+    while k <= L
+        c = chars[k]
+        if inquote
+            if c == '"'
+                if k < L && chars[k+1] == '"'   # escaped quote ""
+                    write(buf, '"'); k += 1
+                else
+                    inquote = false
+                end
+            else
+                write(buf, c)
+            end
+        else
+            if c == '"'
+                inquote = true
+            elseif c == delim
+                push!(fields, String(take!(buf)))
+            else
+                write(buf, c)
+            end
+        end
+        k += 1
+    end
+    push!(fields, String(take!(buf)))
+    return fields
+end
+
+# Read a named member of a zip archive as text (UTF-8), via ZipFile.jl. The
+# member is reader config — NOT part of the cache key — because one cached
+# `2016fd_inputs_point.zip` holds many member CSVs several loaders read.
+function _ff10_member_text(path::AbstractString, member::AbstractString)
+    reader = ZipFile.Reader(String(path))
+    try
+        for f in reader.files
+            f.name == member && return String(read(f))
+        end
+        throw(ArgumentError("zip member $(repr(member)) not found in $(path); " *
+            "members: $(String[f.name for f in reader.files])"))
+    finally
+        close(reader)
+    end
+end
+
+function read_native(::FF10Reader, path::AbstractString;
+                     member = nothing, kind::AbstractString = "point",
+                     numeric_columns = FF10_POINT_NUMERIC,
+                     delimiter::AbstractString = ",", comment::AbstractString = "#",
+                     variables = nothing)
+    kind == "point" || throw(ArgumentError(
+        "FF10Reader only supports kind=\"point\" (got $(repr(kind))); the 45-col " *
+        "nonpoint/onroad/nonroad schemas are not implemented yet"))
+    text = member === nothing ? read(String(path), String) :
+           _ff10_member_text(String(path), String(member))
+    delim = first(delimiter)
+    ncol = length(FF10_POINT_COLUMNS)
+
+    rows = Vector{String}[]
+    for ln in split(text, '\n')
+        s = strip(ln)
+        (isempty(s) || startswith(s, comment)) && continue
+        fields = _split_ff10_fields(rstrip(ln, ['\r']), delim)
+        length(fields) == ncol || throw(ArgumentError(
+            "FF10 point row has $(length(fields)) fields, expected $ncol; " *
+            "row=$(repr(ln))"))
+        push!(rows, fields)
+    end
+
+    numset = Set(String.(collect(numeric_columns)))
+    want = variables === nothing ? nothing : Set(String[String(v) for v in variables])
+    if want !== nothing
+        miss = sort!(String[v for v in want if !(v in FF10_POINT_COLUMNS)])
+        isempty(miss) || throw(KeyError("requested FF10 columns not in schema: $miss"))
+    end
+
+    vars = Dict{String,NativeField}()
+    for (j, name) in enumerate(FF10_POINT_COLUMNS)
+        want !== nothing && !(name in want) && continue
+        col = String[r[j] for r in rows]
+        data = if name in numset
+            Float64[isempty(strip(v)) ? NaN : parse(Float64, strip(v)) for v in col]
+        else
+            col
+        end
+        vars[name] = NativeField(data, ["index"], Dict{String,Any}())
+    end
+    return NativeDataset(vars, Dict{String,NativeField}())
+end

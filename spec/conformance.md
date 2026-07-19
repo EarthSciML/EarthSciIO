@@ -33,6 +33,7 @@ data tooling beyond the format reader.
 |---|---|---|---|---|---|---|
 | `era5-grid-sub-tile` | era5 | grid | netcdf | file | local | CF scale/offset + `_FillValue`→NaN + a masked cell; packed int16 → float64 |
 | `openaq-points-slice` | openaq | points | csv | file | local | a 2nd reader behind the `format` registry; numeric→float64, text→string |
+| `ff10-point-slice` | nei2016 | points | ff10 | file | local | FF10 point long-format: `#` header skipped, fixed 77-col schema, RFC-4180 quoted `FACILITY_NAME`, numeric→float64 (blank→NaN), ids/codes→string; 3 rows share one stack (no pivot). member=null decodes the extracted CSV member |
 
 GeoTIFF / Zarr / S3 corpus entries are **format-reserved**: the case + manifest
 shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are

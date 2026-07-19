@@ -76,6 +76,13 @@ function dump_case(corpus, case)
         # a string); the corpus case pins the list.
         nc = String.(case["decode"]["numeric_columns"])
         const_provider(cache, url; format = fmt, reader_kwargs = (; numeric_columns = nc))
+    elseif fmt == "ff10"
+        # FF10 point: the case pins the 42 numeric columns + schema kind; member is
+        # nothing (the committed fixture is the already-extracted CSV member).
+        nc = String.(case["decode"]["numeric_columns"])
+        kind = String(get(case["decode"], "kind", "point"))
+        const_provider(cache, url; format = fmt,
+                       reader_kwargs = (; numeric_columns = nc, kind = kind, member = nothing))
     else
         const_provider(cache, url; format = fmt)
     end

@@ -127,6 +127,12 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
         # numeric_columns is REQUIRED by the loader spec (digit-only text columns
         # like location_id must stay strings); the corpus case pins the list.
         reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
+    elif fmt == "ff10":
+        # FF10 point: the case pins the 42 numeric columns, the schema kind, and
+        # member=null (the committed fixture is the already-extracted CSV member).
+        reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
+        reader_kwargs["kind"] = case["decode"].get("kind", "point")
+        reader_kwargs["member"] = case["decode"].get("member")
 
     loader = DataLoader(
         name=case["loader"],

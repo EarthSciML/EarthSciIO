@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 850,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "16971be7ffe62f56191d9bc240b77c6dbc992adb60452842e2392b139623a44a",
+  "source_loader": "nei2016",
+  "url": "https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv"
+}

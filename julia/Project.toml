@@ -11,6 +11,7 @@ JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [weakdeps]
 TiffImages = "731e570b-9d59-4bfa-96dc-6df516fadf69"
@@ -27,6 +28,7 @@ NCDatasets = "0.14"
 SHA = "0.7, 1"
 TiffImages = "0.10, 0.11, 0.12"
 UUIDs = "1"
+ZipFile = "0.10"
 julia = "1.10"
 
 [extras]

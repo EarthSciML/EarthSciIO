@@ -280,6 +280,119 @@ def build_openaq_csv() -> tuple[bytes, dict, dict]:
     return data, expected, decode
 
 
+# -----------------------------------------------------------------------------
+# Fixture 3 — FF10 point long-format slice (transport=file, format=ff10).
+#
+# A NEW reader (the generic CSV reader skips only empty lines, not '#' comments).
+# Pins: the '#' header block is skipped; the fixed 77-column FF10_POINT schema is
+# applied positionally (data rows carry no clean header row); the 42 numeric
+# columns -> float64 (blank -> NaN), the other 35 ids/codes/free-text -> string
+# (blank -> ""); RFC-4180 quoting so a FACILITY_NAME can embed a comma. It is
+# READER-ONLY: no pollutant pivot (3 rows share one stack, differing only in
+# POLID/ANN_VALUE), no unit conversion (STKHGT stays feet, STKTEMP °F), no
+# FIPS/SCC normalization, no EGU filter — those move downstream into the .esm.
+#
+# Column names copied from Emissions.jl `src/ff10.jl` `FF10_POINT_COLUMNS`, with
+# the SMOKE FF10_POINT spec names COUNTRY_CD / REGION_CD for the first two
+# (Emissions.jl: COUNTRY / FIPS — identical values, positional alias).
+# -----------------------------------------------------------------------------
+FF10_POINT_COLUMNS = [
+    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
+    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
+    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
+    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
+    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
+    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
+    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
+    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
+    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
+    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
+    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
+    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
+    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
+    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COMMENT",
+]
+FF10_POINT_NUMERIC = {
+    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
+    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
+    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
+    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
+    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
+    "NOV_PCTRED", "DEC_PCTRED",
+}
+
+
+def build_ff10_point() -> tuple[bytes, dict, dict]:
+    def row(**over) -> list:
+        r = {c: "" for c in FF10_POINT_COLUMNS}
+        r.update(over)
+        return [r[c] for c in FF10_POINT_COLUMNS]
+
+    # One stack (facility F001, unit U1, point R1, process P1) emitting THREE
+    # pollutants (NOX/SO2/PM25) — identical stack params, distinct POLID/ANN_VALUE
+    # (the reader must NOT pivot/aggregate). Row 1 has a quoted-comma FACILITY_NAME
+    # and one non-blank monthly value; DESIGN_CAPACITY is blank (numeric -> NaN).
+    stack = dict(
+        COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F001", UNIT_ID="U1",
+        REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101",
+        FACILITY_NAME="Autauga Plant, Unit 1", ERPTYPE="01",
+        STKHGT="100.0", STKDIAM="5.0", STKTEMP="500.0", STKFLOW="25.0",
+        STKVEL="12.5", NAICS="221112", LONGITUDE="-86.51045", LATITUDE="32.43878",
+        LL_DATUM="NAD83", ZIPCODE="36066",
+    )
+    rows = [
+        row(**stack, POLID="NOX", ANN_VALUE="123.45", JAN_VALUE="10.0",
+            CALC_YEAR="2016", DATE_UPDATED="20130210"),
+        row(**stack, POLID="SO2", ANN_VALUE="67.89"),
+        row(**stack, POLID="PM25", ANN_VALUE="4.2"),
+        # A second facility: plain (unquoted) FACILITY_NAME, ZIPCODE "00000".
+        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F002", UNIT_ID="U9",
+            REL_POINT_ID="R9", PROCESS_ID="P9", SCC="0030700201",
+            POLID="NOX", ANN_VALUE="8.0", FACILITY_NAME="Prattville Facility",
+            ERPTYPE="01", STKHGT="50.0", STKDIAM="2.5", STKTEMP="350.0",
+            STKFLOW="10.0", STKVEL="6.0", NAICS="221112", LONGITUDE="-86.40000",
+            LATITUDE="32.50000", LL_DATUM="NAD83", ZIPCODE="00000"),
+    ]
+
+    header_lines = ["#FORMAT=FF10_POINT", "#COUNTRY US", "#YEAR 2016",
+                    "#DESC synthetic conformance fixture"]
+    sio = io.StringIO()
+    w = csv.writer(sio, lineterminator="\n")  # quotes the comma-bearing name
+    for r in rows:
+        w.writerow(r)
+    data = ("".join(ln + "\n" for ln in header_lines) + sio.getvalue()).encode("utf-8")
+
+    nrows = len(rows)
+    variables = {}
+    for j, col in enumerate(FF10_POINT_COLUMNS):
+        vals = [r[j] for r in rows]
+        if col in FF10_POINT_NUMERIC:
+            variables[col] = {
+                "dtype": "float64", "dims": ["index"], "shape": [nrows],
+                "fill_value": None,
+                "data": [None if str(v).strip() == "" else round(float(v), 10)
+                         for v in vals],
+            }
+        else:
+            variables[col] = {
+                "dtype": "string", "dims": ["index"], "shape": [nrows],
+                "fill_value": None, "data": [str(v) for v in vals],
+            }
+    expected = {"variables": variables, "coords": {}}
+    decode = {"kind": "point", "member": None, "delimiter": ",", "comment": "#",
+              "numeric_columns": sorted(FF10_POINT_NUMERIC)}
+    return data, expected, decode
+
+
 def emit_case(case_id, *, loader, kind, fmt, transport, store, resolved_url,
               ext, data, expected, decode, select, notes):
     key = cache_key(resolved_url)
@@ -345,6 +458,21 @@ def main() -> None:
         notes=("OpenAQ-like points CSV. Numeric columns -> float64 1-D arrays; "
                "others -> string arrays. Second reader behind the FORMAT "
                "registry; proves a non-NetCDF format plugs in unchanged."),
+    ))
+
+    ff10_data, ff10_expected, ff10_decode = build_ff10_point()
+    summary.append(("ff10-point-slice",) + emit_case(
+        "ff10-point-slice",
+        loader="nei2016", kind="points", fmt="ff10", transport="file", store="local",
+        resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
+        ext="csv", data=ff10_data, expected=ff10_expected, decode=ff10_decode,
+        select={"all_rows": True},
+        notes=("FF10 point long-format slice (NEI 2016). '#' header skipped; fixed "
+               "77-col FF10_POINT schema applied positionally; 42 numeric cols -> "
+               "float64 (blank->NaN), 35 ids/codes/text -> string; RFC-4180 quoted "
+               "FACILITY_NAME with an embedded comma. 3 rows share one stack, "
+               "differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/"
+               "filter). member=null decodes the bare extracted CSV member."),
     ))
 
     index = {

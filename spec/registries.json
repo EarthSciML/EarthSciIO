@@ -22,6 +22,7 @@
         {"name": "geotiff", "extensions": ["tif", "tiff"], "content_types": ["image/tiff"], "status": "active", "notes": "Raster bands via GDAL; Python ships first, Julia/Rust may lag (R5). No binary fixture committed yet (no GDAL/git-lfs here)."},
         {"name": "csv", "extensions": ["csv"], "content_types": ["text/csv"], "status": "active", "notes": "Points readers: numeric columns->float64 1-D arrays, others->string."},
         {"name": "json", "extensions": ["json"], "content_types": ["application/json"], "status": "active", "notes": "Points readers (e.g. station discovery payloads)."},
+        {"name": "ff10", "extensions": ["ff10", "csv"], "content_types": ["text/csv"], "status": "active", "notes": "FF10 point long-format (SMOKE/Emissions.jl FF10_POINT); '#' header skipped; fixed 77-col schema; numeric->float64 (blank->NaN), ids/codes/text->string; zip member via reader `member` kwarg (member is NOT part of the cache key). Reader-only: no pivot/unit-convert/FIPS-SCC-normalize/EGU-filter."},
         {"name": "zarr", "extensions": ["zarr"], "content_types": [], "status": "stub", "notes": "Chunked array store; the future NetCDF->Zarr cloud path. Registered as a stub."}
       ]
     },
