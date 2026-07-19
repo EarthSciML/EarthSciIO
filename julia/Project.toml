@@ -13,12 +13,15 @@ SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [weakdeps]
+Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
 TiffImages = "731e570b-9d59-4bfa-96dc-6df516fadf69"
 
 [extensions]
+EarthSciIOBloscExt = "Blosc"
 EarthSciIOTiffImagesExt = "TiffImages"
 
 [compat]
+Blosc = "0.7"
 Dates = "1"
 Downloads = "1"
 FileWatching = "1"
@@ -30,10 +33,11 @@ UUIDs = "1"
 julia = "1.10"
 
 [extras]
+Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TiffImages = "731e570b-9d59-4bfa-96dc-6df516fadf69"
 
 [targets]
-test = ["Test", "Sockets", "Distributed", "TiffImages"]
+test = ["Test", "Sockets", "Distributed", "TiffImages", "Blosc"]

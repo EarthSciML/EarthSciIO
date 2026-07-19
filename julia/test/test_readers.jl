@@ -73,12 +73,21 @@ end
             @test status_of(FORMAT_REGISTRY, fmt) == :active
             reader = FORMAT_REGISTRY[fmt]
 
-            kwargs = if fmt == "csv"
-                (; numeric_columns = String.(case["decode"]["numeric_columns"]))
+            if store_backed(reader)
+                # Store-backed (zarr): the reader is handed (cache, base_url;
+                # variables, select) — a Zarr store is many objects, not one blob.
+                zcache = Cache(LocalStore(joinpath(CORPUS, "cache")); offline = true, verify = true)
+                vars = String[String(v) for v in case["variables"]]
+                nds = read_store(reader, zcache, case["resolved_url"];
+                                 variables = vars, select = case["select"])
             else
-                NamedTuple()
+                kwargs = if fmt == "csv"
+                    (; numeric_columns = String.(case["decode"]["numeric_columns"]))
+                else
+                    NamedTuple()
+                end
+                nds = read_native(reader, blob; kwargs...)
             end
-            nds = read_native(reader, blob; kwargs...)
 
             for (name, spec) in case["expected"]["variables"]
                 @test haskey(nds, name)
@@ -109,9 +118,12 @@ end
 end
 
 @testset "reader edge cases" begin
-    # the registered zarr stub is a clear, named error — not a silent miss
-    @test status_of(FORMAT_REGISTRY, "zarr") == :stub
-    @test_throws ErrorException read_native(FORMAT_REGISTRY["zarr"], "x.zarr")
+    # zarr is now active + store-backed: read_store requires an explicit variable
+    # list (the store cannot be enumerated without a consolidated .zmetadata).
+    @test status_of(FORMAT_REGISTRY, "zarr") == :active
+    @test store_backed(FORMAT_REGISTRY["zarr"])
+    @test_throws ErrorException read_store(FORMAT_REGISTRY["zarr"], Cache(; offline = true),
+                                           "s3://b/z"; variables = nothing)
 
     # CSV inference fallback: with no numeric_columns, digit-only TEXT would be
     # mis-inferred as numeric — which is exactly why the loader must pass the

@@ -20,6 +20,29 @@
 using EarthSciIO
 import JSON
 
+# The store-backed `zarr` case decodes blosc chunks via the `EarthSciIOBloscExt`
+# weakdep extension (`using Blosc`). Blosc is kept a weakdep (light base install,
+# mirroring TiffImages), so it is not importable under `--project=julia`; add it
+# to a temporary environment stacked on LOAD_PATH and retry the extension load.
+# In an env that already carries Blosc (e.g. the test target) the direct import
+# succeeds and this is a no-op. Requires network only if Blosc is not yet in the
+# depot.
+if Base.get_extension(EarthSciIO, :EarthSciIOBloscExt) === nothing
+    try
+        @eval import Blosc
+    catch
+        import Pkg
+        _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
+        _bloscenv = mktempdir()
+        Pkg.activate(_bloscenv; io = devnull)
+        Pkg.add("Blosc"; io = devnull)
+        Pkg.activate(_juliaproj; io = devnull)
+        push!(LOAD_PATH, _bloscenv)
+        @eval import Blosc
+    end
+    Base.retry_load_extensions()
+end
+
 # Row-major (C-order) flatten of a native array whose axes are in file (`dims`)
 # order — matches numpy `.reshape(-1)` on the Python track's arrays.
 _corder(a::AbstractVector) = collect(a)
@@ -76,6 +99,13 @@ function dump_case(corpus, case)
         # a string); the corpus case pins the list.
         nc = String.(case["decode"]["numeric_columns"])
         const_provider(cache, url; format = fmt, reader_kwargs = (; numeric_columns = nc))
+    elseif fmt == "zarr"
+        # Store-backed: `url` is the store base; `variables` names the arrays (no
+        # .zmetadata to enumerate); `select` (the orthogonal selection) rides in
+        # reader_kwargs and drives lazy chunk fetch.
+        vars = String[String(v) for v in case["variables"]]
+        const_provider(cache, url; format = fmt, variables = vars,
+                       reader_kwargs = (; select = case["select"]))
     else
         const_provider(cache, url; format = fmt)
     end

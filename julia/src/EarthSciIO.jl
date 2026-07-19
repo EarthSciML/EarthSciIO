@@ -55,7 +55,8 @@ export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
 export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
-export NetCDFReader, CSVReader, GeoTIFFReader, read_native
+export NetCDFReader, CSVReader, GeoTIFFReader, ZarrReader, read_native
+export read_store, store_backed
 export NativeField, NativeDataset, variable_names, coord_names
 
 # cadence provider (component b)
@@ -73,6 +74,7 @@ include("cds.jl")
 include("era5.jl")
 include("cache.jl")
 include("readers.jl")
+include("zarr.jl")
 include("provider.jl")
 
 """Register the built-in transports + stores into the shared registries.
@@ -86,7 +88,8 @@ function _register_defaults()
     register!(TRANSPORT_REGISTRY, ("http", "https"), HttpTransport(); status = :active)
     register!(TRANSPORT_REGISTRY, "file", FileTransport(); status = :active)
     register!(TRANSPORT_REGISTRY, "cds", CdsTransport(); status = :active)
-    register!(TRANSPORT_REGISTRY, "s3", S3Transport(); status = :stub)
+    # s3 transport (active): anonymous s3:// -> regional-HTTPS rewrite over http.
+    register!(TRANSPORT_REGISTRY, "s3", S3Transport(); status = :active)
 
     # store registry — keyed by store name; value is a factory `(; root, …) -> Store`
     register!(STORE_REGISTRY, "local",
@@ -104,9 +107,9 @@ function _register_defaults()
     # is active once that backend is loaded — without it, `read_native` errors with
     # an install hint (the Python sibling lazy-imports `tifffile` the same way).
     register!(FORMAT_REGISTRY, "geotiff", GeoTIFFReader(); status = :active)
-    register!(FORMAT_REGISTRY, "zarr",
-              StubReader("zarr", "chunked store; reader impl lands with esio-9nb.8");
-              status = :stub)
+    # zarr (active, store-backed): lazy orthogonal chunk selection; blosc decode
+    # is supplied by the `EarthSciIOBloscExt` weakdep extension (`using Blosc`).
+    register!(FORMAT_REGISTRY, "zarr", ZarrReader(); status = :active)
     return nothing
 end
 
