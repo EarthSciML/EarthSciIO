@@ -26,6 +26,7 @@
 struct ZarrReader <: Reader end
 
 store_backed(::ZarrReader) = true
+supports_selection(::ZarrReader) = true
 
 # --- .zarray / .zattrs metadata ---------------------------------------------
 
@@ -271,4 +272,17 @@ function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
         vars[arr] = NativeField(data, dims, Dict{String,Any}())
     end
     return NativeDataset(vars, Dict{String,NativeField}())
+end
+
+"""
+    array_shape(::ZarrReader, cache, base_url, var) -> NTuple{N,Int}
+
+The full (dims-order) shape of array `var` in the Zarr v2 store at `base_url`,
+learned by fetching ONLY that array's `.zarray` metadata object — NEVER a chunk.
+A lightweight honour/refuse probe for projection-pushdown decisions."""
+function array_shape(::ZarrReader, cache::Cache, base_url::AbstractString,
+                     var::AbstractString)
+    base = rstrip(String(base_url), '/')
+    meta = _parse_zarray(_fetch_bytes(cache, "$base/$(String(var))/.zarray"))
+    return Tuple(meta.shape)
 end

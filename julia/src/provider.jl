@@ -122,21 +122,62 @@ refresh_times(p::Provider) = copy(p.times)
 """True if `p`'s data is time-invariant ([`CONST`])."""
 is_const(p::Provider) = p.cadence == CONST
 
+# The format-reader instance backing `p` (mirrors the `_load` lookup so
+# `supports_selection`/`array_shape` resolve the SAME reader the sample path uses).
+_reader_for(p::Provider) = FORMAT_REGISTRY[p.format]
+
 # Fetch (cache) + decode (format reader) for the URL resolved at `t`.
-function _load(p::Provider, t)
-    reader = FORMAT_REGISTRY[p.format]
+#
+# `select` is an optional PER-CALL projection override (component (b) pushdown):
+# `nothing` uses the baked `reader_kwargs[:select]`, a non-`nothing` value
+# OVERRIDES it for this call only. Only a store-backed reader can honour it; a
+# per-call `select` on a whole-file reader is a clear error (the fetch-full
+# fallback belongs to the EarthSciAST caller, not here).
+function _load(p::Provider, t; select = nothing)
+    reader = _reader_for(p)
     # Store-backed readers (e.g. zarr) are handed (cache, base_url; variables,
     # select): a Zarr `url` is a directory-like prefix, not a fetchable blob, so
-    # the reader fetches individual objects on demand. `select` rides in
-    # reader_kwargs. Active whole-file readers inherit `store_backed = false`.
+    # the reader fetches individual objects on demand. Active whole-file readers
+    # inherit `store_backed = false`.
     if store_backed(reader)
+        # Effective select: a per-call `select` OVERRIDES the baked
+        # reader_kwargs[:select]. Forward it explicitly and splat the REST of
+        # reader_kwargs (with `:select` removed, so `select` is never passed twice).
+        effective = select === nothing ? get(p.reader_kwargs, :select, nothing) : select
+        rest = Dict{Symbol,Any}(k => v for (k, v) in p.reader_kwargs if k !== :select)
         return read_store(reader, p.cache, p.url_for(t);
-                          variables = p.variables, p.reader_kwargs...)
+                          variables = p.variables, select = effective, rest...)
     end
+    select === nothing || throw(ArgumentError(
+        "reader $(typeof(reader)) does not support select/pushdown"))
     entry = fetch_blob(p.cache, p.url_for(t);
                        source_loader = p.source_loader, auth_realm = p.auth_realm)
     nds = read_native(reader, entry.path; p.reader_kwargs...)
     return p.variables === nothing ? nds : _select(nds, p.variables)
+end
+
+"""
+    supports_selection(p::Provider) -> Bool
+
+True when `p`'s format reader can honour an orthogonal `select` at read time
+(projection pushdown) — i.e. it is a store-backed reader that fetches only the
+selected chunks. `false` for whole-file readers. A caller uses this to decide
+whether to push a projection down (via `materialize(p, t; select=…)`) or to read
+whole and slice on its own side."""
+supports_selection(p::Provider) = supports_selection(_reader_for(p))
+
+"""
+    array_shape(p::Provider, var::AbstractString) -> Union{Nothing,NTuple{N,Int}}
+
+The full native (dims-order) shape of on-disk array `var`, for a honour/refuse
+pushdown decision. For a store-backed zarr provider this reads ONLY the array's
+`.zarray` metadata (never a chunk); `nothing` for a whole-file reader (whose
+shape is not knowable without reading the blob)."""
+function array_shape(p::Provider, var::AbstractString)
+    reader = _reader_for(p)
+    store_backed(reader) || return nothing
+    t0 = p.cadence == CONST ? 0.0 : first(p.times)
+    return array_shape(reader, p.cache, p.url_for(t0), var)
 end
 
 function _select(nds::NativeDataset, want::Vector{String})
@@ -286,10 +327,10 @@ function _bracket_build(nds0::NativeDataset, i0::Integer,
     return NativeDataset(vars, coords)
 end
 
-function _bracket(p::Provider, t::Real)
+function _bracket(p::Provider, t::Real; select = nothing)
     dim = p.time_dim::String
     rec0 = _tick_index(p, t)                 # floor tick == floor data index
-    nds0 = _load(p, t)
+    nds0 = _load(p, t; select = select)
     scale = _cf_time_scale(_time_units(nds0, dim))
     L = _time_len(nds0, dim)
     t0 = _raw_to_epoch(p.times[rec0], scale)
@@ -303,13 +344,13 @@ function _bracket(p::Provider, t::Real)
     if rec0 + 1 <= L                         # successor in the same file
         return _bracket_build(nds0, rec0, nds0, rec0 + 1, dim, t0, t1)
     end
-    nds1 = _load(p, p.times[rec0 + 1])       # successor is record 1 of the next file
+    nds1 = _load(p, p.times[rec0 + 1]; select = select)  # successor: record 1 of next file
     return _bracket_build(nds0, min(rec0, L), nds1, 1, dim, t0, t1)
 end
 
 """
-    materialize(p::Provider, t::Real) -> NativeDataset
-    materialize(p::Provider) -> NativeDataset
+    materialize(p::Provider, t::Real; select=nothing) -> NativeDataset
+    materialize(p::Provider; select=nothing) -> NativeDataset
 
 Return the native arrays for the source at time `t`. For a [`DISCRETE`] provider
 with `time_dim`, the internal cadence axis is sliced to `t`'s record — unless
@@ -317,31 +358,39 @@ with `time_dim`, the internal cadence axis is sliced to `t`'s record — unless
 successor) are returned with `time_dim` retained at length 2 and a 2-element
 epoch-seconds `time_dim` coordinate (see the [`Provider`] `records_per_sample`
 field). The no-argument form is for a [`CONST`] provider (a `DISCRETE` provider
-must be given a time)."""
-function materialize(p::Provider, t::Real)
+must be given a time).
+
+`select` is an optional PER-CALL projection pushdown (in EarthSciIO's native
+select shape, e.g. `Dict("axes"=>[...])` with 0-based indices). When supplied it
+OVERRIDES any baked `reader_kwargs[:select]` for this call only, letting a caller
+(EarthSciAST) push a projection down at sample time without rebuilding the
+provider. Only a store-backed reader can honour it ([`supports_selection`]);
+passing `select` to a whole-file reader is an `ArgumentError`."""
+function materialize(p::Provider, t::Real; select = nothing)
     if p.records_per_sample == 2 && p.time_dim !== nothing
-        return _bracket(p, t)
+        return _bracket(p, t; select = select)
     end
-    nds = _load(p, t)
+    nds = _load(p, t; select = select)
     if p.time_dim !== nothing
         return _slice_dim(nds, p.time_dim, _tick_index(p, t))
     end
     return nds
 end
 
-function materialize(p::Provider)
+function materialize(p::Provider; select = nothing)
     p.cadence == CONST || throw(ArgumentError(
         "a DISCRETE provider needs a time: materialize(p, t) / refresh(p, t)"))
-    return materialize(p, 0.0)
+    return materialize(p, 0.0; select = select)
 end
 
 """
-    refresh(p::Provider, t::Real) -> NativeDataset
+    refresh(p::Provider, t::Real; select=nothing) -> NativeDataset
 
 Re-materialize at the cadence tick `t`. This is the call the solver makes from
 its `PresetTimeCallback` at each of [`refresh_times`]`(p)`. Identical to
-[`materialize`]`(p, t)`; named for the solver-side update site."""
-refresh(p::Provider, t::Real) = materialize(p, t)
+[`materialize`]`(p, t)`; named for the solver-side update site. `select` is the
+per-call projection pushdown override (see [`materialize`])."""
+refresh(p::Provider, t::Real; select = nothing) = materialize(p, t; select = select)
 
 """
     prefetch(p::Provider) -> Vector{CacheEntry}

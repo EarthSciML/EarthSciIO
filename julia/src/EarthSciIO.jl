@@ -57,7 +57,7 @@ export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
 export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ZarrReader, read_native
-export read_store, store_backed
+export read_store, store_backed, supports_selection, array_shape
 export NativeField, NativeDataset, variable_names, coord_names
 
 # cadence provider (component b)

@@ -126,6 +126,14 @@ function read_native end
 store_backed(::Any) = false
 function read_store end
 
+# Orthogonal-selection (projection-pushdown) capability (additive; default-off).
+# A store-backed reader that can honour a per-axis `select` at read time — fetching
+# only the intersecting chunk objects — declares `supports_selection(::TheReader)
+# = true`. The Provider exposes this (`supports_selection(p::Provider)`) so a caller
+# (EarthSciAST) can decide whether to push a projection down or fall back to a full
+# read on its side. Whole-file readers inherit the `false` default.
+supports_selection(::Any) = false
+
 """A registered-but-unimplemented reader (e.g. the `zarr` stub). Calling it is a
 clear error pointing at the bead that will implement it."""
 struct StubReader

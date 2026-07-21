@@ -150,3 +150,122 @@ end
         @test EarthSciIO.resolve_s3_region() == "eu-west-1"
     end
 end
+
+# --- Phase 1a: per-call `select` pushdown, supports_selection, array_shape --- #
+
+# A Store that records every `get_blob` KEY, so a test can prove the reader
+# fetched ONLY the objects it needed (each on-demand object fetch is exactly one
+# `get_blob` on the fast offline path). Everything else forwards to a LocalStore.
+mutable struct CountingStore <: EarthSciIO.Store
+    inner::LocalStore
+    gets::Vector{String}
+end
+CountingStore(inner::LocalStore) = CountingStore(inner, String[])
+EarthSciIO.store_name(s::CountingStore) = EarthSciIO.store_name(s.inner)
+function EarthSciIO.get_blob(s::CountingStore, key::AbstractString)
+    push!(s.gets, String(key))
+    return EarthSciIO.get_blob(s.inner, key)
+end
+EarthSciIO.blob_exists(s::CountingStore, key::AbstractString) = EarthSciIO.blob_exists(s.inner, key)
+EarthSciIO.get_meta(s::CountingStore, key::AbstractString) = EarthSciIO.get_meta(s.inner, key)
+EarthSciIO.staging_path(s::CountingStore) = EarthSciIO.staging_path(s.inner)
+EarthSciIO.put_blob!(s::CountingStore, key::AbstractString, staged::AbstractString; kwargs...) =
+    EarthSciIO.put_blob!(s.inner, key, staged; kwargs...)
+EarthSciIO.put_meta!(s::CountingStore, key::AbstractString, m::EarthSciIO.Manifest) =
+    EarthSciIO.put_meta!(s.inner, key, m)
+EarthSciIO.lock_key(f::Function, s::CountingStore, key::AbstractString) =
+    EarthSciIO.lock_key(f, s.inner, key)
+
+const ZSR = "s3://earthsci-fixtures/sr-mini.zarr"
+
+# A VALID (non-poison) `sr` store: shape (3,500,1), chunks (1,100,1). Element at
+# global (layer, source, 0) encodes its indices: value = layer*1_000_000 + source
+# (exact in Float32 for these ranges), so a selection's values are self-checking.
+function _z_sr_store(root)
+    objs = Dict{String,Vector{UInt8}}()
+    objs["$ZSR/sr/.zarray"] = _z_zarray((3, 500, 1), (1, 100, 1), "<f4")
+    objs["$ZSR/sr/.zattrs"] = Vector{UInt8}(codeunits(JSON.json(
+        Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"]))))
+    for c0 in 0:2, c1 in 0:4
+        a = Array{Float32}(undef, 1, 100, 1)
+        for j in 0:99
+            a[1, j + 1, 1] = Float32(c0 * 1_000_000 + (c1 * 100 + j))
+        end
+        objs["$ZSR/sr/$c0.$c1.0"] = _z_encode(a)
+    end
+    return _z_populate(root, objs)
+end
+
+@testset "zarr: per-call select pushes down + fetches only needed chunks" begin
+    store = CountingStore(_z_sr_store(mktempdir()))
+    cache = Cache(store; offline = true, verify = false)
+    p = const_provider(cache, ZSR; format = "zarr", variables = ["sr"])
+
+    # layer 1, sources {5,12}∈chunk0 and {305,340}∈chunk3, all receptors.
+    sel = Dict("axes" => Any[Dict("indices" => [1]),
+                             Dict("indices" => [5, 12, 305, 340]), "all"])
+    nds = materialize(p; select = sel)
+    f = nds.variables["sr"]
+    @test f.dims == ["layer", "source", "receptor"]
+    @test size(f.data) == (1, 4, 1)
+    @test vec(f.data) == Float64[1_000_005, 1_000_012, 1_000_305, 1_000_340]
+
+    # Laziness: fetched ONLY .zarray + .zattrs + chunks (1,0,0) and (1,3,0) — the
+    # 13 other chunks (layers 0/2, source-chunks 1/2/4) were never touched.
+    expected = Set(cache_key.([
+        "$ZSR/sr/.zarray", "$ZSR/sr/.zattrs", "$ZSR/sr/1.0.0", "$ZSR/sr/1.3.0"]))
+    @test Set(store.gets) == expected
+    @test length(store.gets) == 4
+end
+
+@testset "zarr: per-call select OVERRIDES baked reader_kwargs[:select]" begin
+    cache = Cache(_z_sr_store(mktempdir()); offline = true, verify = false)
+    baked = Dict("axes" => Any[Dict("indices" => [0]), Dict("indices" => [7]), "all"])
+    p = const_provider(cache, ZSR; format = "zarr", variables = ["sr"],
+                       reader_kwargs = (; select = baked))
+
+    # No per-call select ⇒ the baked select still applies (regression).
+    @test vec(materialize(p).variables["sr"].data) == Float64[7]            # layer 0, src 7
+
+    # A per-call select OVERRIDES the baked one for this call only.
+    over = Dict("axes" => Any[Dict("indices" => [2]), Dict("indices" => [7]), "all"])
+    @test vec(materialize(p; select = over).variables["sr"].data) == Float64[2_000_007]
+    # ... and the baked default is untouched afterwards.
+    @test vec(materialize(p).variables["sr"].data) == Float64[7]
+end
+
+@testset "zarr: array_shape reads only .zarray (no chunk fetch)" begin
+    store = CountingStore(_z_sr_store(mktempdir()))
+    cache = Cache(store; offline = true, verify = false)
+    p = const_provider(cache, ZSR; format = "zarr", variables = ["sr"])
+
+    @test array_shape(p, "sr") == (3, 500, 1)
+    @test store.gets == [cache_key("$ZSR/sr/.zarray")]   # ONLY .zarray, never a chunk
+end
+
+@testset "zarr: supports_selection / array_shape capability surface" begin
+    cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true, verify = true)
+
+    # store-backed zarr provider CAN push down
+    pz = const_provider(cache, "s3://earthsci-fixtures/isrm-mini.zarr";
+                        format = "zarr", variables = ["field3d"])
+    @test supports_selection(ZarrReader())
+    @test supports_selection(pz)
+
+    # whole-file readers cannot; array_shape is nothing (shape unknown without read)
+    for fmt in ("csv", "ff10", "netcdf")
+        pw = const_provider(cache, "file:///dev/null"; format = fmt)
+        @test !supports_selection(pw)
+        @test array_shape(pw, "anything") === nothing
+    end
+    @test !supports_selection(CSVReader())
+    @test !supports_selection(FF10Reader())
+end
+
+@testset "zarr: per-call select on a non-store reader is a clear error" begin
+    cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true)
+    pw = const_provider(cache, "file:///dev/null"; format = "csv")
+    # raised before any fetch — the reader can't honour a projection pushdown
+    @test_throws ArgumentError materialize(pw; select = Dict("axes" => Any["all"]))
+    @test_throws ArgumentError refresh(pw, 0.0; select = Dict("axes" => Any["all"]))
+end
