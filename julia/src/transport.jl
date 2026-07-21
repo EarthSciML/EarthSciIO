@@ -40,6 +40,38 @@ resolve_auth(m::AbstractDict, realm) =
 
 # --- http(s) transport (Downloads / libcurl) --------------------------------
 
+# Robustness (esio zarr-over-S3): a plain `Downloads.request` sets NO timeout. Two
+# distinct failures wedge a chunked zarr scan of hundreds of objects FOREVER at 0%
+# CPU: (1) a STALLED socket (S3 accepts the request then delivers nothing), and
+# (2) a LOST-WAKEUP deadlock in Downloads.jl's async coordination — the transfer's
+# completion notification is dropped and the waiting task never resumes (the sample
+# shows the scheduler parked in uv_run with no runnable task, NO curl activity). A
+# libcurl low-speed abort fixes (1) but not (2); a Downloads-level `timeout` fixes
+# (2) because its Timer still fires on the (alive) event loop and cancels the
+# request. We apply BOTH, plus: rebuild the Downloader after any failure so a
+# poisoned multi-handle can't wedge later chunks, and retry with capped backoff.
+# All knobs are env-overridable; defaults suit large chunked reads over flaky S3.
+_http_env_int(name, default) = parse(Int, get(ENV, name, string(default)))
+const _HTTP_DOWNLOADER = Ref{Any}(nothing)
+function _http_downloader()
+    d = _HTTP_DOWNLOADER[]
+    d === nothing || return d
+    d = Downloads.Downloader()
+    lo_limit = _http_env_int("EARTHSCIIO_HTTP_LOW_SPEED_LIMIT", 1024)  # bytes/s floor
+    lo_time  = _http_env_int("EARTHSCIIO_HTTP_LOW_SPEED_TIME", 30)     # ...for this long → abort
+    conn_to  = _http_env_int("EARTHSCIIO_HTTP_CONNECT_TIMEOUT", 30)    # connect timeout (s)
+    d.easy_hook = (easy, info) -> begin
+        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_LIMIT, lo_limit)
+        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_TIME,  lo_time)
+        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_CONNECTTIMEOUT,  conn_to)
+    end
+    _HTTP_DOWNLOADER[] = d
+    return d
+end
+# Drop the cached Downloader so the next fetch builds a fresh multi-handle (called
+# after a failed/aborted transfer, whose handle may be wedged).
+_reset_http_downloader!() = (_HTTP_DOWNLOADER[] = nothing)
+
 """HTTP/HTTPS transport: GET with conditional-GET revalidation. Mirror failover
 is handled at the call site (the cache tries mirror URLs in order)."""
 struct HttpTransport <: Transport end
@@ -54,8 +86,35 @@ function fetch!(::HttpTransport, url::AbstractString, dest::AbstractString;
     et === nothing || push!(headers, "If-None-Match" => et)
     lm === nothing || push!(headers, "If-Modified-Since" => lm)
 
-    resp = Downloads.request(url; method = "GET", output = dest,
-                             headers = headers, throw = false)
+    tries   = max(1, _http_env_int("EARTHSCIIO_HTTP_RETRIES", 5))
+    timeout = Float64(_http_env_int("EARTHSCIIO_HTTP_TIMEOUT", 90))  # per-request hard cap (s)
+    local resp
+    for attempt in 1:tries
+        ok = false
+        try
+            resp = Downloads.request(url; method = "GET", output = dest,
+                                     headers = headers, throw = false,
+                                     timeout = timeout,
+                                     downloader = _http_downloader())
+            # CRITICAL: with `throw=false`, a transport failure (stall abort, connect
+            # timeout, or a Downloads-level `timeout` cancelling a lost-wakeup
+            # deadlock) is RETURNED as a `Downloads.RequestError`, NOT thrown — only a
+            # `Response` (any HTTP status) is a real reply. Treat a non-Response as a
+            # failed attempt. (An HTTP 404/5xx is a Response and is handled below by
+            # status, never retried here.)
+            ok = resp isa Downloads.Response
+        catch err
+            resp = err   # belt-and-suspenders: a future version might throw instead
+            ok = false
+        end
+        ok && break
+        _reset_http_downloader!()   # rebuild the possibly-wedged multi-handle
+        if attempt == tries
+            resp isa Exception && throw(resp)
+            error("http transport: GET $url failed after $tries attempts: $resp")
+        end
+        sleep(min(2.0^(attempt - 1), 10.0))   # partial `dest` truncated by next open
+    end
     if resp.status == 304
         return FetchResult(:not_modified, et, lm, 0)
     elseif 200 <= resp.status < 300

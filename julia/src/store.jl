@@ -73,13 +73,23 @@ function put_meta!(s::LocalStore, key::AbstractString, m::Manifest)
     return write_manifest(_metapath(s, key), m)
 end
 
+# Crash recovery: `mkpidlock`'s default `stale_age=0` disables staleness detection,
+# so a lock left by a CRASHED / SIGKILLed holder (never released) blocks every
+# future fetch of that blob FOREVER. Pidfile refreshes a live holder's lock mtime
+# every `stale_age/2` seconds, so a genuinely-held lock never ages out — only an
+# unrefreshed (dead-holder) lock passes `stale_age` and is stolen. Default 120s
+# (env-overridable) sits comfortably above any single blob fetch, the refresh
+# interval, and the http transport's timeout+retry budget, so a live download is
+# never stolen while a dead holder's lock self-heals in ≤120s.
+_lock_stale_age() = parse(Float64, get(ENV, "EARTHSCIIO_LOCK_STALE_AGE", "120"))
+
 # Per-blob advisory lock (spec §6): `mkpidlock` with wait=true blocks until the
 # lock is free, so a Julia process and a Python process racing the same URL is
 # safe and results in exactly one download. The lock scope is one blob fetch.
 function lock_key(f::Function, s::LocalStore, key::AbstractString)
     lp = _lockpath(s, key)
     mkpath(dirname(lp))
-    lk = mkpidlock(lp; wait = true)
+    lk = mkpidlock(lp; wait = true, stale_age = _lock_stale_age())
     try
         return f()
     finally
