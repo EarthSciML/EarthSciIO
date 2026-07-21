@@ -281,6 +281,16 @@ pub trait Reader: Send + Sync {
         false
     }
 
+    /// Whether this reader can honour a per-axis orthogonal [`Selection`] at read
+    /// time — **projection pushdown**, fetching only the intersecting chunk
+    /// objects. Default `false`; a store-backed reader that supports it (the
+    /// [`ZarrReader`]) overrides to `true`. The [`crate::Provider`] surfaces this so
+    /// a caller can decide whether to push a projection down or read whole and
+    /// slice itself. Mirrors the Julia/Python `supports_selection` trait.
+    fn supports_selection(&self) -> bool {
+        false
+    }
+
     /// Decode a store at `base_url` into native arrays, fetching each object it
     /// needs through `cache`. Only called by the Provider when
     /// [`store_backed`](Reader::store_backed) is `true` (default: an error).
@@ -295,6 +305,20 @@ pub trait Reader: Send + Sync {
             format: "native".to_string(),
             detail: "reader is not store-backed".to_string(),
         })
+    }
+
+    /// The full (dims-order) shape of on-disk array `var` in the store at
+    /// `base_url`, learned by fetching ONLY that array's metadata (never a chunk)
+    /// — a lightweight honour/refuse probe for projection-pushdown decisions.
+    /// `None` for a whole-file reader (shape unknowable without reading the blob);
+    /// a store-backed reader ([`ZarrReader`]) overrides to read the `.zarray`.
+    fn array_shape(
+        &self,
+        _cache: &Cache,
+        _base_url: &str,
+        _var: &str,
+    ) -> Result<Option<Vec<usize>>> {
+        Ok(None)
     }
 }
 

@@ -533,6 +533,60 @@ def build_zarr_store():
     return objects, expected
 
 
+# -----------------------------------------------------------------------------
+# Fixture 5 — synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection.
+#
+# `sr` is [3,50,4] chunked [1,10,4]: dim1 (source) spans 5 chunks of width 10. The
+# tile case selects layer=[0], source=[24,2,9,6] (0-based, NON-CONTIGUOUS AND
+# PERMUTED — deliberately NOT sorted), receptor=all. This pins two load-bearing
+# guarantees the ISRM workflow depends on, that all three tracks must reproduce
+# BYTE-FOR-BYTE (the 3-way conformance acceptance gate):
+#   * LAZINESS — source 24 -> chunk 2 and {2,9,6} -> chunk 0, so ONLY sr/0.0.0 and
+#     sr/0.2.0 are fetched (2 of 15 chunks); chunk 1 (sources 10..19) and every
+#     layer-1/2 chunk are never touched.
+#   * ORDER PRESERVATION — the returned source axis is [24,2,9,6] in that EXACT
+#     order; a reader that sorted the index list would return [2,6,9,24] and fail.
+# value(layer,source,receptor) = layer*100000 + source*100 + receptor (exact in
+# float32), so each cell self-encodes its indices and the permuted order is checkable.
+# -----------------------------------------------------------------------------
+ZARR_PERMUTED_URL = "s3://earthsci-fixtures/permuted-tile.zarr"
+ZARR_PERMUTED_SELECT = {"axes": [{"indices": [0]}, {"indices": [24, 2, 9, 6]}, "all"]}
+
+
+def build_zarr_permuted():
+    """Return ``(objects, expected)`` for the ordered-selection Zarr v2 store."""
+    objects = []
+    shape, chunks = (3, 50, 4), (1, 10, 4)
+    objects.append(("sr/.zarray",
+                    json.dumps(_zarray_meta(shape, chunks, "<f4"),
+                               sort_keys=True).encode("utf-8")))
+    objects.append(("sr/.zattrs",
+                    json.dumps({"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]},
+                               sort_keys=True).encode("utf-8")))
+    for key, enc in _zarr_chunks(shape, chunks, np.dtype("<f4"),
+                                 lambda g: g[0] * 100000 + g[1] * 100 + g[2]):
+        objects.append((f"sr/{key}", enc))
+
+    # Expected: layer 0, sources [24,2,9,6] (permuted), all 4 receptors — rows in
+    # the GIVEN order, nested C-order per shape [1,4,4]. value = 0*100000 + s*100 + r.
+    def row(src):
+        return [float(src * 100 + r) for r in range(4)]
+
+    expected = {
+        "variables": {
+            "sr": {
+                "dtype": "float64",
+                "dims": ["layer", "source", "receptor"],
+                "shape": [1, 4, 4],
+                "fill_value": None,
+                "data": [[row(24), row(2), row(9), row(6)]],
+            },
+        },
+        "coords": {},
+    }
+    return objects, expected
+
+
 def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
                    decode, select, notes):
     """Write every store object as a cache blob + manifest, then the case JSON.
@@ -690,6 +744,23 @@ def main() -> None:
                "1.2.0 (2 of 6 chunks) — never layer 0, never the middle y-chunk "
                "field3d/1.1.0; pop1d (rank 1) reads whole. fill_value 0.0 is real "
                "data, NOT mapped to NaN. No coordinate arrays."),
+    ))
+
+    zp_objects, zp_expected = build_zarr_permuted()
+    summary.append(("permuted-order-tile",) + emit_zarr_case(
+        "permuted-order-tile",
+        loader="isrm", base_url=ZARR_PERMUTED_URL, objects=zp_objects,
+        variables=["sr"], expected=zp_expected,
+        decode={"compressor": "blosc-lz4-shuffle", "fill_to_nan": False,
+                "order": "C", "zarr_format": 2},
+        select=ZARR_PERMUTED_SELECT,
+        notes=("Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. "
+               "sr [3,50,4] chunked [1,10,4]; select layer=[0], source=[24,2,9,6] "
+               "(NON-CONTIGUOUS, PERMUTED — not sorted), receptor=all fetches ONLY "
+               "sr/0.0.0 + sr/0.2.0 (2 of 15 chunks) and returns the source axis in "
+               "[24,2,9,6] order EXACTLY (a reader that sorted the indices would "
+               "return [2,6,9,24] and fail). Proven byte-identical across "
+               "Python/Julia/Rust — the Phase-1 3-way selection conformance gate."),
     ))
 
     index = {

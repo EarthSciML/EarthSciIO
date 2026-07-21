@@ -40,6 +40,7 @@ from .registry import (
     all_registries,
     format_registry,
     store_registry,
+    supports_selection,
     transport_registry,
 )
 from .cachekey import cache_key, range_keyed_url, sha256_bytes, sha256_file
@@ -106,6 +107,7 @@ __all__ = [
     "format_registry",
     "store_registry",
     "all_registries",
+    "supports_selection",
     # cache core
     "Cache",
     "CacheEntry",

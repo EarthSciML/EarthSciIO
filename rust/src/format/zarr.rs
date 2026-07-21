@@ -68,6 +68,23 @@ impl Reader for ZarrReader {
         true
     }
 
+    fn supports_selection(&self) -> bool {
+        true
+    }
+
+    /// The full (dims-order) shape of `var`, read from ONLY its `.zarray` metadata
+    /// object (never a chunk) via [`ZMeta::parse`].
+    fn array_shape(
+        &self,
+        cache: &Cache,
+        base_url: &str,
+        var: &str,
+    ) -> Result<Option<Vec<usize>>> {
+        let base = base_url.trim_end_matches('/');
+        let meta = ZMeta::parse(&fetch_bytes(cache, &format!("{base}/{var}/.zarray"))?)?;
+        Ok(Some(meta.shape))
+    }
+
     fn read_store(
         &self,
         cache: &Cache,
@@ -408,50 +425,88 @@ fn blosc_decompress(src: &[u8]) -> Result<Vec<u8>> {
     if blocksize == 0 {
         return Err(err("blosc blocksize is 0 for a compressed buffer".into()));
     }
+    if codec != 1 {
+        return Err(err(format!(
+            "blosc codec {codec} not supported (only lz4); the pinned store uses lz4"
+        )));
+    }
     let nblocks = nbytes.div_ceil(blocksize);
     let mut out = Vec::with_capacity(nbytes);
     for i in 0..nblocks {
-        let bstart_off = 16 + 4 * i;
-        if bstart_off + 4 > src.len() {
-            return Err(err("blosc offsets table truncated".into()));
-        }
-        let bstart = i32::from_le_bytes([
-            src[bstart_off],
-            src[bstart_off + 1],
-            src[bstart_off + 2],
-            src[bstart_off + 3],
-        ]) as usize;
+        let bstart = le_u32(src, 16 + 4 * i)?;
         let bend = if i + 1 < nblocks {
-            let o = 16 + 4 * (i + 1);
-            i32::from_le_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]) as usize
+            le_u32(src, 16 + 4 * (i + 1))?
         } else {
             cbytes
         };
         if bstart > bend || bend > src.len() {
             return Err(err("blosc block offsets out of range".into()));
         }
-        let comp = &src[bstart..bend];
         let block_len = blocksize.min(nbytes - i * blocksize);
-        let decoded = match codec {
-            1 => lz4_flex::block::decompress(comp, block_len).map_err(|e| {
-                err(format!("blosc lz4 block decode failed: {e}"))
-            })?,
-            other => {
-                return Err(err(format!(
-                    "blosc codec {other} not supported (only lz4); the pinned store uses lz4"
-                )))
+
+        // A block's compressed payload is a sequence of streams, each prefixed by
+        // its own 4-byte little-endian compressed size. c-blosc stores the block as
+        // ONE stream covering `block_len`, OR — when it split the block — `typesize`
+        // streams (one per shuffle lane, each `block_len/typesize` bytes). A stream
+        // whose stored compressed size equals its uncompressed size was stored RAW
+        // (c-blosc's per-stream incompressible fallback), copied verbatim rather than
+        // lz4-decoded. (The tiny corpus chunks are whole-block `memcpy`ed above, so
+        // this path is exercised by larger real/fixture chunks.)
+        let block_comp = bend - bstart;
+        if block_comp < 4 {
+            return Err(err("blosc block shorter than a stream size prefix".into()));
+        }
+        let csize0 = le_u32(src, bstart)?;
+        let (nstreams, neblock) = if csize0 + 4 == block_comp {
+            (1usize, block_len) // a single stream spans the whole block
+        } else {
+            if typesize == 0 || block_len % typesize != 0 {
+                return Err(err(
+                    "blosc split block length not divisible by typesize".into(),
+                ));
             }
+            (typesize, block_len / typesize)
         };
-        if decoded.len() != block_len {
+
+        let mut block: Vec<u8> = Vec::with_capacity(block_len);
+        let mut p = bstart;
+        for s in 0..nstreams {
+            let csize = le_u32(src, p)?;
+            p += 4;
+            if p + csize > bend {
+                return Err(err("blosc stream data out of range".into()));
+            }
+            let want = if s + 1 < nstreams {
+                neblock
+            } else {
+                block_len - block.len()
+            };
+            let seg = &src[p..p + csize];
+            if csize == want {
+                block.extend_from_slice(seg); // raw-stored (incompressible) stream
+            } else {
+                let dec = lz4_flex::block::decompress(seg, want)
+                    .map_err(|e| err(format!("blosc lz4 stream decode failed: {e}")))?;
+                if dec.len() != want {
+                    return Err(err(format!(
+                        "blosc stream decoded to {} bytes, expected {want}",
+                        dec.len()
+                    )));
+                }
+                block.extend_from_slice(&dec);
+            }
+            p += csize;
+        }
+        if block.len() != block_len {
             return Err(err(format!(
-                "blosc block decoded to {} bytes, expected {block_len}",
-                decoded.len()
+                "blosc block assembled {} bytes, expected {block_len}",
+                block.len()
             )));
         }
         if byte_shuffle {
-            out.extend_from_slice(&unshuffle(&decoded, typesize));
+            out.extend_from_slice(&unshuffle(&block, typesize));
         } else {
-            out.extend_from_slice(&decoded);
+            out.extend_from_slice(&block);
         }
     }
     if out.len() != nbytes {
@@ -481,6 +536,17 @@ fn unshuffle(src: &[u8], typesize: usize) -> Vec<u8> {
     }
     out[shuffled..n].copy_from_slice(&src[shuffled..n]);
     out
+}
+
+/// Read a little-endian `u32` at `off` (as `usize`), erroring if it runs past `src`.
+fn le_u32(src: &[u8], off: usize) -> Result<usize> {
+    if off + 4 > src.len() {
+        return Err(Error::Format {
+            format: "zarr".to_string(),
+            detail: "blosc buffer truncated reading a 4-byte length".to_string(),
+        });
+    }
+    Ok(u32::from_le_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]) as usize)
 }
 
 // --- object fetch helpers --------------------------------------------------- //

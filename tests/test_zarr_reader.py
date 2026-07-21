@@ -10,12 +10,23 @@ garbage, so any over-fetch decode-errors instead of silently succeeding.
 
 from __future__ import annotations
 
+import datetime as _dt
+
 import numpy as np
 import pytest
 
 numcodecs = pytest.importorskip("numcodecs")
 
-from earthsciio import Cache, DataLoader, Provider, cache_key, format_registry
+from earthsciio import (
+    Cache,
+    CSVReader,
+    DataLoader,
+    FF10Reader,
+    Provider,
+    cache_key,
+    format_registry,
+    supports_selection,
+)
 from earthsciio.backends.local import LocalStore
 from earthsciio.backends.zarr import (
     ZarrReader,
@@ -289,3 +300,165 @@ def test_variables_required():
     reader = ZarrReader()
     with pytest.raises(ValueError):
         reader.read_store(object(), BASE, None)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1: per-call `select` pushdown, supports_selection, array_shape.
+# (mirrors julia/test/test_zarr.jl's Phase-1a tests.)
+# --------------------------------------------------------------------------- #
+
+
+class _CountingStore:
+    """Wraps a :class:`LocalStore` and records every ``get_blob`` KEY, so a test can
+    prove the reader fetched ONLY the objects it needed (each on-demand object fetch
+    is exactly one ``get_blob`` on the offline path). Mirrors the Julia
+    ``CountingStore``; everything else forwards to the wrapped store."""
+
+    def __init__(self, inner: LocalStore) -> None:
+        self.inner = inner
+        self.gets: list = []
+
+    def name(self):  # pragma: no cover - trivial delegation
+        return self.inner.name()
+
+    def get_blob(self, key):
+        self.gets.append(key)
+        return self.inner.get_blob(key)
+
+    def exists(self, key):  # pragma: no cover - trivial delegation
+        return self.inner.exists(key)
+
+    def get_meta(self, key):
+        return self.inner.get_meta(key)
+
+    def put_blob(self, key, staged, ext=""):  # pragma: no cover - not used offline
+        return self.inner.put_blob(key, staged, ext)
+
+    def put_meta(self, key, manifest):  # pragma: no cover - not used offline
+        return self.inner.put_meta(key, manifest)
+
+    def staging_path(self, ext="part"):  # pragma: no cover - not used offline
+        return self.inner.staging_path(ext)
+
+    def lock(self, key):  # pragma: no cover - not used offline
+        return self.inner.lock(key)
+
+
+ZSR = "s3://earthsci-fixtures/sr-mini.zarr"
+
+
+def _sr_store(root):
+    """A VALID `sr` store: shape (3,500,1), chunks (1,100,1). Element at global
+    (layer, source, 0) encodes its indices: value = layer*1_000_000 + source (exact
+    in float32 for these ranges), so a selection's values are self-checking."""
+    import json
+
+    objs = {
+        f"{ZSR}/sr/.zarray": _zarray((3, 500, 1), (1, 100, 1), "<f4"),
+        f"{ZSR}/sr/.zattrs": json.dumps(
+            {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}
+        ).encode(),
+    }
+    for c0 in range(3):
+        for c1 in range(5):
+            chunk = np.zeros((1, 100, 1), dtype="<f4")
+            for j in range(100):
+                chunk[0, j, 0] = float(c0 * 1_000_000 + (c1 * 100 + j))
+            objs[f"{ZSR}/sr/{c0}.{c1}.0"] = _encode_chunk(chunk)
+    _populate(root, objs)
+
+
+def test_per_call_select_pushes_down_and_fetches_only_needed_chunks(tmp_path):
+    _sr_store(tmp_path)
+    store = _CountingStore(LocalStore(tmp_path))
+    cache = Cache(store, offline=True, verify=False)
+    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+
+    # layer 1, sources {5,12}∈chunk0 and {305,340}∈chunk3, all receptors.
+    sel = {"axes": [{"indices": [1]}, {"indices": [5, 12, 305, 340]}, "all"]}
+    nds = p.materialize(select=sel)
+    f = nds.variables["sr"]
+    assert f.dims == ("layer", "source", "receptor")
+    assert f.shape == (1, 4, 1)
+    np.testing.assert_array_equal(
+        f.data.ravel(), [1_000_005, 1_000_012, 1_000_305, 1_000_340]
+    )
+
+    # Laziness: fetched ONLY .zarray + .zattrs + chunks (1,0,0) and (1,3,0) — the
+    # 13 other chunks (layers 0/2, source-chunks 1/2/4) were never touched.
+    expected = {
+        cache_key(f"{ZSR}/sr/{k}")
+        for k in (".zarray", ".zattrs", "1.0.0", "1.3.0")
+    }
+    assert set(store.gets) == expected
+    assert len(store.gets) == 4
+
+
+def test_per_call_select_preserves_permuted_order(tmp_path):
+    """A NON-CONTIGUOUS PERMUTED index list returns rows in the GIVEN order, not
+    sorted — the load-bearing ordering contract for the 3-way conformance case."""
+    _sr_store(tmp_path)
+    cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
+    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    sel = {"axes": [{"indices": [0]}, {"indices": [340, 5, 305, 12]}, "all"]}
+    f = p.materialize(select=sel).variables["sr"]
+    # Order preserved exactly (a reader that sorted would give 5,12,305,340).
+    np.testing.assert_array_equal(f.data.ravel(), [340, 5, 305, 12])
+
+
+def test_per_call_select_overrides_baked(tmp_path):
+    _sr_store(tmp_path)
+    cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
+    baked = {"axes": [{"indices": [0]}, {"indices": [7]}, "all"]}
+    p = Provider(
+        DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"],
+                   reader_kwargs={"select": baked}),
+        cache,
+    )
+    # No per-call select ⇒ the baked select still applies (regression).
+    np.testing.assert_array_equal(p.materialize().variables["sr"].data.ravel(), [7])
+    # A per-call select OVERRIDES the baked one for this call only.
+    over = {"axes": [{"indices": [2]}, {"indices": [7]}, "all"]}
+    np.testing.assert_array_equal(
+        p.materialize(select=over).variables["sr"].data.ravel(), [2_000_007]
+    )
+    # ... and the baked default is untouched afterwards.
+    np.testing.assert_array_equal(p.materialize().variables["sr"].data.ravel(), [7])
+
+
+def test_array_shape_reads_only_zarray(tmp_path):
+    _sr_store(tmp_path)
+    store = _CountingStore(LocalStore(tmp_path))
+    cache = Cache(store, offline=True, verify=False)
+    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+
+    assert p.array_shape("sr") == (3, 500, 1)
+    assert store.gets == [cache_key(f"{ZSR}/sr/.zarray")]  # ONLY .zarray, never a chunk
+
+
+def test_supports_selection_and_array_shape_capability_surface(tmp_path):
+    _sr_store(tmp_path)
+    cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
+
+    # store-backed zarr provider CAN push down
+    pz = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    assert supports_selection(ZarrReader()) is True
+    assert pz.supports_selection is True
+
+    # whole-file readers cannot; array_shape is None (shape unknown without a read)
+    for fmt in ("csv", "ff10", "netcdf"):
+        pw = Provider(DataLoader(name="x", format=fmt, url="file:///dev/null"), cache)
+        assert pw.supports_selection is False
+        assert pw.array_shape("anything") is None
+    assert supports_selection(CSVReader()) is False
+    assert supports_selection(FF10Reader()) is False
+
+
+def test_per_call_select_on_non_store_reader_raises(tmp_path):
+    cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
+    pw = Provider(DataLoader(name="x", format="csv", url="file:///dev/null"), cache)
+    # raised before any fetch — the reader can't honour a projection pushdown
+    with pytest.raises(ValueError):
+        pw.materialize(select={"axes": ["all"]})
+    with pytest.raises(ValueError):
+        pw.refresh(_dt.datetime(2020, 1, 1), select={"axes": ["all"]})

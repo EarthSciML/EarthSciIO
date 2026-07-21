@@ -45,7 +45,7 @@ import numpy as np
 
 from .cache import Cache, CacheEntry
 from .native import NativeDataset, NativeField
-from .registry import Registry, format_registry
+from .registry import Registry, format_registry, supports_selection
 
 __all__ = ["LoaderTemporal", "DataLoader", "Provider", "Window"]
 
@@ -229,20 +229,30 @@ class Provider:
 
     # -- materialize / refresh --------------------------------------------- #
 
-    def materialize(self) -> NativeDataset:
+    def materialize(self, select: Optional[Any] = None) -> NativeDataset:
         """Materialize the loader's native arrays into the buffer and return them.
 
         CONST: reads the single file once. DISCRETE: primes the buffer at the
         first cadence anchor of the window (≡ ``refresh(window.start)``), so a
         caller can read an initial state before stepping.
+
+        ``select`` is an optional PER-CALL projection pushdown (in EarthSciIO's
+        native select shape, e.g. ``{"axes": [...]}`` with 0-based indices). When
+        supplied it OVERRIDES any baked ``reader_kwargs["select"]`` for this call
+        only, letting a caller (EarthSciAST) push a projection down at sample time
+        without rebuilding the provider. Only a store-backed reader can honour it
+        (:attr:`supports_selection`); passing ``select`` to a whole-file reader is
+        a :class:`ValueError`. A per-call ``select`` is a projection **peek** — it
+        does NOT disturb the cadence buffer / file cache the solver reads.
         """
         if self.loader.temporal is None:
-            ds = self._read_file(self.loader.resolve_url(_EPOCH))
-            self._current = ds
+            ds = self._read_file(self.loader.resolve_url(_EPOCH), select=select)
+            if select is None:
+                self._current = ds
             return ds
-        return self.refresh(self._lower_bound())
+        return self.refresh(self._lower_bound(), select=select)
 
-    def refresh(self, t: _dt.datetime) -> NativeDataset:
+    def refresh(self, t: _dt.datetime, select: Optional[Any] = None) -> NativeDataset:
         """Refresh the buffer to the cadence anchor for time ``t`` and return it.
 
         Snaps ``t`` down to the loader's cadence anchor, re-reads the covering
@@ -252,10 +262,15 @@ class Provider:
         (materializing once if needed). Raises :class:`ValueError` if ``t``
         precedes the loader epoch, :class:`IndexError` if the snapped record is
         absent from its file.
+
+        ``select`` is the per-call projection pushdown override (see
+        :meth:`materialize`) — a peek that reads fresh and leaves the buffer intact.
         """
         temporal = self.loader.temporal
         if temporal is None:
-            return self._current if self._current is not None else self.materialize()
+            if select is None and self._current is not None:
+                return self._current
+            return self.materialize(select=select)
 
         anchor = _snap_down(temporal.start, t, temporal.frequency)
         if anchor < temporal.start:
@@ -263,8 +278,16 @@ class Provider:
                 f"t={t!r} precedes the loader start {temporal.start!r}"
             )
         if temporal.records_per_sample == 2:
-            return self._refresh_bracket(temporal, anchor)
+            return self._refresh_bracket(temporal, anchor, select=select)
         file_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
+        # A per-call `select` override reads fresh and does NOT disturb the cadence
+        # buffer / file cache (it is a projection peek for this call only).
+        if select is not None:
+            file_ds = self._read_file(
+                self.loader.resolve_url(file_anchor), select=select
+            )
+            rec = _record_index(file_ds, temporal, anchor, file_anchor)
+            return _slice_record(file_ds, temporal.time_dim, rec)
         if self._current_file is None or self._current_file_anchor != file_anchor:
             self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
             self._current_file_anchor = file_anchor
@@ -274,6 +297,34 @@ class Provider:
         self._current = sliced
         self._current_anchor = anchor
         return sliced
+
+    # -- projection-pushdown capability ------------------------------------ #
+
+    @property
+    def supports_selection(self) -> bool:
+        """True when the bound reader can honour an orthogonal ``select`` at read
+        time (projection pushdown) — a store-backed reader that fetches only the
+        selected chunks. False for whole-file readers. A caller uses this to decide
+        whether to push a projection down (``materialize(..., select=…)``) or to
+        read whole and slice on its own side."""
+        return supports_selection(self._reader)
+
+    def array_shape(self, var: str) -> Optional[Tuple[int, ...]]:
+        """The full native (dims-order) shape of on-disk array ``var``, for a
+        honour/refuse pushdown decision, or ``None``.
+
+        For a store-backed zarr provider this reads ONLY the array's ``.zarray``
+        metadata (never a chunk); ``None`` for a whole-file reader (whose shape is
+        not knowable without reading the blob). Mirrors the Julia/Rust
+        ``array_shape``."""
+        reader = self._reader
+        if not getattr(reader, "store_backed", False):
+            return None
+        shape_fn = getattr(reader, "array_shape", None)
+        if shape_fn is None:
+            return None
+        anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
+        return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
     def refresh_times(self) -> List[_dt.datetime]:
         """The cadence anchors at which the data changes and the solver must
@@ -355,24 +406,46 @@ class Provider:
             mirrors=tuple(self.loader.mirrors),
         )
 
-    def _read_file(self, url: str) -> NativeDataset:
+    def _read_file(self, url: str, select: Optional[Any] = None) -> NativeDataset:
         variables = list(self.loader.variables) if self.loader.variables else None
+        reader_kwargs = self.loader.reader_kwargs
         # Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
         # select) — a Zarr `url` is a directory-like prefix, not a fetchable blob,
         # so the reader fetches individual objects on demand. Additive + default-
         # off: active whole-file readers never define `store_backed` and take the
-        # existing path. `select` rides in reader_kwargs.
+        # existing path.
+        #
+        # Effective select: a per-call `select` OVERRIDES the baked
+        # reader_kwargs["select"] for this call only. Forward it explicitly and
+        # splat the REST of reader_kwargs (with "select" removed, so `select` is
+        # never passed twice).
         if getattr(self._reader, "store_backed", False):
+            effective = select if select is not None else reader_kwargs.get("select")
+            rest = {k: v for k, v in reader_kwargs.items() if k != "select"}
             return self._reader.read_store(
-                self.cache, url, variables, **self.loader.reader_kwargs
+                self.cache, url, variables, select=effective, **rest
+            )
+        # Whole-file reader: it cannot honour a projection pushdown. A per-call
+        # `select` here is a clear error (the fetch-full fallback belongs to the
+        # EarthSciAST caller, not the reader). Raised before any fetch.
+        if select is not None:
+            raise ValueError(
+                f"reader {type(self._reader).__name__} does not support "
+                "select/pushdown"
             )
         entry = self._fetch(url)
         handle = self._reader.open(entry.path)
-        return self._reader.read_native(handle, variables, **self.loader.reader_kwargs)
+        return self._reader.read_native(handle, variables, **reader_kwargs)
 
-    def _file_for(self, file_anchor: _dt.datetime) -> NativeDataset:
+    def _file_for(self, file_anchor: _dt.datetime,
+                  select: Optional[Any] = None) -> NativeDataset:
         """Decode the file covering ``file_anchor``, via a 2-entry LRU so a
-        file-period seam (two adjacent files) decodes each at most once."""
+        file-period seam (two adjacent files) decodes each at most once.
+
+        A per-call ``select`` override reads fresh and bypasses the decoded-file
+        LRU (the projected decode must not be cached as the plain buffer)."""
+        if select is not None:
+            return self._read_file(self.loader.resolve_url(file_anchor), select=select)
         ds = self._files.get(file_anchor)
         if ds is None:
             ds = self._read_file(self.loader.resolve_url(file_anchor))
@@ -384,13 +457,17 @@ class Provider:
         return ds
 
     def _refresh_bracket(self, temporal: LoaderTemporal,
-                         anchor: _dt.datetime) -> NativeDataset:
+                         anchor: _dt.datetime,
+                         select: Optional[Any] = None) -> NativeDataset:
         """Return the two records bracketing ``anchor`` (floor + successor) with
         ``time_dim`` retained at length 2 and a canonical epoch-seconds ``time``
-        coordinate. Handles the cross-file successor and the end-of-data clamp."""
+        coordinate. Handles the cross-file successor and the end-of-data clamp.
+
+        A per-call ``select`` override reads fresh and does NOT disturb the cadence
+        buffer (a projection peek for this call only)."""
         time_dim = temporal.time_dim
         file0_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
-        file0 = self._file_for(file0_anchor)
+        file0 = self._file_for(file0_anchor, select=select)
         rec0 = _record_index(file0, temporal, anchor, file0_anchor)
 
         next_anchor = anchor + temporal.frequency
@@ -403,7 +480,7 @@ class Provider:
                 else:  # successor is record 0 of the next file
                     n_anchor = _snap_down(temporal.start, next_anchor,
                                           temporal.file_period)
-                    file1 = self._file_for(n_anchor)
+                    file1 = self._file_for(n_anchor, select=select)
                     r1 = _record_index(file1, temporal, next_anchor, n_anchor)
                     if 0 <= r1 < _time_len(file1, time_dim):
                         succ = (file1, r1)
@@ -417,8 +494,9 @@ class Provider:
             file0, rec0, succ[0], succ[1], time_dim,
             _epoch_seconds(anchor), _epoch_seconds(next_anchor),
         )
-        self._current = sliced
-        self._current_anchor = anchor
+        if select is None:
+            self._current = sliced
+            self._current_anchor = anchor
         return sliced
 
 

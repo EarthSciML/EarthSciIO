@@ -26,6 +26,12 @@
       "file": "cases/isrm-zarr-tile.json",
       "cache_key": "229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d",
       "blob_path": "cache/v1/blobs/22/229ebe105aa3b5998d49702ef0942a04d76f5b3112a26d5423bffa5bffbef86d"
+    },
+    {
+      "id": "permuted-order-tile",
+      "file": "cases/permuted-order-tile.json",
+      "cache_key": "b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6",
+      "blob_path": "cache/v1/blobs/b9/b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6"
     }
   ]
 }

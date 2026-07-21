@@ -1,0 +1,211 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "permuted-order-tile",
+  "loader": "isrm",
+  "kind": "grid",
+  "format": "zarr",
+  "transport": "s3",
+  "store": "local",
+  "resolved_url": "s3://earthsci-fixtures/permuted-tile.zarr",
+  "cache_key": "b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6",
+  "blob_path": "cache/v1/blobs/b9/b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6",
+  "manifest_path": "cache/v1/meta/b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6.json",
+  "content_sha256": "27b8f47b9438b44c6aec565952d988fa11e166c1eb9efc17aca30ea68315fd5c",
+  "bytes": 246,
+  "variables": [
+    "sr"
+  ],
+  "objects": [
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/.zarray",
+      "cache_key": "b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6",
+      "blob_path": "cache/v1/blobs/b9/b97f9d20face42123582fe9119ebbdb8d046e3a7bb90e648cac9e4b9a01c8ee6",
+      "content_sha256": "27b8f47b9438b44c6aec565952d988fa11e166c1eb9efc17aca30ea68315fd5c",
+      "bytes": 246
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/.zattrs",
+      "cache_key": "4900c6317b76f743437d6e30afd91e4da23292bd6519e473d7219c6314242cd0",
+      "blob_path": "cache/v1/blobs/49/4900c6317b76f743437d6e30afd91e4da23292bd6519e473d7219c6314242cd0",
+      "content_sha256": "cb51476c7f1df9ef844ec11c938df7c562947ea715e0200e9dffef24f24c58b5",
+      "bytes": 54
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/0.0.0",
+      "cache_key": "518b781b3a6a351896b2fcef279b6ab23d141a9bdcafa06b55f6e357b89686d2",
+      "blob_path": "cache/v1/blobs/51/518b781b3a6a351896b2fcef279b6ab23d141a9bdcafa06b55f6e357b89686d2",
+      "content_sha256": "ba64927a484c34673f3294af307f879ce83115917d63020152278e2caee7ce39",
+      "bytes": 113
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/0.1.0",
+      "cache_key": "461164b82dbfed6aba0eb7bd378559ede5141a4089f0d10301c7f4833d135fe1",
+      "blob_path": "cache/v1/blobs/46/461164b82dbfed6aba0eb7bd378559ede5141a4089f0d10301c7f4833d135fe1",
+      "content_sha256": "ce777a39b376964230828f3eba1b8324c76730d628bf79f7c883a35802b5bbda",
+      "bytes": 124
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/0.2.0",
+      "cache_key": "9a352e7406e9682a6cd896bc44f3be514439d8bc72ac589a0bf58c3d2fdbe9b8",
+      "blob_path": "cache/v1/blobs/9a/9a352e7406e9682a6cd896bc44f3be514439d8bc72ac589a0bf58c3d2fdbe9b8",
+      "content_sha256": "f09c5b2ef9d533d6752564b98e2c5959491b2f359cb37b62e922c63fdad0dc90",
+      "bytes": 128
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/0.3.0",
+      "cache_key": "c7f304734e1143abc35e1faae199453db95d98169888d06fb6a07aa5ad432d22",
+      "blob_path": "cache/v1/blobs/c7/c7f304734e1143abc35e1faae199453db95d98169888d06fb6a07aa5ad432d22",
+      "content_sha256": "005a198fb4d9d0c508551efe5247b8db56e487185dd5b1dcacf03665b2d83018",
+      "bytes": 106
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/0.4.0",
+      "cache_key": "8c3aed3e4060f80c7069d708025abf908790a6952da1a0602a92dbe9ec3e3f36",
+      "blob_path": "cache/v1/blobs/8c/8c3aed3e4060f80c7069d708025abf908790a6952da1a0602a92dbe9ec3e3f36",
+      "content_sha256": "e828a77efd0c272f51b896aa7e677698d37c745911ce70663b1847682396a142",
+      "bytes": 124
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.0.0",
+      "cache_key": "119db9b32de8311e4f7e66cc748a1dcb2992030a77e986520dac59b7b029d5b1",
+      "blob_path": "cache/v1/blobs/11/119db9b32de8311e4f7e66cc748a1dcb2992030a77e986520dac59b7b029d5b1",
+      "content_sha256": "d03a391a7f218fbfae6884fd2326885a7f3d6d87241cf03a0720b6b5138f6de9",
+      "bytes": 103
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.1.0",
+      "cache_key": "ca1a72256cf1cc60dd54c2284bb35d1344e277c96117b1c396c63965a7b20a92",
+      "blob_path": "cache/v1/blobs/ca/ca1a72256cf1cc60dd54c2284bb35d1344e277c96117b1c396c63965a7b20a92",
+      "content_sha256": "c57ef66aacd5d55cb73d367df7326a9762ecd0892793d205f6c416759770f35b",
+      "bytes": 103
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.2.0",
+      "cache_key": "08087816092d8461d3c2a064af59ffbc024812a7138dcafdce96639d5298448e",
+      "blob_path": "cache/v1/blobs/08/08087816092d8461d3c2a064af59ffbc024812a7138dcafdce96639d5298448e",
+      "content_sha256": "8156cb80a94111ade4f4755c52dbb4f479940126d0cbcfa4bdea7b9aca12001b",
+      "bytes": 95
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.3.0",
+      "cache_key": "d109c0f7c7aff17d8065372c64a20068d0e15d257172939110399e26e642b99d",
+      "blob_path": "cache/v1/blobs/d1/d109c0f7c7aff17d8065372c64a20068d0e15d257172939110399e26e642b99d",
+      "content_sha256": "c7696db4c09f65b64e523a0cb2b5726ff70dc643e1bf73ecc2ac5c891c00341b",
+      "bytes": 95
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.4.0",
+      "cache_key": "5d00bdd9031fd93fda06baaa2c184795ae4ee71f072d8373f1eeaa3d58906852",
+      "blob_path": "cache/v1/blobs/5d/5d00bdd9031fd93fda06baaa2c184795ae4ee71f072d8373f1eeaa3d58906852",
+      "content_sha256": "6fde75b04f13ab4684f055a3217c7bef60e259d8b58a84b11569a82ed227c0c2",
+      "bytes": 95
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/2.0.0",
+      "cache_key": "46e845b401f871dec1c4235848aebe9f409908a5b3b776c7040bd2a0d5ae72f4",
+      "blob_path": "cache/v1/blobs/46/46e845b401f871dec1c4235848aebe9f409908a5b3b776c7040bd2a0d5ae72f4",
+      "content_sha256": "7b4c0b8eab6575c167f39d908cc60385f6dc1471e7dc1c9c42da707d95e9112e",
+      "bytes": 105
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/2.1.0",
+      "cache_key": "fd7b0bbdfa0ef007a40b5f63ef8be0bb7141bc55fce5528ed5ff028eaa1a929d",
+      "blob_path": "cache/v1/blobs/fd/fd7b0bbdfa0ef007a40b5f63ef8be0bb7141bc55fce5528ed5ff028eaa1a929d",
+      "content_sha256": "3284a263774fccc1b4513f091c1bbb844ce871c50dee93f9048b95b55c4b6bd1",
+      "bytes": 105
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/2.2.0",
+      "cache_key": "b968ef1720fd95d347169369f70408f310051a8326bdc42fbf5a60f146402758",
+      "blob_path": "cache/v1/blobs/b9/b968ef1720fd95d347169369f70408f310051a8326bdc42fbf5a60f146402758",
+      "content_sha256": "95a0c3660a39a040aaa4cb810cc3d18effff05ec3333914338de0d36125b4834",
+      "bytes": 105
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/2.3.0",
+      "cache_key": "fc0a99a3d174935a15693aced140de8102e18aadaddb279333a238a5d15b669b",
+      "blob_path": "cache/v1/blobs/fc/fc0a99a3d174935a15693aced140de8102e18aadaddb279333a238a5d15b669b",
+      "content_sha256": "4f0cf3a0d2849f4a62158fd17ea87b1237bde76f967e293ac84519532a839aad",
+      "bytes": 105
+    },
+    {
+      "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/2.4.0",
+      "cache_key": "bbc4ac04a35e533a0eefefbdc100f7e1be238aae2f1fcd688a1de5491c66116d",
+      "blob_path": "cache/v1/blobs/bb/bbc4ac04a35e533a0eefefbdc100f7e1be238aae2f1fcd688a1de5491c66116d",
+      "content_sha256": "b21b81fa2f8e38a0a06397c2a98fc7ec085c0fafd82184b2e2b8ff0c1c1a7752",
+      "bytes": 101
+    }
+  ],
+  "select": {
+    "axes": [
+      {
+        "indices": [
+          0
+        ]
+      },
+      {
+        "indices": [
+          24,
+          2,
+          9,
+          6
+        ]
+      },
+      "all"
+    ]
+  },
+  "decode": {
+    "compressor": "blosc-lz4-shuffle",
+    "fill_to_nan": false,
+    "order": "C",
+    "zarr_format": 2
+  },
+  "expected": {
+    "variables": {
+      "sr": {
+        "dtype": "float64",
+        "dims": [
+          "layer",
+          "source",
+          "receptor"
+        ],
+        "shape": [
+          1,
+          4,
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            [
+              2400.0,
+              2401.0,
+              2402.0,
+              2403.0
+            ],
+            [
+              200.0,
+              201.0,
+              202.0,
+              203.0
+            ],
+            [
+              900.0,
+              901.0,
+              902.0,
+              903.0
+            ],
+            [
+              600.0,
+              601.0,
+              602.0,
+              603.0
+            ]
+          ]
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. sr [3,50,4] chunked [1,10,4]; select layer=[0], source=[24,2,9,6] (NON-CONTIGUOUS, PERMUTED \u2014 not sorted), receptor=all fetches ONLY sr/0.0.0 + sr/0.2.0 (2 of 15 chunks) and returns the source axis in [24,2,9,6] order EXACTLY (a reader that sorted the indices would return [2,6,9,24] and fail). Proven byte-identical across Python/Julia/Rust \u2014 the Phase-1 3-way selection conformance gate."
+}

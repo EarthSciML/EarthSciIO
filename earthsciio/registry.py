@@ -56,7 +56,22 @@ __all__ = [
     "format_registry",
     "store_registry",
     "all_registries",
+    "supports_selection",
 ]
+
+
+def supports_selection(reader: Any) -> bool:
+    """Orthogonal-selection (projection-pushdown) capability trait — default-off.
+
+    ``True`` when ``reader`` can honour a per-axis ``select`` at read time, fetching
+    only the intersecting chunk objects. A store-backed reader that supports it
+    declares a class attribute ``supports_selection = True`` (like ``store_backed``);
+    whole-file readers inherit the ``False`` default. This is the Python realization
+    of the Julia ``supports_selection`` trait and the Rust ``Reader::supports_selection``
+    — the seam a caller (EarthSciAST) uses to decide whether to push a projection
+    down (``Provider.materialize(..., select=...)``) or read whole and slice itself.
+    """
+    return bool(getattr(reader, "supports_selection", False))
 
 
 # --------------------------------------------------------------------------- #

@@ -112,3 +112,143 @@ fn over_selection_hits_poison_and_errors() {
     let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
     assert!(provider.materialize().is_err());
 }
+
+// --- Phase 1: per-call `select` override, ordering, supports_selection, shape --- //
+
+const PBASE: &str = "s3://earthsci-fixtures/permuted-tile.zarr";
+
+#[test]
+fn per_call_select_preserves_permuted_order_and_is_lazy() {
+    let scratch = tempfile::tempdir().unwrap();
+    let cache_root = scratch.path().join("cache");
+    copy_dir(&corpus_cache(), &cache_root);
+
+    // select layer=[0], source=[24,2,9,6] (PERMUTED) needs ONLY sr/0.0.0 (sources
+    // 2,9,6 -> chunk 0) and sr/0.2.0 (source 24 -> chunk 2). Poison EVERY other sr
+    // chunk: a non-lazy read (or one that scanned the whole array) would blosc-error.
+    for l in 0..3 {
+        for s in 0..5 {
+            if !(l == 0 && (s == 0 || s == 2)) {
+                poison(&cache_root, &format!("{PBASE}/sr/{l}.{s}.0"), b"\x00POISON-not-blosc\xff");
+            }
+        }
+    }
+
+    let cache = Cache::builder()
+        .data_dir(&cache_root)
+        .offline(true)
+        .verify_on_read(false)
+        .build()
+        .unwrap();
+
+    // Baked select defaults to All; the PER-CALL override drives the projection.
+    let loader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]);
+    let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
+
+    let sel = Selection::Orthogonal(vec![
+        AxisSelect::Indices(vec![0]),
+        AxisSelect::Indices(vec![24, 2, 9, 6]),
+        AxisSelect::All,
+    ]);
+    let buffers = provider.materialize_with_select(Some(&sel)).unwrap();
+    let sr = &buffers["sr"];
+    assert_eq!(sr.dims, vec!["layer", "source", "receptor"]);
+    assert_eq!(sr.shape, vec![1, 4, 4]);
+    // Rows follow the GIVEN order 24,2,9,6 (value = source*100 + receptor); a reader
+    // that SORTED the index list would return 2,6,9,24 and fail this assertion.
+    assert_eq!(
+        sr.data,
+        ArrayData::F64(vec![
+            2400.0, 2401.0, 2402.0, 2403.0, // source 24
+            200.0, 201.0, 202.0, 203.0, // source 2
+            900.0, 901.0, 902.0, 903.0, // source 9
+            600.0, 601.0, 602.0, 603.0, // source 6
+        ])
+    );
+}
+
+#[test]
+fn per_call_select_overrides_baked_and_leaves_it_intact() {
+    let cache = Cache::builder()
+        .data_dir(corpus_cache())
+        .offline(true)
+        .verify_on_read(true)
+        .build()
+        .unwrap();
+    let baked = Selection::Orthogonal(vec![
+        AxisSelect::Indices(vec![0]),
+        AxisSelect::Indices(vec![2]),
+        AxisSelect::All,
+    ]);
+    let loader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]).select(baked);
+    let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
+
+    // No per-call select ⇒ the baked select applies: source [2] -> [200,201,202,203].
+    assert_eq!(
+        provider.materialize().unwrap()["sr"].data,
+        ArrayData::F64(vec![200.0, 201.0, 202.0, 203.0])
+    );
+
+    // A per-call override applies for this call only.
+    let over = Selection::Orthogonal(vec![
+        AxisSelect::Indices(vec![0]),
+        AxisSelect::Indices(vec![24, 2, 9, 6]),
+        AxisSelect::All,
+    ]);
+    let peeked = provider.materialize_with_select(Some(&over)).unwrap();
+    assert_eq!(peeked["sr"].shape, vec![1, 4, 4]);
+    assert_eq!(
+        peeked["sr"].data,
+        ArrayData::F64(vec![
+            2400.0, 2401.0, 2402.0, 2403.0, 200.0, 201.0, 202.0, 203.0, 900.0, 901.0, 902.0,
+            903.0, 600.0, 601.0, 602.0, 603.0,
+        ])
+    );
+
+    // ... and the baked default is untouched afterwards.
+    assert_eq!(
+        provider.materialize().unwrap()["sr"].data,
+        ArrayData::F64(vec![200.0, 201.0, 202.0, 203.0])
+    );
+}
+
+#[test]
+fn supports_selection_and_array_shape_capability_surface() {
+    let cache = Arc::new(
+        Cache::builder()
+            .data_dir(corpus_cache())
+            .offline(true)
+            .verify_on_read(true)
+            .build()
+            .unwrap(),
+    );
+
+    // store-backed zarr provider CAN push down; array_shape reads ONLY .zarray.
+    let zloader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]);
+    let zprovider = Provider::new(zloader, cache.clone(), None).unwrap();
+    assert!(zprovider.supports_selection());
+    assert_eq!(zprovider.array_shape("sr").unwrap(), Some(vec![3, 50, 4]));
+
+    // whole-file (netcdf) reader: no pushdown; shape unknown without a read.
+    let nloader =
+        DataLoader::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
+    let nprovider = Provider::new(nloader, cache, None).unwrap();
+    assert!(!nprovider.supports_selection());
+    assert_eq!(nprovider.array_shape("t2m").unwrap(), None);
+}
+
+#[test]
+fn per_call_select_on_whole_file_reader_errors() {
+    let cache = Cache::builder()
+        .data_dir(corpus_cache())
+        .offline(true)
+        .verify_on_read(true)
+        .build()
+        .unwrap();
+    let loader =
+        DataLoader::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
+    let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
+    // A per-call projection on a reader that can't honour it is an error (pre-fetch).
+    let sel = Selection::Orthogonal(vec![AxisSelect::All]);
+    assert!(provider.materialize_with_select(Some(&sel)).is_err());
+}

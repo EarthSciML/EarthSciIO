@@ -106,13 +106,35 @@ the oracle [`verify.py`](verify.py).
 |---|---|---|---|---|
 | `era5-grid-sub-tile` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `openaq-points-slice` | csv | ✅ | ✅ | ⊘ no reader |
+| `ff10-point-slice` | ff10 | ✅ | ✅ | ✅ (three-way) |
+| `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
+| `permuted-order-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 
-The Rust track ships the `netcdf` reader only (`esio-9nb.7`); it has no `csv`
-reader yet, so the CSV case is a logged Rust skip (mirrors
-[`rust/tests/conformance_decode.rs`](../rust/tests/conformance_decode.rs)), cross-
-checked Python↔Julia. The NetCDF case carries the full three-way proof. When the
-Rust `csv` reader lands, the dumper reports `csv` in its `readers` and the
+The Rust track has no `csv` reader yet, so the CSV case is a logged Rust skip
+(mirrors [`rust/tests/conformance_decode.rs`](../rust/tests/conformance_decode.rs)),
+cross-checked Python↔Julia. Every other case carries the full three-way proof.
+When the Rust `csv` reader lands, the dumper reports `csv` in its `readers` and the
 coverage gate **automatically requires** it to decode the CSV case — no edit here.
+
+### The `permuted-order-tile` selection gate (Phase 1)
+
+`permuted-order-tile` is a store-backed zarr case that pins **ordered, lazy
+orthogonal selection** across all three tracks. Its `select` is
+`layer=[0], source=[24,2,9,6] (0-based, NON-CONTIGUOUS and PERMUTED — not sorted),
+receptor=all` over an `sr [3,50,4]` array chunked `[1,10,4]`:
+
+* **Laziness** — sources `2,9,6` fall in source-chunk 0 and `24` in chunk 2, so
+  only `sr/0.0.0` and `sr/0.2.0` are fetched (never chunk 1, never layers 1/2).
+  Proven per-track by [`tests/test_zarr_reader.py`](../tests/test_zarr_reader.py)
+  (a `CountingStore` asserting the exact fetched-object set) and
+  [`rust/tests/zarr_read_store.rs`](../rust/tests/zarr_read_store.rs) (a poison store).
+* **Order preservation** — every track returns the source axis as `[24,2,9,6]` in
+  that exact order (a reader that sorted the index list would return `[2,6,9,24]`);
+  `crosscheck.py` asserts the three dumps are **byte-identical** here.
+
+The case is data-driven from [`corpus/cases.json`](corpus/cases.json), so
+`./run_conformance.sh` runs it in all three tracks and cross-checks it with no
+per-case edit — the executable Phase-1 3-way selection acceptance gate.
 
 ## Adding a fixture or a reader
 

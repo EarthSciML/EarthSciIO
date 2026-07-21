@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 95,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "8156cb80a94111ade4f4755c52dbb4f479940126d0cbcfa4bdea7b9aca12001b",
+  "source_loader": "isrm",
+  "url": "s3://earthsci-fixtures/permuted-tile.zarr/sr/1.2.0"
+}

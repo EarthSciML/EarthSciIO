@@ -311,6 +311,10 @@ class ZarrReader:
     #: This reader needs ``(cache, base_url)``, not a single pre-fetched blob path.
     store_backed = True
 
+    #: This reader honours a per-axis orthogonal ``select`` at read time (lazy
+    #: projection pushdown — see :func:`earthsciio.registry.supports_selection`).
+    supports_selection = True
+
     def formats(self) -> List[str]:
         return list(self.FORMATS)
 
@@ -396,6 +400,19 @@ class ZarrReader:
             out_vars[str(array)] = NativeField(data, dims, {})
 
         return NativeDataset(out_vars, {})
+
+    # -- shape probe -------------------------------------------------------- #
+
+    def array_shape(
+        self, cache: Any, base_url: str, var: str
+    ) -> Tuple[int, ...]:
+        """The full (dims-order) shape of array ``var`` in the Zarr v2 store at
+        ``base_url``, learned by fetching ONLY that array's ``.zarray`` metadata
+        object — NEVER a chunk. A lightweight honour/refuse probe for
+        projection-pushdown decisions (mirrors the Julia/Rust ``array_shape``)."""
+        base = base_url.rstrip("/")
+        meta = _ZArray(self._fetch_json(cache, f"{base}/{var}/.zarray"))
+        return meta.shape
 
     # -- object fetch helpers ----------------------------------------------- #
 

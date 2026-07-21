@@ -260,24 +260,87 @@ impl Provider {
         &self.coords
     }
 
+    /// True when the bound reader can honour an orthogonal `select` at read time
+    /// (projection pushdown) — a store-backed reader that fetches only the selected
+    /// chunks. False for whole-file readers. A caller uses this to decide whether to
+    /// push a projection down (via [`materialize_with_select`](Self::materialize_with_select))
+    /// or read whole and slice on its own side. Mirrors the Julia/Python
+    /// `supports_selection`.
+    pub fn supports_selection(&self) -> bool {
+        self.reader.supports_selection()
+    }
+
+    /// The full native (dims-order) shape of on-disk array `var`, for a
+    /// honour/refuse pushdown decision, or `None`.
+    ///
+    /// For a store-backed zarr provider this reads ONLY the array's `.zarray`
+    /// metadata (never a chunk); `None` for a whole-file reader (whose shape is not
+    /// knowable without reading the blob). Mirrors the Julia/Python `array_shape`.
+    pub fn array_shape(&self, var: &str) -> Result<Option<Vec<usize>>> {
+        if !self.reader.store_backed() {
+            return Ok(None);
+        }
+        let anchor = match &self.loader.temporal {
+            None => OffsetDateTime::UNIX_EPOCH,
+            Some(t) => t.start,
+        };
+        let url = self.resolve_url(anchor)?;
+        self.reader.array_shape(self.cache.as_ref(), &url, var)
+    }
+
     /// Materialize the loader's native arrays into the buffer.
     ///
     /// CONST: reads the single file once. DISCRETE: primes the buffer at the
     /// first cadence anchor of the window (equivalent to `refresh(window.start)`),
     /// so a caller can read an initial state before stepping.
     pub fn materialize(&mut self) -> Result<HashMap<String, NativeField>> {
+        self.materialize_with_select(None)
+    }
+
+    /// [`materialize`](Self::materialize) with an optional PER-CALL projection
+    /// pushdown that OVERRIDES the loader's baked [`DataLoader::select`] for this
+    /// call only — the seam a caller (EarthSciAST) uses to push a projection down
+    /// at sample time without rebuilding the provider. Mirrors the Julia/Python
+    /// per-call `select` override.
+    ///
+    /// Only a store-backed reader that [`supports_selection`](Self::supports_selection)
+    /// can honour a per-call `select`; passing one to a whole-file reader is an
+    /// error. A per-call `select` is a projection **peek**: it reads fresh and
+    /// returns the selected arrays WITHOUT disturbing the cadence buffer the solver
+    /// reads (so a subsequent plain `materialize()` restores the baked projection).
+    pub fn materialize_with_select(
+        &mut self,
+        sel: Option<&Selection>,
+    ) -> Result<HashMap<String, NativeField>> {
+        if sel.is_some() && !self.reader.supports_selection() {
+            return Err(Error::Format {
+                format: self.loader.format.clone(),
+                detail: format!(
+                    "reader for format '{}' does not support select/pushdown",
+                    self.loader.format
+                ),
+            });
+        }
         match self.loader.temporal.clone() {
             None => {
+                let effective = sel.unwrap_or(&self.loader.select);
                 let url = self.resolve_url(OffsetDateTime::UNIX_EPOCH)?;
-                let ds = self.read_file(url)?;
-                self.coords = ds.coords;
-                self.buffers = ds.variables;
-                Ok(self.buffers.clone())
+                let ds = self.read_file(url, effective)?;
+                if sel.is_none() {
+                    self.coords = ds.coords;
+                    self.buffers = ds.variables;
+                    Ok(self.buffers.clone())
+                } else {
+                    // Per-call override: a projection peek; leave the buffer intact.
+                    Ok(ds.variables)
+                }
             }
             Some(t) => {
                 let first = self.lower_bound(&t);
-                self.refresh(first)?;
-                Ok(self.buffers.clone())
+                match self.refresh_with_select(first, sel)? {
+                    Some(buffers) => Ok(buffers),
+                    None => Ok(self.buffers.clone()),
+                }
             }
         }
     }
@@ -288,6 +351,32 @@ impl Provider {
     /// `None` when `t` falls in the same cadence interval as the last refresh, and
     /// `None` for a CONST loader (nothing refreshes).
     pub fn refresh(&mut self, t: OffsetDateTime) -> Result<Option<HashMap<String, NativeField>>> {
+        self.refresh_with_select(t, None)
+    }
+
+    /// [`refresh`](Self::refresh) with an optional PER-CALL projection pushdown
+    /// override (see [`materialize_with_select`](Self::materialize_with_select)).
+    ///
+    /// With `sel = None` this is exactly [`refresh`](Self::refresh): it consults
+    /// the file cache, slices the current record, and updates the cadence buffer.
+    /// With `sel = Some(_)` it is a cache-bypassing projection **peek**: it reads
+    /// the covering file(s) fresh under `sel`, returns `Some(selected_arrays)` for
+    /// `t`'s anchor, and does NOT disturb the buffer / file caches. A per-call
+    /// `select` on a reader that cannot honour it is an error.
+    pub fn refresh_with_select(
+        &mut self,
+        t: OffsetDateTime,
+        sel: Option<&Selection>,
+    ) -> Result<Option<HashMap<String, NativeField>>> {
+        if sel.is_some() && !self.reader.supports_selection() {
+            return Err(Error::Format {
+                format: self.loader.format.clone(),
+                detail: format!(
+                    "reader for format '{}' does not support select/pushdown",
+                    self.loader.format
+                ),
+            });
+        }
         let Some(temporal) = self.loader.temporal.clone() else {
             return Ok(None); // CONST: refresh is a no-op
         };
@@ -310,6 +399,22 @@ impl Provider {
         }
 
         let anchor = snap_down(temporal.start, t, freq_s);
+
+        // PER-CALL override: a fresh, cache-bypassing projection peek. It returns
+        // the selected arrays for `anchor` WITHOUT touching the buffer / caches, so
+        // it never short-circuits on `current_anchor` and never evicts a cached file.
+        if let Some(select) = sel {
+            if temporal.records_per_sample == Some(2) {
+                return Ok(Some(self.bracket_peek(&temporal, anchor, freq_s, file_s, select)?));
+            }
+            let file_anchor = snap_down(temporal.start, anchor, file_s);
+            let url = self.resolve_url(file_anchor)?;
+            let ds = self.read_file(url, select)?;
+            let rec = ((anchor - file_anchor).whole_seconds() / freq_s) as usize;
+            return Ok(Some(slice_record_buffers(&ds, temporal.time_dim.as_str(), rec)?));
+        }
+
+        // No override: the existing cached path (behavior unchanged).
         if self.current_anchor == Some(anchor) {
             return Ok(None); // same cadence interval — unchanged (bracket too)
         }
@@ -321,7 +426,7 @@ impl Provider {
         // Re-read the file only when the anchor crossed a file boundary.
         if self.current_file_anchor != Some(file_anchor) {
             let url = self.resolve_url(file_anchor)?;
-            let ds = self.read_file(url)?;
+            let ds = self.read_file(url, &self.loader.select)?;
             self.coords = ds.coords.clone();
             self.current_dataset = Some(ds);
             self.current_file_anchor = Some(file_anchor);
@@ -332,20 +437,7 @@ impl Provider {
             .current_dataset
             .as_ref()
             .expect("dataset loaded above for this file anchor");
-
-        let mut buffers = HashMap::with_capacity(ds.variables.len());
-        for (name, field) in &ds.variables {
-            // Slice the current record from variables on the time axis; leave
-            // non-temporal variables whole.
-            let is_temporal =
-                field.dims.first().map(String::as_str) == Some(temporal.time_dim.as_str());
-            let slice = if is_temporal {
-                field.select_leading(rec)?
-            } else {
-                field.clone()
-            };
-            buffers.insert(name.clone(), slice);
-        }
+        let buffers = slice_record_buffers(ds, temporal.time_dim.as_str(), rec)?;
         self.buffers = buffers;
         self.current_anchor = Some(anchor);
         Ok(Some(self.buffers.clone()))
@@ -459,18 +551,19 @@ impl Provider {
         self.cache.fetch(&req)
     }
 
-    /// Fetch + decode a file into a native dataset.
-    fn read_file(&self, url: String) -> Result<NativeDataset> {
+    /// Fetch + decode a file into a native dataset under the effective `select`
+    /// (the per-call override, else the loader's baked [`DataLoader::select`]).
+    fn read_file(&self, url: String, select: &Selection) -> Result<NativeDataset> {
         // Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
         // select): a Zarr `url` is a directory-like prefix, not a fetchable blob,
         // so the reader fetches individual objects on demand. Additive + default-
-        // off: whole-file readers inherit `store_backed() == false`.
+        // off: whole-file readers inherit `store_backed() == false` and read whole.
         if self.reader.store_backed() {
             return self.reader.read_store(
                 self.cache.as_ref(),
                 &url,
                 &self.loader.variables,
-                &self.loader.select,
+                select,
             );
         }
         let blob = self.fetch_blob(&url)?;
@@ -488,7 +581,7 @@ impl Provider {
             return Ok(());
         }
         let url = self.resolve_url(file_anchor)?;
-        let ds = self.read_file(url)?;
+        let ds = self.read_file(url, &self.loader.select)?;
         self.files.push((file_anchor, ds));
         while self.files.len() > 2 {
             self.files.remove(0); // evict the least-recently-used
@@ -592,6 +685,85 @@ impl Provider {
         self.current_anchor = Some(anchor);
         Ok(Some(self.buffers.clone()))
     }
+
+    /// The `records_per_sample = 2` path of a PER-CALL `select` peek: read the
+    /// covering file(s) FRESH under `select` (bypassing the LRU) and stack the two
+    /// bracketing records, WITHOUT mutating any cache/buffer state. Handles the
+    /// cross-file successor and the end-of-data clamp exactly as
+    /// [`refresh_bracket`](Self::refresh_bracket), but returns owned buffers.
+    fn bracket_peek(
+        &self,
+        temporal: &LoaderTemporal,
+        anchor: OffsetDateTime,
+        freq_s: i64,
+        file_s: i64,
+        select: &Selection,
+    ) -> Result<HashMap<String, NativeField>> {
+        let time_dim = temporal.time_dim.as_str();
+        let file0_anchor = snap_down(temporal.start, anchor, file_s);
+        let file0 = self.read_file(self.resolve_url(file0_anchor)?, select)?;
+        let rec0 = ((anchor - file0_anchor).whole_seconds() / freq_s) as usize;
+        let file0_len = time_len(&file0, time_dim);
+
+        let next_anchor = anchor + Duration::seconds(freq_s);
+        let has_succ = temporal.end.map_or(true, |end| next_anchor < end);
+
+        // (successor_file_or_none_meaning_file0, rec1). A `None` successor file with
+        // rec1 == rec0 is the degenerate end-of-data clamp `[rec0, rec0]`.
+        let (succ_file, rec1) = if has_succ && rec0 + 1 < file0_len {
+            (None, rec0 + 1) // successor in file0
+        } else if has_succ {
+            let nfa = snap_down(temporal.start, next_anchor, file_s);
+            match self.resolve_url(nfa).and_then(|u| self.read_file(u, select)) {
+                Ok(f1) => {
+                    let r1 = ((next_anchor - nfa).whole_seconds() / freq_s) as usize;
+                    if r1 < time_len(&f1, time_dim) {
+                        (Some(f1), r1)
+                    } else {
+                        (None, rec0) // no valid successor record — clamp
+                    }
+                }
+                Err(_) => (None, rec0), // seam read failed — clamp
+            }
+        } else {
+            (None, rec0) // end-of-data — clamp
+        };
+
+        let file1_ref: &NativeDataset = succ_file.as_ref().unwrap_or(&file0);
+        let mut buffers = HashMap::with_capacity(file0.variables.len());
+        for (name, field) in &file0.variables {
+            let is_temporal = field.dims.first().map(String::as_str) == Some(time_dim);
+            let stacked = if is_temporal {
+                let f1 = file1_ref.variables.get(name).unwrap_or(field);
+                stack_two_records(field, rec0, f1, rec1)?
+            } else {
+                field.clone()
+            };
+            buffers.insert(name.clone(), stacked);
+        }
+        Ok(buffers)
+    }
+}
+
+/// Slice cadence record `rec` from every variable carrying `time_dim` as its
+/// leading axis; non-temporal variables pass through whole. Shared by the plain
+/// single-record refresh path and the per-call `select` peek.
+fn slice_record_buffers(
+    ds: &NativeDataset,
+    time_dim: &str,
+    rec: usize,
+) -> Result<HashMap<String, NativeField>> {
+    let mut buffers = HashMap::with_capacity(ds.variables.len());
+    for (name, field) in &ds.variables {
+        let is_temporal = field.dims.first().map(String::as_str) == Some(time_dim);
+        let slice = if is_temporal {
+            field.select_leading(rec)?
+        } else {
+            field.clone()
+        };
+        buffers.insert(name.clone(), slice);
+    }
+    Ok(buffers)
 }
 
 /// Length of `ds` along `time_dim`: from the time coordinate if it carries it,
