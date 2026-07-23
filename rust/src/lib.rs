@@ -72,8 +72,9 @@ pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 pub use error::{Error, Result};
 pub use format::{
-    ArrayData, AxisSelect, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader, NativeDataset,
-    NativeField, NetcdfReader, Reader, Selection, ZarrReader,
+    write_zarr_v3, ArrayData, AxisSelect, BloscProfile, Coord, DType, Ff10Reader, FormatRegistry,
+    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, OutputSchema, Reader, Selection,
+    WriteCoord, WriteVar, ZarrReader, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC,
 };
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};

@@ -44,13 +44,41 @@ tiff = "0.11"
 csv = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# Pure-Rust LZ4 (raw block) decode for the `zarr` reader's blosc-lz4 chunks. The
-# blosc1 container is decoded by hand (16-byte header + block offsets + inverse
-# byte-shuffle, in rust/src/format/zarr.rs); lz4_flex decompresses each block.
-# Pure Rust, no C/FFI, no `unsafe` in this crate — so `#![forbid(unsafe_code)]`
-# is preserved. (The `blosc` crate is rejected here because its `decompress_bytes`
-# is an `unsafe fn` this crate could not call under forbid(unsafe_code).)
-lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode"] }
+# ============================================================================
+# Zarr v3/v2 read + write via the mainstream `zarrs` crate (streaming-output-
+# sinks RFC, Wave 4 "streaming-rust-libs"). This REPLACES the former hand-rolled
+# blosc1 container decoder + `lz4_flex` path (git history: rust/src/format/zarr.rs
+# used to decode the 16-byte blosc header + inverse byte-shuffle by hand).
+#
+# Why the change: the RFC's Zarr **v3 sharded** writer (blosc-zstd inner chunks,
+# crc32c shard index, `sharding_indexed` codec) is far past what a hand-rolled
+# decoder can sanely track, and `zarrs` is the reference Rust Zarr implementation
+# (v3 sharding + codecs + v2 read). The crate's own code stays `#![forbid(unsafe_code)]`
+# (that attribute governs THIS crate only; dependencies using `unsafe` internally
+# is fine and does not break it).
+#
+# ---------------------------------------------------------------------------
+# *** BUILD-STORY CHANGE — READ THIS ***
+# The former "C compiler alone, NO C libraries" story is NARROWED, on purpose,
+# per the user's explicit direction to adopt a 3rd-party library. `zarrs`'s
+# default codec set builds two vendored C libraries from source:
+#   * `zstd-sys`  (bundled zstd 1.5.x C source) — the zstd codec, and
+#   * `blosc-src` (bundled c-blosc C source)    — the blosc codec (lz4 + zstd).
+# Both compile with a **C compiler alone** (the vendored `cc`-driven build; no
+# clang, no bindgen, no system libzstd/libblosc, no pkg-config) — so the crate
+# still builds on a stock `cc`/`gcc` toolchain with NO clang. What changed vs.
+# before is only that a C **compiler** is now REQUIRED at build time for these
+# two vendored libraries (previously the zarr path was pure Rust). crc32c and
+# sharding are pure Rust. `#![forbid(unsafe_code)]` in this crate is unaffected.
+# ---------------------------------------------------------------------------
+#
+# Default features pulled in (see the `[features] default` list in zarrs):
+#   filesystem (local read/write store), blosc, crc32c, sharding, zstd, gzip,
+#   transpose, ndarray. `blosc`+`crc32c`+`sharding` are exactly what the RFC's
+#   v3 sharded blosc-zstd+crc32c layout needs; `filesystem` backs the local
+#   writer + the round-trip test; v2 read (the pinned ISRM corpus store) is
+#   built in (zarrs converts v2 blosc metadata to a v3 codec chain on open).
+zarrs = "0.23"
 
 # Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
 # netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
