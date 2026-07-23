@@ -285,7 +285,7 @@ impl Provider {
             Some(t) => t.start,
         };
         let url = self.resolve_url(anchor)?;
-        self.reader.array_shape(self.cache.as_ref(), &url, var)
+        self.reader.array_shape(self.cache.clone(), &url, var)
     }
 
     /// Materialize the loader's native arrays into the buffer.
@@ -560,7 +560,7 @@ impl Provider {
         // off: whole-file readers inherit `store_backed() == false` and read whole.
         if self.reader.store_backed() {
             return self.reader.read_store(
-                self.cache.as_ref(),
+                self.cache.clone(),
                 &url,
                 &self.loader.variables,
                 select,

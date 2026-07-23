@@ -14,6 +14,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use earthsciio::{ArrayData, AxisSelect, Coord, DType};
 use earthsciio::{Cache, FetchRequest, FormatRegistry, NativeField, Selection};
@@ -53,12 +54,14 @@ const ATOL: f64 = 1e-6;
 #[test]
 fn decodes_every_corpus_case_to_match_expected() {
     let corpus = corpus_dir();
-    let cache = Cache::builder()
-        .data_dir(corpus.join("cache"))
-        .offline(true)
-        .verify_on_read(true)
-        .build()
-        .expect("offline cache over the corpus");
+    let cache = Arc::new(
+        Cache::builder()
+            .data_dir(corpus.join("cache"))
+            .offline(true)
+            .verify_on_read(true)
+            .build()
+            .expect("offline cache over the corpus"),
+    );
 
     let formats = FormatRegistry::with_builtins();
 
@@ -95,7 +98,7 @@ fn decodes_every_corpus_case_to_match_expected() {
                 .collect();
             let sel = parse_selection(&case);
             reader
-                .read_store(&cache, case["resolved_url"].as_str().unwrap(), &vars, &sel)
+                .read_store(cache.clone(), case["resolved_url"].as_str().unwrap(), &vars, &sel)
                 .unwrap_or_else(|e| panic!("store decode failed for {id}: {e}"))
         } else {
             // Resolve the blob offline (reuses the Python-cached bytes), then decode.

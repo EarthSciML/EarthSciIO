@@ -44,13 +44,57 @@ tiff = "0.11"
 csv = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# Pure-Rust LZ4 (raw block) decode for the `zarr` reader's blosc-lz4 chunks. The
-# blosc1 container is decoded by hand (16-byte header + block offsets + inverse
-# byte-shuffle, in rust/src/format/zarr.rs); lz4_flex decompresses each block.
-# Pure Rust, no C/FFI, no `unsafe` in this crate — so `#![forbid(unsafe_code)]`
-# is preserved. (The `blosc` crate is rejected here because its `decompress_bytes`
-# is an `unsafe fn` this crate could not call under forbid(unsafe_code).)
-lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode"] }
+# ============================================================================
+# Zarr v3/v2 read + write via the mainstream `zarrs` crate (streaming-output-
+# sinks RFC, Wave 4 "streaming-rust-libs"). This REPLACES the former hand-rolled
+# blosc1 container decoder + `lz4_flex` path (git history: rust/src/format/zarr.rs
+# used to decode the 16-byte blosc header + inverse byte-shuffle by hand).
+#
+# Why the change: the RFC's Zarr **v3 sharded** writer (blosc-zstd inner chunks,
+# crc32c shard index, `sharding_indexed` codec) is far past what a hand-rolled
+# decoder can sanely track, and `zarrs` is the reference Rust Zarr implementation
+# (v3 sharding + codecs + v2 read). The crate's own code stays `#![forbid(unsafe_code)]`
+# (that attribute governs THIS crate only; dependencies using `unsafe` internally
+# is fine and does not break it).
+#
+# ---------------------------------------------------------------------------
+# *** BUILD-STORY CHANGE — READ THIS ***
+# The former "C compiler alone, NO C libraries" story is NARROWED, on purpose,
+# per the user's explicit direction to adopt a 3rd-party library. `zarrs`'s
+# default codec set builds two vendored C libraries from source:
+#   * `zstd-sys`  (bundled zstd 1.5.x C source) — the zstd codec, and
+#   * `blosc-src` (bundled c-blosc C source)    — the blosc codec (lz4 + zstd).
+# Both compile with a **C compiler alone** (the vendored `cc`-driven build; no
+# clang, no bindgen, no system libzstd/libblosc, no pkg-config) — so the crate
+# still builds on a stock `cc`/`gcc` toolchain with NO clang. What changed vs.
+# before is only that a C **compiler** is now REQUIRED at build time for these
+# two vendored libraries (previously the zarr path was pure Rust). crc32c and
+# sharding are pure Rust. `#![forbid(unsafe_code)]` in this crate is unaffected.
+# ---------------------------------------------------------------------------
+#
+# Default features pulled in (see the `[features] default` list in zarrs):
+#   filesystem (local read/write store), blosc, crc32c, sharding, zstd, gzip,
+#   transpose, ndarray. `blosc`+`crc32c`+`sharding` are exactly what the RFC's
+#   v3 sharded blosc-zstd+crc32c layout needs; `filesystem` backs the local
+#   writer + the round-trip test; v2 read (the pinned ISRM corpus store) is
+#   built in (zarrs converts v2 blosc metadata to a v3 codec chain on open).
+zarrs = "0.23"
+
+# --- optional: direct (non-cache) S3 / HTTP / local Zarr via Apache Arrow
+# `object_store` (feature `object-store`). This is where S3 access is backed by
+# `object_store`'s mature S3 client rather than any hand-rolled S3 code, and it
+# also gives a direct local/HTTP path. `object_store` is async, so it is bridged
+# into the crate's sync Zarr reader/writer via zarrs' AsyncToSyncStorageAdapter
+# (needs a tokio runtime + `zarrs/async`). Kept OFF by default so the default
+# build stays lean: the AWS client pulls a TLS crypto backend (aws-lc-rs) and a
+# tokio/reqwest stack. `object_store::parse_url` dispatches by URL scheme; s3://
+# resolves only when the `aws` feature is compiled in (below), file:// and
+# http(s):// always. Content-addressed-cache S3 reads continue to work without
+# this feature via the existing `s3` transport.
+object_store = { version = "0.14", optional = true, features = ["aws", "http"] }
+zarrs_object_store = { version = "0.7", optional = true }
+tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread"] }
+url = { version = "2", optional = true }
 
 # Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
 # netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
@@ -60,6 +104,11 @@ lz4_flex = { version = "0.11", default-features = false, features = ["std", "saf
 # internally (memmap), but that is the dependency's code, not this crate's, so
 # it is compatible with this crate's `#![forbid(unsafe_code)]`.
 netcdf-reader = { path = "../../netcdf-rust/netcdf-reader", default-features = false, features = ["netcdf4"] }
+
+[features]
+# Direct object_store-backed Zarr read/write (S3 + HTTP + local file://). Enables
+# zarrs' async storage traits so the async object_store can drive the sync API.
+object-store = ["dep:object_store", "dep:zarrs_object_store", "dep:tokio", "dep:url", "zarrs/async"]
 
 [dev-dependencies]
 # Concurrency + mock-HTTP tests use only std (threads, TcpListener) — no extra deps.
