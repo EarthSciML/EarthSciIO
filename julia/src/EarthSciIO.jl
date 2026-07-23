@@ -32,6 +32,7 @@ module EarthSciIO
 using SHA: sha256
 using Dates
 using UUIDs: uuid4
+using CRC32c: crc32c
 import Downloads
 import JSON
 using FileWatching.Pidfile: mkpidlock
@@ -40,13 +41,19 @@ import ZipFile
 
 # interfaces + the three extensibility registries
 export Registry, register!, registered_names, status_of
-export TRANSPORT_REGISTRY, FORMAT_REGISTRY, STORE_REGISTRY
-export Transport, Store, Reader
+export TRANSPORT_REGISTRY, FORMAT_REGISTRY, STORE_REGISTRY, WRITER_REGISTRY
+export Transport, Store, Reader, Writer
 
 # cache + store + transport
 export Cache, CacheEntry, fetch_blob, cache_key, datadir, is_offline
 export Store, LocalStore, S3Store, make_store
-export Manifest
+export Manifest, OutputManifest, TimeShardRecord
+export write_output_manifest, read_output_manifest
+
+# write boundary (Zarr v3 sharded output) — the write mirror of the readers
+export ZarrWriter, OutputSchema, OutputVar, BloscProfile
+export BLOSC_DIAGNOSTIC, BLOSC_CHECKPOINT
+export write_open!, write_record!, write_close!
 export Transport, HttpTransport, FileTransport, S3Transport
 export AuthResolver, NoAuth, BearerAuth
 
@@ -68,6 +75,7 @@ export materialize, refresh, refresh_times, prefetch, is_const
 export CacheMiss, IntegrityError
 
 include("registries.jl")
+include("writer.jl")
 include("manifest.jl")
 include("store.jl")
 include("transport.jl")
@@ -76,6 +84,7 @@ include("era5.jl")
 include("cache.jl")
 include("readers.jl")
 include("zarr.jl")
+include("zarr_write.jl")
 include("provider.jl")
 
 """Register the built-in transports + stores into the shared registries.
@@ -115,6 +124,16 @@ function _register_defaults()
     # zarr (active, store-backed): lazy orthogonal chunk selection; blosc decode
     # is supplied by the `EarthSciIOBloscExt` weakdep extension (`using Blosc`).
     register!(FORMAT_REGISTRY, "zarr", ZarrReader(); status = :active)
+
+    # writer registry — the write mirror of FORMAT_REGISTRY. The `zarr` writer
+    # emits sharded Zarr v3; blosc ENcode is supplied by the same
+    # `EarthSciIOBloscExt` weakdep. A new output format is one more register! line.
+    register!(WRITER_REGISTRY, "zarr", ZarrWriter(); status = :active)
+    # netcdf output is a later wave: registered as a STUB so the write seam is
+    # provable and dispatch is complete (mirrors the read-side stub discipline).
+    register!(WRITER_REGISTRY, "netcdf",
+              StubWriter("netcdf", "NetCDF streaming output is a later wave");
+              status = :stub)
     return nothing
 end
 
