@@ -49,15 +49,21 @@ _profile(sym::Symbol) =
 # --- the output schema ------------------------------------------------------
 
 """
-    OutputVar(dims, dtype)
+    OutputVar(dims, dtype; attrs = Dict())
 
 One streaming output variable: its on-disk dim names (file order, MUST include
-the schema's `time_dim`) and its element type (`Float64`/`Float32`/`Int32`/`Int64`)."""
+the schema's `time_dim`), its element type (`Float64`/`Float32`/`Int32`/`Int64`),
+and optional CF variable attributes `attrs` (e.g. `"units"`, `"standard_name"`,
+and the `"coordinates"` attribute naming this variable's auxiliary coordinates).
+The attrs are written verbatim into the array node's `attributes` alongside the
+mechanical `_ARRAY_DIMENSIONS`/`dimension_names`."""
 struct OutputVar
     dims::Vector{String}
     dtype::DataType
+    attrs::Dict{String,Any}
 end
-OutputVar(dims::AbstractVector, dtype::DataType) = OutputVar(String.(collect(dims)), dtype)
+OutputVar(dims::AbstractVector, dtype::DataType; attrs::AbstractDict = Dict{String,Any}()) =
+    OutputVar(String.(collect(dims)), dtype, Dict{String,Any}(attrs))
 
 """
     OutputSchema(; dims, time_dim, vars, chunk_shape, shard_shape,
@@ -402,7 +408,7 @@ function write_open!(::ZarrWriter, store, base_url::AbstractString, schema::Outp
         with_output_lock(base, nm) do
             _write_json(base, "$nm/zarr.json",
                         _array_meta_dict(ov.dims, ov.dtype, shape, schema, codec,
-                                         Dict{String,Any}()))
+                                         ov.attrs))
         end
     end
 
@@ -512,7 +518,7 @@ function _update_shapes!(h::ZarrWriteHandle)
         with_output_lock(h.base, nm) do
             _write_json(h.base, "$nm/zarr.json",
                         _array_meta_dict(ov.dims, ov.dtype, shape, s, h.codec,
-                                         Dict{String,Any}()))
+                                         ov.attrs))
         end
     end
     return nothing
@@ -548,6 +554,24 @@ function _write_output_manifest!(h::ZarrWriteHandle)
         write_output_manifest(joinpath(h.base, "output_manifest.json"), m)
     end
     return m
+end
+
+# --- write_flush! -----------------------------------------------------------
+
+"""
+    write_flush!(::ZarrWriter, h::ZarrWriteHandle)
+
+Force any buffered-but-unflushed records out as a durable (partial) shard and
+refresh the output manifest — the checkpoint durable barrier
+(streaming-output-sinks RFC §10, §16.7). After this returns, a restart reading the
+manifest sees every record written so far as committed. Because it advances the
+shard index, it is meant for a checkpoint boundary that is followed by termination
+or `write_close!` (not interleaved between ordinary records mid-shard, which would
+leave a gap in the time axis). A no-op when the buffer is empty (already durable).
+"""
+function write_flush!(::ZarrWriter, h::ZarrWriteHandle)
+    h.n_in_shard > 0 && _flush_shard!(h)
+    return nothing
 end
 
 # --- write_close! -----------------------------------------------------------
