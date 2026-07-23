@@ -1,0 +1,286 @@
+{
+  "schema": "earthsciio/write-conformance-spec/v1",
+  "description": "Tiny deterministic Zarr v3 sharded write-conformance dataset: two float64 variables over (time, lat, lon), CF coordinate variables, time sharded 2 records/shard, lon split into 2 inner chunks/shard.",
+  "dims": [
+    [
+      "time",
+      0
+    ],
+    [
+      "lat",
+      3
+    ],
+    [
+      "lon",
+      4
+    ]
+  ],
+  "time_dim": "time",
+  "time_dtype": "float64",
+  "profile": "diagnostic",
+  "group_attrs": {
+    "title": "EarthSciIO write-conformance tiny dataset",
+    "Conventions": "CF-1.8"
+  },
+  "coords": [
+    {
+      "name": "lat",
+      "values": [
+        10.0,
+        20.0,
+        30.0
+      ],
+      "attrs": {
+        "units": "degrees_north",
+        "standard_name": "latitude",
+        "axis": "Y"
+      }
+    },
+    {
+      "name": "lon",
+      "values": [
+        0.0,
+        1.0,
+        2.0,
+        3.0
+      ],
+      "attrs": {
+        "units": "degrees_east",
+        "standard_name": "longitude",
+        "axis": "X"
+      }
+    },
+    {
+      "name": "time",
+      "values": [],
+      "attrs": {
+        "units": "seconds since 2020-01-01 00:00:00",
+        "standard_name": "time",
+        "axis": "T",
+        "calendar": "proleptic_gregorian"
+      }
+    }
+  ],
+  "vars": [
+    {
+      "name": "temperature",
+      "dims": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "dtype": "float64",
+      "attrs": {
+        "units": "K",
+        "standard_name": "air_temperature",
+        "coordinates": "lat lon"
+      }
+    },
+    {
+      "name": "pressure",
+      "dims": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "dtype": "float64",
+      "attrs": {
+        "units": "Pa",
+        "standard_name": "air_pressure",
+        "coordinates": "lat lon"
+      }
+    }
+  ],
+  "chunk_shape": {
+    "time": 1,
+    "lat": 3,
+    "lon": 2
+  },
+  "shard_shape": {
+    "time": 2,
+    "lat": 3,
+    "lon": 4
+  },
+  "records": [
+    {
+      "t": 0.0,
+      "vars": {
+        "temperature": [
+          [
+            280.0,
+            280.5,
+            281.0,
+            281.5
+          ],
+          [
+            281.0,
+            281.5,
+            282.0,
+            282.5
+          ],
+          [
+            282.0,
+            282.5,
+            283.0,
+            283.5
+          ]
+        ],
+        "pressure": [
+          [
+            101325.0,
+            101324.75,
+            101324.5,
+            101324.25
+          ],
+          [
+            101328.0,
+            101327.75,
+            101327.5,
+            101327.25
+          ],
+          [
+            101331.0,
+            101330.75,
+            101330.5,
+            101330.25
+          ]
+        ]
+      }
+    },
+    {
+      "t": 3600.0,
+      "vars": {
+        "temperature": [
+          [
+            290.0,
+            290.5,
+            291.0,
+            291.5
+          ],
+          [
+            291.0,
+            291.5,
+            292.0,
+            292.5
+          ],
+          [
+            292.0,
+            292.5,
+            293.0,
+            293.5
+          ]
+        ],
+        "pressure": [
+          [
+            101225.0,
+            101224.75,
+            101224.5,
+            101224.25
+          ],
+          [
+            101228.0,
+            101227.75,
+            101227.5,
+            101227.25
+          ],
+          [
+            101231.0,
+            101230.75,
+            101230.5,
+            101230.25
+          ]
+        ]
+      }
+    },
+    {
+      "t": 7200.0,
+      "vars": {
+        "temperature": [
+          [
+            300.0,
+            300.5,
+            301.0,
+            301.5
+          ],
+          [
+            301.0,
+            301.5,
+            302.0,
+            302.5
+          ],
+          [
+            302.0,
+            302.5,
+            303.0,
+            303.5
+          ]
+        ],
+        "pressure": [
+          [
+            101125.0,
+            101124.75,
+            101124.5,
+            101124.25
+          ],
+          [
+            101128.0,
+            101127.75,
+            101127.5,
+            101127.25
+          ],
+          [
+            101131.0,
+            101130.75,
+            101130.5,
+            101130.25
+          ]
+        ]
+      }
+    },
+    {
+      "t": 10800.0,
+      "vars": {
+        "temperature": [
+          [
+            310.0,
+            310.5,
+            311.0,
+            311.5
+          ],
+          [
+            311.0,
+            311.5,
+            312.0,
+            312.5
+          ],
+          [
+            312.0,
+            312.5,
+            313.0,
+            313.5
+          ]
+        ],
+        "pressure": [
+          [
+            101025.0,
+            101024.75,
+            101024.5,
+            101024.25
+          ],
+          [
+            101028.0,
+            101027.75,
+            101027.5,
+            101027.25
+          ],
+          [
+            101031.0,
+            101030.75,
+            101030.5,
+            101030.25
+          ]
+        ]
+      }
+    }
+  ]
+}
