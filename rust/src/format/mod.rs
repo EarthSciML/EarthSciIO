@@ -21,6 +21,8 @@ mod ff10;
 mod geotiff;
 mod netcdf;
 mod zarr;
+#[cfg(feature = "object-store")]
+mod zarr_object_store;
 mod zarr_store;
 mod zarr_write;
 
@@ -32,6 +34,8 @@ pub use zarr_write::{
     write_zarr_v3, BloscProfile, OutputSchema, WriteCoord, WriteVar, BLOSC_CHECKPOINT,
     BLOSC_DIAGNOSTIC,
 };
+#[cfg(feature = "object-store")]
+pub use zarr_object_store::{read_zarr_object_store, write_zarr_object_store};
 
 use std::collections::HashMap;
 use std::path::Path;

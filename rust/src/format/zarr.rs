@@ -119,10 +119,26 @@ impl Reader for ZarrReader {
             Selection::Orthogonal(a) => Some(a.as_slice()),
             _ => None,
         };
+        read_arrays(storage, variables, axes)
+    }
+}
 
-        let mut out_vars = HashMap::new();
-        for array_name in variables {
-            let array = open_array(storage.clone(), array_name)?;
+/// Decode `variables` from an already-constructed `zarrs` storage (any backend:
+/// the content-addressed [`CacheStorage`] or, under the `object-store` feature, an
+/// object-store adapter). `axes` is the per-axis orthogonal selection applied to
+/// arrays whose rank matches; `None` (or a rank mismatch) reads the whole array.
+/// Only the chunk objects the selection intersects are retrieved (lazy).
+pub(crate) fn read_arrays<S>(
+    storage: Arc<S>,
+    variables: &[String],
+    axes: Option<&[AxisSelect]>,
+) -> Result<NativeDataset>
+where
+    S: zarrs::storage::ReadableStorageTraits + 'static,
+{
+    let mut out_vars = HashMap::new();
+    for array_name in variables {
+        let array = open_array(storage.clone(), array_name)?;
             let shape: Vec<usize> = array.shape().iter().map(|&s| s as usize).collect();
             let ndim = shape.len();
 
@@ -183,12 +199,11 @@ impl Reader for ZarrReader {
                     fill_value: None,
                 },
             );
-        }
-        Ok(NativeDataset {
-            variables: out_vars,
-            coords: HashMap::new(),
-        })
     }
+    Ok(NativeDataset {
+        variables: out_vars,
+        coords: HashMap::new(),
+    })
 }
 
 /// One retrieved chunk: its global start, its (boundary-clipped) shape, and its
@@ -201,14 +216,17 @@ struct ChunkBuf {
 
 /// Open the `zarrs` array `name` under the store root. The array path is
 /// `/<name>` (group-root-relative); this fetches only the metadata object.
-fn open_array(storage: Arc<CacheStorage>, name: &str) -> Result<Array<CacheStorage>> {
+fn open_array<S>(storage: Arc<S>, name: &str) -> Result<Array<S>>
+where
+    S: zarrs::storage::ReadableStorageTraits + 'static,
+{
     let path = format!("/{}", name.trim_start_matches('/'));
     Array::open(storage, &path).map_err(|e| zarr_err(format!("open zarr array '{name}': {e}")))
 }
 
 /// Dimension names, preferring v3 `dimension_names`, then the v2/CF
 /// `_ARRAY_DIMENSIONS` attribute, then synthesized `dim_0…`.
-fn dim_names(array: &Array<CacheStorage>, ndim: usize) -> Vec<String> {
+fn dim_names<S>(array: &Array<S>, ndim: usize) -> Vec<String> {
     if let Some(dn) = array.dimension_names() {
         let names: Vec<String> = dn.iter().filter_map(|d| d.clone()).collect();
         if names.len() == ndim {
@@ -235,7 +253,7 @@ fn dim_names(array: &Array<CacheStorage>, ndim: usize) -> Vec<String> {
 /// caller widens to `f64`). Only float dtypes are supported (the pinned ISRM
 /// store + fixture are `<f4`/`<f8`); integer dtypes error clearly, matching the
 /// former reader.
-fn float_dtype(array: &Array<CacheStorage>, name: &str) -> Result<(DType, bool)> {
+fn float_dtype<S>(array: &Array<S>, name: &str) -> Result<(DType, bool)> {
     let dt = array.data_type();
     let n = dt.name(ZarrVersion::V3).map(|c| c.to_string()).unwrap_or_default();
     match n.as_str() {

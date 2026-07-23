@@ -76,6 +76,8 @@ pub use format::{
     GeoTiffReader, NativeDataset, NativeField, NetcdfReader, OutputSchema, Reader, Selection,
     WriteCoord, WriteVar, ZarrReader, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC,
 };
+#[cfg(feature = "object-store")]
+pub use format::{read_zarr_object_store, write_zarr_object_store};
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};
 pub use offline::{is_offline, OFFLINE_ENV};

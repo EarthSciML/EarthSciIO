@@ -138,7 +138,30 @@ fn err(detail: impl Into<String>) -> Error {
 /// Returns [`Error::Format`] on schema inconsistency (e.g. a shard shape not a
 /// multiple of the inner chunk), or [`Error::Io`] / a `zarrs` error on write.
 pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
+    let _ = profile(&schema.profile)?; // fail fast on a bad profile before any I/O
+    std::fs::create_dir_all(base).map_err(|e| Error::io(Some(base.to_path_buf()), e))?;
+    let store = Arc::new(
+        FilesystemStore::new(base)
+            .map_err(|e| err(format!("open filesystem store at {}: {e}", base.display())))?,
+    );
+    write_all_to_store(store, &base.to_string_lossy(), schema)
+}
+
+/// Write group + coordinate/variable arrays + output manifest into any `zarrs`
+/// read/write store: the local [`FilesystemStore`] (via [`write_zarr_v3`]) or —
+/// under the `object-store` feature — an object-store-backed store for `s3://`,
+/// `http(s)://`, or `file://` roots. `base_url` is recorded verbatim in the
+/// output manifest's `base_url` field.
+pub(crate) fn write_all_to_store<S>(
+    store: Arc<S>,
+    base_url: &str,
+    schema: &OutputSchema,
+) -> Result<()>
+where
+    S: zarrs::storage::ReadableWritableStorageTraits + 'static,
+{
     let codec = profile(&schema.profile)?;
+    let codec = &codec;
     let dim_len: BTreeMap<&str, usize> =
         schema.dims.iter().map(|(k, v)| (k.as_str(), *v)).collect();
 
@@ -159,19 +182,13 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
         }
     }
 
-    std::fs::create_dir_all(base).map_err(|e| Error::io(Some(base.to_path_buf()), e))?;
-    let store = Arc::new(
-        FilesystemStore::new(base)
-            .map_err(|e| err(format!("open filesystem store at {}: {e}", base.display())))?,
-    );
-
     // Group metadata (zarr.json at the root).
     let group_meta = json!({
         "zarr_format": 3,
         "node_type": "group",
         "attributes": Value::Object(schema.group_attrs.clone()),
     });
-    write_group_json(base, &group_meta)?;
+    set_json(store.as_ref(), "zarr.json", &group_meta)?;
 
     // Static coordinate arrays (values known now).
     for co in &schema.coords {
@@ -182,7 +199,7 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
             std::slice::from_ref(&co.name),
             &shape,
             schema,
-            &codec,
+            codec,
             &co.attrs,
             &co.values,
         )?;
@@ -215,20 +232,10 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
                 shape
             )));
         }
-        write_array(
-            store.clone(),
-            &v.name,
-            &v.dims,
-            &shape,
-            schema,
-            &codec,
-            &v.attrs,
-            &v.data,
-        )?;
+        write_array(store.clone(), &v.name, &v.dims, &shape, schema, codec, &v.attrs, &v.data)?;
     }
 
-    write_output_manifest(base, schema, &codec)?;
-    Ok(())
+    write_output_manifest(store.as_ref(), base_url, schema, codec)
 }
 
 /// The `sharding_indexed` codec dict for inner chunk shape `inner` (RFC §16).
@@ -302,8 +309,8 @@ fn array_meta(
 
 /// Create the array node (writing its `zarr.json`) and store its `data`.
 #[allow(clippy::too_many_arguments)]
-fn write_array(
-    store: Arc<FilesystemStore>,
+fn write_array<S>(
+    store: Arc<S>,
     name: &str,
     dims: &[String],
     shape: &[usize],
@@ -311,7 +318,10 @@ fn write_array(
     codec: &BloscProfile,
     attrs: &Map<String, Value>,
     data: &[f64],
-) -> Result<()> {
+) -> Result<()>
+where
+    S: zarrs::storage::ReadableWritableStorageTraits + 'static,
+{
     let meta_json = array_meta(dims, shape, schema, codec, attrs)?;
     let metadata: ArrayMetadata = serde_json::from_value(meta_json)
         .map_err(|e| err(format!("array '{name}' metadata is not valid v3: {e}")))?;
@@ -329,17 +339,32 @@ fn write_array(
     Ok(())
 }
 
-/// Write the group root `zarr.json` (pretty JSON, atomic via a sibling temp).
-fn write_group_json(base: &Path, meta: &Value) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(meta)
-        .map_err(|e| err(format!("serialize group metadata: {e}")))?;
-    let path = base.join("zarr.json");
-    atomic_write(&path, &bytes)
+/// Store a pretty-JSON document at store key `key` (e.g. `zarr.json`,
+/// `output_manifest.json`).
+fn set_json<S>(store: &S, key: &str, value: &Value) -> Result<()>
+where
+    S: zarrs::storage::WritableStorageTraits,
+{
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|e| err(format!("serialize {key}: {e}")))?;
+    let store_key = zarrs::storage::StoreKey::new(key)
+        .map_err(|e| err(format!("invalid store key '{key}': {e}")))?;
+    store
+        .set(&store_key, zarrs::storage::Bytes::from(bytes))
+        .map_err(|e| err(format!("write {key}: {e}")))
 }
 
 /// Write the output manifest (`earthsciio/output-manifest/v1`) mirroring the
-/// Julia `OutputManifest` fields.
-fn write_output_manifest(base: &Path, schema: &OutputSchema, codec: &BloscProfile) -> Result<()> {
+/// Julia `OutputManifest` fields, through the store as `output_manifest.json`.
+fn write_output_manifest<S>(
+    store: &S,
+    base_url: &str,
+    schema: &OutputSchema,
+    codec: &BloscProfile,
+) -> Result<()>
+where
+    S: zarrs::storage::WritableStorageTraits,
+{
     let n_records = schema
         .dims
         .iter()
@@ -400,7 +425,7 @@ fn write_output_manifest(base: &Path, schema: &OutputSchema, codec: &BloscProfil
 
     let manifest = json!({
         "schema": "earthsciio/output-manifest/v1",
-        "base_url": base.to_string_lossy(),
+        "base_url": base_url,
         "format": "zarr",
         "zarr_format": 3,
         "profile": schema.profile,
@@ -420,25 +445,5 @@ fn write_output_manifest(base: &Path, schema: &OutputSchema, codec: &BloscProfil
         "n_records": n_records,
         "created_at": crate::clock::now_rfc3339(),
     });
-    let bytes = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| err(format!("serialize output manifest: {e}")))?;
-    atomic_write(&base.join("output_manifest.json"), &bytes)
-}
-
-/// Write `bytes` to `path` atomically via a sibling temp + rename.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut tmp = tempfile::Builder::new()
-        .prefix(".zarr-")
-        .suffix(".part")
-        .tempfile_in(dir)
-        .map_err(|e| Error::io(Some(dir.to_path_buf()), e))?;
-    use std::io::Write as _;
-    tmp.write_all(bytes)
-        .map_err(|e| Error::io(Some(tmp.path().to_path_buf()), e))?;
-    tmp.flush()
-        .map_err(|e| Error::io(Some(tmp.path().to_path_buf()), e))?;
-    tmp.persist(path)
-        .map_err(|e| Error::io(Some(path.to_path_buf()), e.error))?;
-    Ok(())
+    set_json(store, "output_manifest.json", &manifest)
 }
