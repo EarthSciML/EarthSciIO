@@ -1,6 +1,6 @@
 {
   "schema": "earthsciio/write-conformance-spec/v1",
-  "description": "Tiny deterministic Zarr v3 sharded write-conformance dataset: two float64 variables over (time, lat, lon), CF coordinate variables, time sharded 2 records/shard, lon split into 2 inner chunks/shard. Codec profile 'diagnostic': inner codec Blosc(cname=zstd, clevel=5, byte-shuffle).",
+  "description": "Tiny deterministic Zarr v3 sharded write-conformance dataset: two float64 variables over (time, lat, lon), CF coordinate variables, time sharded 2 records/shard, lon split into 2 inner chunks/shard. Codec profile 'wasm': inner codec plain Zarr v3 zstd (level 5, no Blosc) so the store is loadable by a WebAssembly/browser Zarr reader.",
   "dims": [
     [
       "time",
@@ -17,7 +17,7 @@
   ],
   "time_dim": "time",
   "time_dtype": "float64",
-  "profile": "diagnostic",
+  "profile": "wasm",
   "group_attrs": {
     "title": "EarthSciIO write-conformance tiny dataset",
     "Conventions": "CF-1.8"

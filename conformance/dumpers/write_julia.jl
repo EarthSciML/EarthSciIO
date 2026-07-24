@@ -16,25 +16,12 @@
 using EarthSciIO
 import JSON
 
-# The Julia Zarr writer blosc-ENcodes chunks via the `EarthSciIOBloscExt` weakdep
-# extension (`using Blosc`) — the same weakdep the reader uses. Load it exactly as
-# `dump_julia.jl` does: try a direct import; on failure stack a temp env carrying
-# Blosc onto LOAD_PATH and retry the extension load.
-if Base.get_extension(EarthSciIO, :EarthSciIOBloscExt) === nothing
-    try
-        @eval import Blosc
-    catch
-        import Pkg
-        _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
-        _bloscenv = mktempdir()
-        Pkg.activate(_bloscenv; io = devnull)
-        Pkg.add("Blosc"; io = devnull)
-        Pkg.activate(_juliaproj; io = devnull)
-        push!(LOAD_PATH, _bloscenv)
-        @eval import Blosc
-    end
-    Base.retry_load_extensions()
-end
+# The Julia Zarr writer ENcodes chunks through a weakdep extension: `Blosc` /
+# `EarthSciIOBloscExt` for the `:diagnostic`/`:checkpoint` profiles, `CodecZstd` /
+# `EarthSciIOZstdExt` for the plain-zstd `:wasm` profile. Load both so this one
+# driver can write every codec profile variant.
+include(joinpath(@__DIR__, "codec_weakdeps.jl"))
+load_codec_weakdeps!()
 
 const _DTYPE = Dict("float64" => Float64, "float32" => Float32,
                     "int32" => Int32, "int64" => Int64)
@@ -87,8 +74,10 @@ function main()
         write_record!(w, h, t, arrays)
     end
     m = write_close!(w, h)
+    codec_id = get(m.codec, "id", "?")
     println("[julia-writer] wrote $(m.n_records) records to $out_dir " *
-            "(profile=$(spec["profile"]), $(length(spec["vars"])) vars)")
+            "(profile=$(spec["profile"]), $(length(spec["vars"])) vars, " *
+            "codec=$(codec_id))")
 end
 
 main()

@@ -22,10 +22,18 @@ compressed bytes legitimately differ across languages):
      objects are read DIRECTLY from disk (language-neutral JSON, no reader
      involved) and compared pairwise: ``data_type``, ``shape``, ``dimension_names``,
      the shard grid (``chunk_grid.chunk_shape``), the sharding inner
-     ``chunk_shape``, the Blosc codec params, ``fill_value``, and the key CF
-     attributes (``units``/``standard_name``/``axis``/``coordinates``/``calendar``).
+     ``chunk_shape``, the inner compressor params (Blosc **and** plain-``zstd``),
+     ``fill_value``, and the key CF attributes
+     (``units``/``standard_name``/``axis``/``coordinates``/``calendar``).
      This proves dim order, shape, coord metadata and CF attrs agree even for a
      store no local reader could open (e.g. a Rust store produced in CI).
+
+**Codec profiles.** The comparator is profile-agnostic: the decoded oracle depends
+only on the dataset, not on the inner compressor, so the same checks gate the
+``diagnostic`` (Blosc(zstd)+shuffle) and ``wasm`` (plain v3 ``zstd``, no Blosc)
+variants. Pass ``--spec`` to point at the variant's input spec; the structural
+check then additionally proves every track emitted the SAME inner codec chain
+(``bytes``+``blosc`` vs ``bytes``+``zstd``) for that profile.
 
 Tolerance (declared here, matching the RFC's per-entry policy for float64 output):
 ``|a-b| <= atol + rtol*|b|`` with ``atol=1e-9``, ``rtol=1e-6``. Fill/NaN cells
@@ -33,6 +41,7 @@ Tolerance (declared here, matching the RFC's per-entry policy for float64 output
 
 Usage:
   crosscheck_write.py READDUMP.json [READDUMP.json ...] [--store LABEL=DIR ...]
+                      [--spec SPEC.json]
 
 Exit 0 ⇔ every readback agrees with the oracle and pairwise within tolerance AND
 every pair of stores agrees structurally. ≥1 readback dump is required for the
@@ -159,6 +168,7 @@ def _structural(meta: Dict[str, Any]) -> Dict[str, Any]:
     scfg = shard.get("configuration", {})
     inner = scfg.get("chunk_shape")
     blosc = None
+    zstd = None
     for c in scfg.get("codecs", []):
         if c.get("name") == "blosc":
             bc = c.get("configuration", {})
@@ -167,6 +177,14 @@ def _structural(meta: Dict[str, Any]) -> Dict[str, Any]:
                 "clevel": bc.get("clevel"),
                 "shuffle": bc.get("shuffle"),
             }
+        elif c.get("name") == "zstd":
+            # The PLAIN v3 zstd codec — the `wasm` profile's inner compressor
+            # (no Blosc container, so a wasm/browser reader can decode it).
+            zc = c.get("configuration", {})
+            zstd = {"level": zc.get("level"), "checksum": zc.get("checksum")}
+    # The ordered inner codec chain, so a store that swapped blosc for zstd (or
+    # grew/lost a filter) can never silently match another profile's store.
+    inner_chain = [c.get("name") for c in scfg.get("codecs", [])]
     attrs = meta.get("attributes", {}) or {}
     cf = {k: attrs[k] for k in CF_ATTR_KEYS if k in attrs}
     return {
@@ -175,7 +193,9 @@ def _structural(meta: Dict[str, Any]) -> Dict[str, Any]:
         "dimension_names": meta.get("dimension_names"),
         "shard_shape": cg.get("chunk_shape"),
         "inner_chunk_shape": inner,
+        "inner_codec_chain": inner_chain,
         "blosc": blosc,
+        "zstd": zstd,
         "fill_value": meta.get("fill_value"),
         "cf_attrs": cf,
     }
@@ -225,7 +245,8 @@ def compare_stores(stores: Dict[str, pathlib.Path], spec: Dict[str, Any]) -> Tup
 def _diff_struct(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
     diffs = []
     for k in ("data_type", "shape", "dimension_names", "shard_shape",
-              "inner_chunk_shape", "blosc", "fill_value", "cf_attrs"):
+              "inner_chunk_shape", "inner_codec_chain", "blosc", "zstd",
+              "fill_value", "cf_attrs"):
         if a.get(k) != b.get(k):
             diffs.append(f"{k}: {a.get(k)!r} != {b.get(k)!r}")
     return diffs
@@ -239,6 +260,7 @@ def _diff_struct(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
 def main(argv: List[str]) -> int:
     dump_paths: List[str] = []
     stores: Dict[str, pathlib.Path] = {}
+    spec_path = SPEC_PATH
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -246,6 +268,9 @@ def main(argv: List[str]) -> int:
             i += 1
             label, _, d = argv[i].partition("=")
             stores[label] = pathlib.Path(d).resolve()
+        elif a == "--spec":
+            i += 1
+            spec_path = pathlib.Path(argv[i]).resolve()
         else:
             dump_paths.append(a)
         i += 1
@@ -255,7 +280,7 @@ def main(argv: List[str]) -> int:
         print("error: provide ≥1 readback dump and/or --store entries", file=sys.stderr)
         return 2
 
-    spec = json.loads(SPEC_PATH.read_text())
+    spec = json.loads(spec_path.read_text())
     oracle = build_oracle(spec)
 
     dumps = []
@@ -268,7 +293,8 @@ def main(argv: List[str]) -> int:
         dumps.append(d)
 
     print("=== Cross-language WRITE conformance (streaming-output-sinks Wave 5) ===")
-    print(f"spec:      {SPEC_PATH}")
+    print(f"spec:      {spec_path}")
+    print(f"profile:   {spec.get('profile', '(unset)')}")
     print(f"readbacks: {', '.join(d['_id'] for d in dumps) if dumps else '(none)'}")
     print(f"stores:    {', '.join(stores) if stores else '(none)'}")
     print(f"tolerance: atol={ATOL:g}, rtol={RTOL:g} (float64 decoded); "
