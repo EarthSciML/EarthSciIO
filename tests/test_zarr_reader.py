@@ -15,7 +15,8 @@ import datetime as _dt
 import numpy as np
 import pytest
 
-numcodecs = pytest.importorskip("numcodecs")
+numcodecs = pytest.importorskip("numcodecs")  # builds the v2 test fixtures
+pytest.importorskip("zarr")  # the reader is now built on zarr-python 3.x
 
 from earthsciio import (
     Cache,
@@ -30,8 +31,6 @@ from earthsciio import (
 from earthsciio.backends.local import LocalStore
 from earthsciio.backends.zarr import (
     ZarrReader,
-    _chunk_key,
-    _needed_chunks,
     _parse_axis,
     _resolve_axis_indices,
 )
@@ -74,30 +73,8 @@ def _populate(root, objects):
 
 
 # --------------------------------------------------------------------------- #
-# Pure chunk math.
+# Selector parsing (the EarthSciIO ``select`` shape → zarr oindex key).
 # --------------------------------------------------------------------------- #
-
-
-def test_chunk_key():
-    assert _chunk_key((0, 5, 0), ".") == "0.5.0"
-    assert _chunk_key((3,), ".") == "3"
-    assert _chunk_key((1, 2), "/") == "1/2"
-
-
-def test_needed_chunks_orthogonal_dedup_and_skip():
-    # dim0 chunk_len 1: index 1 -> chunk {1}; dim1 chunk_len 100: [0, 250, 260]
-    # -> chunks {0, 2}; dim2 all one chunk {0}.
-    got = _needed_chunks([[1], [0, 250, 260], [0]], [1, 100, 1])
-    assert got == [(1, 0, 0), (1, 2, 0)]  # chunk 1 (rows 100-199) is skipped
-
-
-def test_needed_chunks_never_scans_whole_array():
-    # 525 dim1 chunks of width 100; a 3-index selection touches <= 3 chunks.
-    sel1 = [50, 12345, 52000]
-    got = _needed_chunks([[0], sel1, [0]], [1, 100, 52411])
-    dim1_chunks = {c[1] for c in got}
-    assert dim1_chunks == {0, 123, 520}
-    assert len(got) == 3  # never 525
 
 
 def test_resolve_axis_slice_and_indices():
@@ -384,14 +361,20 @@ def test_per_call_select_pushes_down_and_fetches_only_needed_chunks(tmp_path):
         f.data.ravel(), [1_000_005, 1_000_012, 1_000_305, 1_000_340]
     )
 
-    # Laziness: fetched ONLY .zarray + .zattrs + chunks (1,0,0) and (1,3,0) — the
-    # 13 other chunks (layers 0/2, source-chunks 1/2/4) were never touched.
-    expected = {
-        cache_key(f"{ZSR}/sr/{k}")
-        for k in (".zarray", ".zattrs", "1.0.0", "1.3.0")
-    }
-    assert set(store.gets) == expected
-    assert len(store.gets) == 4
+    # Laziness: the two needed chunk objects (1,0,0) and (1,3,0) WERE fetched, and
+    # NONE of the 13 other chunk objects was (layers 0/2, source-chunks 1/2/4).
+    # (zarr-python may also probe metadata objects — zarr.json/.zarray/.zattrs —
+    # which is irrelevant to chunk-level laziness, so we assert on chunk keys only.)
+    got = set(store.gets)
+    for k in ("1.0.0", "1.3.0"):
+        assert cache_key(f"{ZSR}/sr/{k}") in got, f"needed chunk {k} not fetched"
+    for c0 in range(3):
+        for c1 in range(5):
+            if (c0, c1) in ((1, 0), (1, 3)):
+                continue
+            assert cache_key(f"{ZSR}/sr/{c0}.{c1}.0") not in got, (
+                f"over-fetched chunk {c0}.{c1}.0"
+            )
 
 
 def test_per_call_select_preserves_permuted_order(tmp_path):
@@ -433,7 +416,11 @@ def test_array_shape_reads_only_zarray(tmp_path):
     p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
 
     assert p.array_shape("sr") == (3, 500, 1)
-    assert store.gets == [cache_key(f"{ZSR}/sr/.zarray")]  # ONLY .zarray, never a chunk
+    # array_shape reads ONLY metadata — never a chunk object. (zarr-python may
+    # probe both zarr.json and .zarray; the invariant is that no chunk was read.)
+    for c0 in range(3):
+        for c1 in range(5):
+            assert cache_key(f"{ZSR}/sr/{c0}.{c1}.0") not in set(store.gets)
 
 
 def test_supports_selection_and_array_shape_capability_surface(tmp_path):

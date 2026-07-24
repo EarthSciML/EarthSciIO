@@ -21,11 +21,21 @@ mod ff10;
 mod geotiff;
 mod netcdf;
 mod zarr;
+#[cfg(feature = "object-store")]
+mod zarr_object_store;
+mod zarr_store;
+mod zarr_write;
 
 pub use ff10::Ff10Reader;
 pub use geotiff::GeoTiffReader;
 pub use netcdf::NetcdfReader;
 pub use zarr::ZarrReader;
+pub use zarr_write::{
+    write_zarr_v3, BloscProfile, OutputSchema, WriteCoord, WriteVar, BLOSC_CHECKPOINT,
+    BLOSC_DIAGNOSTIC,
+};
+#[cfg(feature = "object-store")]
+pub use zarr_object_store::{read_zarr_object_store, write_zarr_object_store};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -296,7 +306,7 @@ pub trait Reader: Send + Sync {
     /// [`store_backed`](Reader::store_backed) is `true` (default: an error).
     fn read_store(
         &self,
-        _cache: &Cache,
+        _cache: Arc<Cache>,
         _base_url: &str,
         _variables: &[String],
         _select: &Selection,
@@ -314,7 +324,7 @@ pub trait Reader: Send + Sync {
     /// a store-backed reader ([`ZarrReader`]) overrides to read the `.zarray`.
     fn array_shape(
         &self,
-        _cache: &Cache,
+        _cache: Arc<Cache>,
         _base_url: &str,
         _var: &str,
     ) -> Result<Option<Vec<usize>>> {

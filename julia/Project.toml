@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["EarthSciML"]
 
 [deps]
+CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
@@ -23,6 +24,7 @@ EarthSciIOTiffImagesExt = "TiffImages"
 
 [compat]
 Blosc = "0.7"
+CRC32c = "1"
 Dates = "1"
 Downloads = "1"
 FileWatching = "1"

@@ -86,7 +86,7 @@ def register_active_backends() -> None:
         keys=list(ZarrReader.FORMATS),
         status="active",
         extensions=list(ZarrReader.EXTENSIONS),
-        notes="Store-backed Zarr v2 reader; lazy orthogonal chunk selection, blosc decode.",
+        notes="Store-backed Zarr v2+v3 reader on zarr-python 3.x; lazy orthogonal chunk selection.",
     )
     transport_registry.register(
         HttpTransport.NAME,
