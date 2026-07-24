@@ -26,13 +26,17 @@ function _load_weakdep!(name::AbstractString)
         return true
     catch
         try
+            juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
+            env = mktempdir()
+            # Each statement gets its OWN `@eval` so it runs in the latest world
+            # age: under Julia >= 1.12 touching the `Pkg` binding in the same
+            # block that imported it is a prior-world access (a hard error in
+            # future versions, a loud warning today).
             @eval import Pkg
-            _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
-            _env = mktempdir()
-            Base.invokelatest(Pkg.activate, _env; io = devnull)
-            Base.invokelatest(Pkg.add, name; io = devnull)
-            Base.invokelatest(Pkg.activate, _juliaproj; io = devnull)
-            push!(LOAD_PATH, _env)
+            @eval Pkg.activate($env; io = devnull)
+            @eval Pkg.add($name; io = devnull)
+            @eval Pkg.activate($juliaproj; io = devnull)
+            push!(LOAD_PATH, env)
             @eval import $(Symbol(name))
             return true
         catch err
