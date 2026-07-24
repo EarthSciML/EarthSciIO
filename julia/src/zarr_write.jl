@@ -29,22 +29,40 @@
 # (higher level; zstd is lossless — no lossy filter is ever applied). Pinned as
 # constants so the Python/Rust ports match byte-for-byte on params.
 
+# The inner (per-chunk) compressor a profile selects. Blosc(zstd) for the
+# diagnostic/checkpoint profiles; the PLAIN v3 `zstd` codec (no Blosc) for the
+# `wasm` profile, so a WebAssembly/browser Zarr reader can decode the store
+# (`blosc-src`'s C sources don't target wasm32; the standard v3 zstd codec does).
+abstract type CodecProfile end
+
 """A pinned Blosc codec profile: `cname`/`clevel`/`shuffle` (byte-shuffle)."""
-struct BloscProfile
+struct BloscProfile <: CodecProfile
     cname::String
     clevel::Int
     shuffle::Bool
+end
+
+"""A pinned **standard Zarr v3 `zstd`** codec profile: `level`/`checksum`. Unlike
+[`BloscProfile`] this is the plain v3 `zstd` codec, NOT the Blosc container, so a
+wasm/browser Zarr reader can decode the store. Lossless; no byte-shuffle filter."""
+struct ZstdProfile <: CodecProfile
+    level::Int
+    checksum::Bool
 end
 
 """Diagnostic profile — Blosc **zstd** + byte-shuffle, moderate level (5)."""
 const BLOSC_DIAGNOSTIC = BloscProfile("zstd", 5, true)
 """Checkpoint profile — **lossless** Blosc zstd (level 7) + byte-shuffle."""
 const BLOSC_CHECKPOINT = BloscProfile("zstd", 7, true)
+"""WASM profile — plain v3 **zstd** (level 5), no Blosc, so a wasm/browser Zarr
+reader can decode the store. See [`ZstdProfile`]."""
+const ZSTD_WASM = ZstdProfile(5, false)
 
 _profile(sym::Symbol) =
     sym === :diagnostic ? BLOSC_DIAGNOSTIC :
     sym === :checkpoint ? BLOSC_CHECKPOINT :
-    error("unknown codec profile $sym (expected :diagnostic or :checkpoint)")
+    sym === :wasm ? ZSTD_WASM :
+    error("unknown codec profile $sym (expected :diagnostic, :checkpoint, or :wasm)")
 
 # --- the output schema ------------------------------------------------------
 
@@ -85,7 +103,8 @@ Fields (all load-bearing for the binding to construct):
   * `shard_shape::Dict{String,Int}` — dim name => SHARD length (must be a multiple
     of the inner chunk length along every dim). `shard_shape[time_dim]` is the
     number of records packed per flushed shard object.
-  * `profile::Symbol` — `:diagnostic` or `:checkpoint` (codec params).
+  * `profile::Symbol` — `:diagnostic`/`:checkpoint` (Blosc-zstd inner codec) or
+    `:wasm` (plain v3 zstd inner codec, no Blosc — wasm/browser-loadable).
   * `attrs::Dict{String,Any}` — group-level attributes.
   * `time_dtype::DataType` — element type of the time coordinate (default `Float64`)."""
 struct OutputSchema
@@ -126,7 +145,7 @@ mutable struct ZarrWriteHandle
     base::String                       # output directory (local FS)
     schema::OutputSchema
     dimlens::Dict{String,Int}          # non-time dim => fixed length
-    codec::BloscProfile
+    codec::CodecProfile
     shard_time::Int                    # records per time-shard
     n_in_shard::Int                    # records buffered in the current shard
     shard_time_index::Int              # 0-based index of the current time-shard
@@ -161,6 +180,14 @@ _blosc_compress(bytes, cname, clevel, shuffle, typesize) = error(
     "`using Blosc` so the EarthSciIOBloscExt extension supplies the encode " *
     "(kept a weakdep to keep a base EarthSciIO install light).")
 
+# The write mirror for the `wasm` (plain v3 zstd) profile: the `zstd` encode lives
+# in the `CodecZstd` weakdep extension (`using CodecZstd`). A base install without
+# it errors here with an install hint, exactly like `_blosc_compress`.
+_zstd_compress(bytes, level) = error(
+    "the zarr writer needs the CodecZstd backend for the wasm (plain zstd) " *
+    "profile: add `using CodecZstd` so the EarthSciIOZstdExt extension supplies " *
+    "the encode (kept a weakdep to keep a base EarthSciIO install light).")
+
 # --- output base resolution -------------------------------------------------
 
 function _output_base(u::AbstractString)
@@ -175,7 +202,24 @@ end
 
 _dims_tuple(shape_dict, dims) = Int[shape_dict[d] for d in dims]
 
-function _sharding_codec(inner::Vector{Int}, codec::BloscProfile, typesize::Int)
+# The inner (per-chunk) compressor codec dict a profile selects: Blosc(zstd) for
+# the diagnostic/checkpoint profiles, or the plain v3 `zstd` codec for the wasm
+# profile (no Blosc — a wasm/browser reader can decode it).
+_inner_codec_meta(codec::BloscProfile, typesize::Int) =
+    Dict{String,Any}("name" => "blosc",
+                     "configuration" => Dict{String,Any}(
+                         "cname" => codec.cname,
+                         "clevel" => codec.clevel,
+                         "shuffle" => codec.shuffle ? "shuffle" : "noshuffle",
+                         "typesize" => typesize,
+                         "blocksize" => 0))
+_inner_codec_meta(codec::ZstdProfile, ::Int) =
+    Dict{String,Any}("name" => "zstd",
+                     "configuration" => Dict{String,Any}(
+                         "level" => codec.level,
+                         "checksum" => codec.checksum))
+
+function _sharding_codec(inner::Vector{Int}, codec::CodecProfile, typesize::Int)
     return Dict{String,Any}(
         "name" => "sharding_indexed",
         "configuration" => Dict{String,Any}(
@@ -183,13 +227,7 @@ function _sharding_codec(inner::Vector{Int}, codec::BloscProfile, typesize::Int)
             "codecs" => Any[
                 Dict{String,Any}("name" => "bytes",
                                  "configuration" => Dict{String,Any}("endian" => "little")),
-                Dict{String,Any}("name" => "blosc",
-                                 "configuration" => Dict{String,Any}(
-                                     "cname" => codec.cname,
-                                     "clevel" => codec.clevel,
-                                     "shuffle" => codec.shuffle ? "shuffle" : "noshuffle",
-                                     "typesize" => typesize,
-                                     "blocksize" => 0)),
+                _inner_codec_meta(codec, typesize),
             ],
             "index_codecs" => Any[
                 Dict{String,Any}("name" => "bytes",
@@ -202,7 +240,7 @@ function _sharding_codec(inner::Vector{Int}, codec::BloscProfile, typesize::Int)
 end
 
 function _array_meta_dict(dims::Vector{String}, dtype::DataType, shape::Vector{Int},
-                          schema::OutputSchema, codec::BloscProfile,
+                          schema::OutputSchema, codec::CodecProfile,
                           attrs::Dict{String,Any})
     inner = Int[schema.chunk_shape[d] for d in dims]
     shard = Int[schema.shard_shape[d] for d in dims]
@@ -258,13 +296,19 @@ function _chunk_from(data::AbstractArray{T,N}, chunk::NTuple{N,Int}, gstart::NTu
     return out
 end
 
+# The compress step of the inner pipeline, dispatched on the profile: Blosc for
+# the diagnostic/checkpoint profiles, plain v3 zstd for the wasm profile.
+_compress(codec::BloscProfile, bytes, typesize) =
+    _blosc_compress(bytes, codec.cname, codec.clevel, codec.shuffle, typesize)
+_compress(codec::ZstdProfile, bytes, ::Int) = _zstd_compress(bytes, codec.level)
+
 # Inner chunk array -> compressed bytes: C-order flatten -> little-endian bytes
-# -> blosc (the `[bytes(little), blosc]` inner pipeline).
-function _encode_chunk(chunk::AbstractArray{T,N}, codec::BloscProfile) where {T,N}
+# -> compressor (the `[bytes(little), <compressor>]` inner pipeline).
+function _encode_chunk(chunk::AbstractArray{T,N}, codec::CodecProfile) where {T,N}
     flat = N == 1 ? vec(chunk) : vec(permutedims(chunk, reverse(1:N)))
     le = htol.(flat)
     bytes = Vector{UInt8}(reinterpret(UInt8, le))
-    return _blosc_compress(bytes, codec.cname, codec.clevel, codec.shuffle, sizeof(T))
+    return _compress(codec, bytes, sizeof(T))
 end
 
 # Pack encoded inner chunks (C-order over `inner_per_shard`) into one shard
@@ -305,7 +349,7 @@ end
 function _write_array_shards!(base::AbstractString, name::AbstractString,
                               dims::Vector{String}, dtype::DataType,
                               data::AbstractArray, schema::OutputSchema,
-                              codec::BloscProfile, valid::Vector{Int},
+                              codec::CodecProfile, valid::Vector{Int},
                               time_base::Vector{Int}, ti::Int,
                               time_shard_only::Union{Int,Nothing})
     N = length(dims)
@@ -536,11 +580,17 @@ end
 
 # --- output manifest --------------------------------------------------------
 
+# The manifest's `codec` record, dispatched on the profile (mirrors the Python /
+# Rust writers' manifest codec dicts).
+_codec_manifest(c::BloscProfile) =
+    Dict{String,Any}("id" => "blosc", "cname" => c.cname, "clevel" => c.clevel,
+                     "shuffle" => c.shuffle ? "shuffle" : "noshuffle")
+_codec_manifest(c::ZstdProfile) =
+    Dict{String,Any}("id" => "zstd", "level" => c.level, "checksum" => c.checksum)
+
 function _write_output_manifest!(h::ZarrWriteHandle)
     s = h.schema
-    codec = Dict{String,Any}("id" => "blosc", "cname" => h.codec.cname,
-                             "clevel" => h.codec.clevel,
-                             "shuffle" => h.codec.shuffle ? "shuffle" : "noshuffle")
+    codec = _codec_manifest(h.codec)
     vars = Vector{Dict{String,Any}}()
     for (nm, ov) in s.vars
         push!(vars, Dict{String,Any}("name" => nm, "dims" => ov.dims,

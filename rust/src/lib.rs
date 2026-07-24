@@ -72,9 +72,10 @@ pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 pub use error::{Error, Result};
 pub use format::{
-    write_zarr_v3, ArrayData, AxisSelect, BloscProfile, Coord, DType, Ff10Reader, FormatRegistry,
-    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, OutputSchema, Reader, Selection,
-    WriteCoord, WriteVar, ZarrReader, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC,
+    write_zarr_v3, ArrayData, AxisSelect, BloscProfile, CodecProfile, Coord, DType, Ff10Reader,
+    FormatRegistry, GeoTiffReader, NativeDataset, NativeField, NetcdfReader, OutputSchema, Reader,
+    Selection, WriteCoord, WriteVar, ZarrReader, ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC,
+    ZSTD_WASM,
 };
 #[cfg(feature = "object-store")]
 pub use format::{read_zarr_object_store, write_zarr_object_store};
