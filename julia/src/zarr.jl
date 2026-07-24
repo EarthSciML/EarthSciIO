@@ -160,16 +160,28 @@ _blosc_decompress(raw) = error(
     "`using Blosc` so the EarthSciIOBloscExt extension supplies the decode (kept " *
     "a weakdep to keep a base EarthSciIO install light, mirroring the TiffImages path).")
 
+# The plain (non-Blosc) `zstd` codec decode lives in the `CodecZstd` weakdep
+# extension (`using CodecZstd`), mirroring the Blosc weakdep above. It is what
+# the writer's `:wasm` profile emits — a standard Zarr v3 `zstd` codec, which a
+# wasm/browser reader can decode where Blosc cannot.
+_zstd_decompress(raw) = error(
+    "the zarr reader needs the CodecZstd backend for plain zstd-compressed " *
+    "chunks (the `wasm` output profile): add `using CodecZstd` so the " *
+    "EarthSciIOZstdExt extension supplies the decode (kept a weakdep to keep a " *
+    "base EarthSciIO install light, mirroring the Blosc path).")
+
 _decompress(m::ZArrayMeta, raw) = _decompress(m.compressor, raw)
 _decompress(::Nothing, raw) = raw
 function _decompress(comp::AbstractDict, raw)
     id = lowercase(String(get(comp, "id", "")))
     if id == "blosc"
         return _blosc_decompress(raw)
+    elseif id == "zstd"
+        return _zstd_decompress(raw)
     elseif id in ("", "none")
         return raw
     else
-        error("unsupported zarr compressor id '$id' (the Julia track supports blosc)")
+        error("unsupported zarr compressor id '$id' (the Julia track supports blosc and zstd)")
     end
 end
 
@@ -323,6 +335,7 @@ struct ZV3Meta
     typechar::Char
     itemsize::Int
     blosc::Bool
+    zstd::Bool                  # plain v3 `zstd` codec (the `wasm` write profile)
     fill_value::Float64
     sep::String
     has_crc::Bool
@@ -334,7 +347,9 @@ end
 # (written for v2) decode v3 inner chunks unchanged.
 _inner_zarray(m::ZV3Meta) = ZArrayMeta(
     m.shape, m.inner, m.byteorder, m.typechar, m.itemsize,
-    m.blosc ? Dict{String,Any}("id" => "blosc") : nothing, "C", m.fill_value, "/")
+    m.blosc ? Dict{String,Any}("id" => "blosc") :
+    m.zstd  ? Dict{String,Any}("id" => "zstd")  : nothing,
+    "C", m.fill_value, "/")
 
 _v3_typecode(dt::AbstractString) =
     dt == "float64" ? ('f', 8) : dt == "float32" ? ('f', 4) :
@@ -368,6 +383,7 @@ function _parse_zarr_json(bytes)::ZV3Meta
 
     byteorder = '<'
     blosc = false
+    zstd = false
     for c in get(scfg, "codecs", Any[])
         nm = String(get(c, "name", ""))
         if nm == "bytes"
@@ -375,6 +391,8 @@ function _parse_zarr_json(bytes)::ZV3Meta
             byteorder = en == "big" ? '>' : '<'
         elseif nm == "blosc"
             blosc = true
+        elseif nm == "zstd"
+            zstd = true
         elseif nm == "transpose"
             error("zarr v3 reader does not support the transpose codec (C-order only)")
         end
@@ -407,7 +425,7 @@ function _parse_zarr_json(bytes)::ZV3Meta
     end
     length(dims) == ndim || (dims = String["dim_$(i)" for i in 0:(ndim - 1)])
 
-    return ZV3Meta(shape, shard, inner, ips, byteorder, tc, isz, blosc,
+    return ZV3Meta(shape, shard, inner, ips, byteorder, tc, isz, blosc, zstd,
                    fill_value, sep, has_crc, index_end, dims)
 end
 

@@ -64,12 +64,43 @@ pub const BLOSC_CHECKPOINT: BloscProfile = BloscProfile {
     shuffle: true,
 };
 
-fn profile(name: &str) -> Result<BloscProfile> {
+/// A pinned **standard Zarr v3 `zstd`** codec profile: `level` / `checksum`
+/// (RFC §16). Unlike [`BloscProfile`] this is the plain v3 `zstd` codec, NOT the
+/// Blosc container, so a WebAssembly/browser Zarr reader can decode the store:
+/// the pure-Rust `zstd` codec targets `wasm32-unknown-unknown` whereas
+/// `blosc-src`'s C sources do not. Lossless; no standalone byte-shuffle filter.
+#[derive(Debug, Clone, Copy)]
+pub struct ZstdProfile {
+    /// Zstd compression level (−131072..=22; higher = smaller/slower).
+    pub level: i32,
+    /// Whether to store a content checksum in each frame.
+    pub checksum: bool,
+}
+
+/// WASM profile — plain v3 **zstd** (level 5), no Blosc, so a wasm/browser Zarr
+/// reader can decode the store. See [`ZstdProfile`].
+pub const ZSTD_WASM: ZstdProfile = ZstdProfile {
+    level: 5,
+    checksum: false,
+};
+
+/// The inner (per-chunk) compressor a profile selects: Blosc(zstd) for the
+/// diagnostic/checkpoint profiles, or the plain v3 zstd codec for the wasm one.
+#[derive(Debug, Clone, Copy)]
+pub enum CodecProfile {
+    /// Blosc container (diagnostic / checkpoint).
+    Blosc(BloscProfile),
+    /// Plain v3 `zstd` codec (wasm-loadable).
+    Zstd(ZstdProfile),
+}
+
+fn profile(name: &str) -> Result<CodecProfile> {
     match name {
-        "diagnostic" => Ok(BLOSC_DIAGNOSTIC),
-        "checkpoint" => Ok(BLOSC_CHECKPOINT),
+        "diagnostic" => Ok(CodecProfile::Blosc(BLOSC_DIAGNOSTIC)),
+        "checkpoint" => Ok(CodecProfile::Blosc(BLOSC_CHECKPOINT)),
+        "wasm" => Ok(CodecProfile::Zstd(ZSTD_WASM)),
         other => Err(err(format!(
-            "unknown codec profile '{other}' (expected 'diagnostic' or 'checkpoint')"
+            "unknown codec profile '{other}' (expected 'diagnostic', 'checkpoint', or 'wasm')"
         ))),
     }
 }
@@ -119,7 +150,8 @@ pub struct OutputSchema {
     pub vars: Vec<WriteVar>,
     /// Group-level attributes.
     pub group_attrs: Map<String, Value>,
-    /// Codec profile name: `"diagnostic"` or `"checkpoint"`.
+    /// Codec profile name: `"diagnostic"` / `"checkpoint"` (Blosc-zstd inner
+    /// codec) or `"wasm"` (plain v3 zstd inner codec, no Blosc — wasm-loadable).
     pub profile: String,
 }
 
@@ -238,21 +270,38 @@ where
     write_output_manifest(store.as_ref(), base_url, schema, codec)
 }
 
+/// The inner (per-chunk) compressor codec dict a profile selects: Blosc(zstd)
+/// for the diagnostic/checkpoint profiles, or the plain v3 `zstd` codec for the
+/// wasm profile (no Blosc — a wasm/browser reader can decode it).
+fn inner_compressor(codec: &CodecProfile, typesize: usize) -> Value {
+    match codec {
+        CodecProfile::Blosc(b) => json!({
+            "name": "blosc", "configuration": {
+                "cname": b.cname,
+                "clevel": b.clevel,
+                "shuffle": if b.shuffle { "shuffle" } else { "noshuffle" },
+                "typesize": typesize,
+                "blocksize": 0,
+            }
+        }),
+        CodecProfile::Zstd(z) => json!({
+            "name": "zstd", "configuration": {
+                "level": z.level,
+                "checksum": z.checksum,
+            }
+        }),
+    }
+}
+
 /// The `sharding_indexed` codec dict for inner chunk shape `inner` (RFC §16).
-fn sharding_codec(inner: &[usize], codec: &BloscProfile, typesize: usize) -> Value {
+fn sharding_codec(inner: &[usize], codec: &CodecProfile, typesize: usize) -> Value {
     json!({
         "name": "sharding_indexed",
         "configuration": {
             "chunk_shape": inner,
             "codecs": [
                 {"name": "bytes", "configuration": {"endian": "little"}},
-                {"name": "blosc", "configuration": {
-                    "cname": codec.cname,
-                    "clevel": codec.clevel,
-                    "shuffle": if codec.shuffle { "shuffle" } else { "noshuffle" },
-                    "typesize": typesize,
-                    "blocksize": 0,
-                }},
+                inner_compressor(codec, typesize),
             ],
             "index_codecs": [
                 {"name": "bytes", "configuration": {"endian": "little"}},
@@ -268,7 +317,7 @@ fn array_meta(
     dims: &[String],
     shape: &[usize],
     schema: &OutputSchema,
-    codec: &BloscProfile,
+    codec: &CodecProfile,
     attrs: &Map<String, Value>,
 ) -> Result<Value> {
     let inner: Vec<usize> = dims
@@ -315,7 +364,7 @@ fn write_array<S>(
     dims: &[String],
     shape: &[usize],
     schema: &OutputSchema,
-    codec: &BloscProfile,
+    codec: &CodecProfile,
     attrs: &Map<String, Value>,
     data: &[f64],
 ) -> Result<()>
@@ -360,7 +409,7 @@ fn write_output_manifest<S>(
     store: &S,
     base_url: &str,
     schema: &OutputSchema,
-    codec: &BloscProfile,
+    codec: &CodecProfile,
 ) -> Result<()>
 where
     S: zarrs::storage::WritableStorageTraits,
@@ -423,18 +472,26 @@ where
         .map(|(k, v)| json!({"name": k, "length": v}))
         .collect();
 
+    let codec_meta = match codec {
+        CodecProfile::Blosc(b) => json!({
+            "id": "blosc",
+            "cname": b.cname,
+            "clevel": b.clevel,
+            "shuffle": if b.shuffle { "shuffle" } else { "noshuffle" },
+        }),
+        CodecProfile::Zstd(z) => json!({
+            "id": "zstd",
+            "level": z.level,
+            "checksum": z.checksum,
+        }),
+    };
     let manifest = json!({
         "schema": "earthsciio/output-manifest/v1",
         "base_url": base_url,
         "format": "zarr",
         "zarr_format": 3,
         "profile": schema.profile,
-        "codec": {
-            "id": "blosc",
-            "cname": codec.cname,
-            "clevel": codec.clevel,
-            "shuffle": if codec.shuffle { "shuffle" } else { "noshuffle" },
-        },
+        "codec": codec_meta,
         "time_dim": schema.time_dim,
         "dims": dims,
         "vars": vars,

@@ -12,29 +12,17 @@
 # each object through a content-addressed `Cache`. A produced LOCAL store is read
 # by pointing a plain (online, no-network) `Cache` at a `file://` base URL — the
 # FileTransport copies each local object into a throwaway cache dir. Blosc DECode
-# rides the same `EarthSciIOBloscExt` weakdep the reader always uses.
+# rides the same `EarthSciIOBloscExt` weakdep the reader always uses; the plain v3
+# `zstd` DECode (what the `wasm` output profile writes) rides `EarthSciIOZstdExt`.
+# Loading BOTH means this one driver cross-reads every codec profile variant.
 #
-# Usage:  julia --project=julia conformance/dumpers/read_julia.jl STORE_DIR WRITER_LABEL [OUT.json]
+# Usage:  julia --project=julia conformance/dumpers/read_julia.jl STORE_DIR WRITER_LABEL [OUT.json] [SPEC.json]
 
 using EarthSciIO
 import JSON
 
-# Load the Blosc weakdep extension exactly as the read/write dumpers do.
-if Base.get_extension(EarthSciIO, :EarthSciIOBloscExt) === nothing
-    try
-        @eval import Blosc
-    catch
-        import Pkg
-        _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
-        _bloscenv = mktempdir()
-        Pkg.activate(_bloscenv; io = devnull)
-        Pkg.add("Blosc"; io = devnull)
-        Pkg.activate(_juliaproj; io = devnull)
-        push!(LOAD_PATH, _bloscenv)
-        @eval import Blosc
-    end
-    Base.retry_load_extensions()
-end
+include(joinpath(@__DIR__, "codec_weakdeps.jl"))
+load_codec_weakdeps!()
 
 # Row-major (C order) flatten of a native array whose axes are in file order.
 _corder(a::AbstractVector) = collect(a)
@@ -59,11 +47,13 @@ function encode_field(field)
 end
 
 function main()
-    length(ARGS) >= 2 || error("usage: read_julia.jl STORE_DIR WRITER_LABEL [OUT.json]")
+    length(ARGS) >= 2 ||
+        error("usage: read_julia.jl STORE_DIR WRITER_LABEL [OUT.json] [SPEC.json]")
     store_dir = abspath(ARGS[1])
     writer_label = ARGS[2]
     conf = normpath(joinpath(@__DIR__, ".."))
-    spec = JSON.parsefile(joinpath(conf, "write_spec.json"))
+    spec_path = length(ARGS) >= 4 ? ARGS[4] : joinpath(conf, "write_spec.json")
+    spec = JSON.parsefile(spec_path)
 
     arrays = String[]
     for co in spec["coords"]; push!(arrays, String(co["name"])); end

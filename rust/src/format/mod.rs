@@ -31,8 +31,8 @@ pub use geotiff::GeoTiffReader;
 pub use netcdf::NetcdfReader;
 pub use zarr::ZarrReader;
 pub use zarr_write::{
-    write_zarr_v3, BloscProfile, OutputSchema, WriteCoord, WriteVar, BLOSC_CHECKPOINT,
-    BLOSC_DIAGNOSTIC,
+    write_zarr_v3, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar, ZstdProfile,
+    BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };
 #[cfg(feature = "object-store")]
 pub use zarr_object_store::{read_zarr_object_store, write_zarr_object_store};

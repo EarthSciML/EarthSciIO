@@ -20,7 +20,12 @@ The dump lists both the schema variables and the coordinate variables (the
 store-backed reader returns every requested array as a variable), each encoded as
 ``{dtype, dims, shape, data}`` with ``data`` flattened row-major (C order).
 
-Usage:  python3 conformance/dumpers/read_python.py STORE_DIR WRITER_LABEL [OUT.json]
+The store's codec profile is irrelevant here: the reader decodes whatever inner
+codec the ``zarr.json`` declares (Blosc(zstd) for the diagnostic/checkpoint
+profiles, the plain v3 ``zstd`` codec for the ``wasm`` profile), so the SAME
+driver cross-reads every profile variant.
+
+Usage:  python3 conformance/dumpers/read_python.py STORE_DIR WRITER_LABEL [OUT.json] [SPEC.json]
 """
 
 from __future__ import annotations
@@ -79,11 +84,15 @@ def _encode_field(data: np.ndarray, dims: List[str]) -> Dict[str, Any]:
 
 def main(argv: List[str]) -> int:
     if len(argv) < 3:
-        print("usage: read_python.py STORE_DIR WRITER_LABEL [OUT.json]", file=sys.stderr)
+        print(
+            "usage: read_python.py STORE_DIR WRITER_LABEL [OUT.json] [SPEC.json]",
+            file=sys.stderr,
+        )
         return 2
     store_dir = str(pathlib.Path(argv[1]).resolve())
     writer_label = argv[2]
-    spec = json.loads((CONF / "write_spec.json").read_text())
+    spec_path = pathlib.Path(argv[4]) if len(argv) > 4 else CONF / "write_spec.json"
+    spec = json.loads(spec_path.read_text())
 
     arrays = [c["name"] for c in spec["coords"]] + [v["name"] for v in spec["vars"]]
     reader = ZarrReader()

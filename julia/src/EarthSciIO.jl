@@ -51,8 +51,8 @@ export Manifest, OutputManifest, TimeShardRecord
 export write_output_manifest, read_output_manifest
 
 # write boundary (Zarr v3 sharded output) — the write mirror of the readers
-export ZarrWriter, OutputSchema, OutputVar, BloscProfile
-export BLOSC_DIAGNOSTIC, BLOSC_CHECKPOINT
+export ZarrWriter, OutputSchema, OutputVar, CodecProfile, BloscProfile, ZstdProfile
+export BLOSC_DIAGNOSTIC, BLOSC_CHECKPOINT, ZSTD_WASM
 export write_open!, write_record!, write_close!
 export Transport, HttpTransport, FileTransport, S3Transport
 export AuthResolver, NoAuth, BearerAuth

@@ -16,15 +16,18 @@ ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [weakdeps]
 Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
+CodecZstd = "6b39b394-51ab-5f42-8807-6242bab2b4c2"
 TiffImages = "731e570b-9d59-4bfa-96dc-6df516fadf69"
 
 [extensions]
 EarthSciIOBloscExt = "Blosc"
+EarthSciIOZstdExt = "CodecZstd"
 EarthSciIOTiffImagesExt = "TiffImages"
 
 [compat]
 Blosc = "0.7"
 CRC32c = "1"
+CodecZstd = "0.8"
 Dates = "1"
 Downloads = "1"
 FileWatching = "1"
@@ -38,10 +41,11 @@ julia = "1.10"
 
 [extras]
 Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
+CodecZstd = "6b39b394-51ab-5f42-8807-6242bab2b4c2"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TiffImages = "731e570b-9d59-4bfa-96dc-6df516fadf69"
 
 [targets]
-test = ["Test", "Sockets", "Distributed", "TiffImages", "Blosc"]
+test = ["Test", "Sockets", "Distributed", "TiffImages", "Blosc", "CodecZstd"]

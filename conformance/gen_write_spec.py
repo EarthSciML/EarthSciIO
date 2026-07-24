@@ -23,13 +23,24 @@ The dataset is intentionally tiny but exercises the load-bearing features:
 Row-major (C order) is the canonical layout: every record's ``vars[name]`` is a
 nested ``[lat][lon]`` list; the full variable array is ``[time][lat][lon]``.
 
-Usage:  python3 conformance/gen_write_spec.py   # rewrites conformance/write_spec.json
+**Codec profiles.** The dataset is identical across profiles — only the inner
+(per-chunk) compressor differs, so the decoded ORACLE is profile-independent and
+one comparator serves every variant. Two variants are generated:
+
+  * ``write_spec.json``      — ``profile: "diagnostic"`` (Blosc(zstd)+shuffle).
+  * ``write_spec_wasm.json`` — ``profile: "wasm"`` (plain v3 ``zstd``, NO Blosc),
+    proving the wasm-loadable store shape is written identically by every track.
+
+Usage:
+  python3 conformance/gen_write_spec.py                 # regenerate BOTH variants
+  python3 conformance/gen_write_spec.py --profile wasm  # just the wasm variant
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
+import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -47,7 +58,21 @@ def pressure(r: int, i: int, j: int) -> float:
     return 101325.0 - 100.0 * r + 3.0 * i - 0.25 * j
 
 
-def build() -> dict:
+#: profile name -> (spec filename, one-line description of the inner codec).
+PROFILES = {
+    "diagnostic": (
+        "write_spec.json",
+        "inner codec Blosc(cname=zstd, clevel=5, byte-shuffle)",
+    ),
+    "wasm": (
+        "write_spec_wasm.json",
+        "inner codec plain Zarr v3 zstd (level 5, no Blosc) so the store is "
+        "loadable by a WebAssembly/browser Zarr reader",
+    ),
+}
+
+
+def build(profile: str = "diagnostic") -> dict:
     records = []
     for r in range(NREC):
         records.append(
@@ -68,12 +93,13 @@ def build() -> dict:
         "description": (
             "Tiny deterministic Zarr v3 sharded write-conformance dataset: two "
             "float64 variables over (time, lat, lon), CF coordinate variables, "
-            "time sharded 2 records/shard, lon split into 2 inner chunks/shard."
+            "time sharded 2 records/shard, lon split into 2 inner chunks/shard. "
+            f"Codec profile {profile!r}: {PROFILES[profile][1]}."
         ),
         "dims": [["time", 0], ["lat", NLAT], ["lon", NLON]],
         "time_dim": "time",
         "time_dtype": "float64",
-        "profile": "diagnostic",
+        "profile": profile,
         "group_attrs": {
             "title": "EarthSciIO write-conformance tiny dataset",
             "Conventions": "CF-1.8",
@@ -136,11 +162,29 @@ def build() -> dict:
     }
 
 
-def main() -> int:
-    spec = build()
-    out = HERE / "write_spec.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
-    print(f"wrote {out} ({NREC} records, {len(spec['vars'])} vars)")
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--profile" in argv:
+        name = argv[argv.index("--profile") + 1]
+        if name not in PROFILES:
+            print(
+                f"error: unknown profile {name!r} (expected one of "
+                f"{', '.join(PROFILES)})",
+                file=sys.stderr,
+            )
+            return 2
+        wanted = [name]
+    else:
+        wanted = list(PROFILES)
+
+    for name in wanted:
+        spec = build(name)
+        out = HERE / PROFILES[name][0]
+        out.write_text(json.dumps(spec, indent=2) + "\n")
+        print(
+            f"wrote {out} (profile={name}, {NREC} records, "
+            f"{len(spec['vars'])} vars)"
+        )
     return 0
 
 

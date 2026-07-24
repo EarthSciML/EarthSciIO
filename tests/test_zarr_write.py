@@ -24,6 +24,7 @@ from earthsciio.backends.zarr import ZarrReader
 from earthsciio.backends.zarr_write import (
     BLOSC_CHECKPOINT,
     BLOSC_DIAGNOSTIC,
+    ZSTD_WASM,
     OUTPUT_MANIFEST_SCHEMA,
     OutputSchema,
     OutputVar,
@@ -220,6 +221,119 @@ def test_checkpoint_profile_uses_lossless_level(tmp_path):
     assert manifest["profile"] == "checkpoint"
     assert manifest["codec"]["clevel"] == BLOSC_CHECKPOINT.clevel == 7
     assert BLOSC_DIAGNOSTIC.clevel == 5
+
+
+# --------------------------------------------------------------------------- #
+# The `wasm` profile — plain Zarr v3 zstd inner codec, NO Blosc.
+#
+# Why it exists: a WebAssembly/browser Zarr reader cannot decode the Blosc
+# container (the `zarrs` crate's blosc support comes from `blosc-src`, whose
+# vendored C sources don't build for wasm32-unknown-unknown), while the standard
+# v3 `zstd` codec is pure Rust there. Sharding/crc32c are unchanged — only the
+# inner compressor differs — so these tests pin BOTH the emitted codec chain and
+# a full value round-trip.
+# --------------------------------------------------------------------------- #
+
+
+def test_wasm_profile_inner_codec_is_plain_zstd_without_blosc(tmp_path):
+    store_dir = tmp_path / "wasm.zarr"
+    _write(store_dir, _schema(profile="wasm"), n=5)
+
+    for array in ("temp", "time", "y", "x"):
+        meta = json.loads((store_dir / array / "zarr.json").read_text())
+        # sharding is unchanged: it stays the OUTER codec
+        assert [c["name"] for c in meta["codecs"]] == ["sharding_indexed"]
+        scfg = meta["codecs"][0]["configuration"]
+        inner = scfg["codecs"]
+        # inner pipeline is exactly bytes(little-endian) + zstd — no blosc, and
+        # no standalone shuffle filter
+        assert [c["name"] for c in inner] == ["bytes", "zstd"], array
+        assert inner[0]["configuration"]["endian"] == "little"
+        assert inner[1]["configuration"] == {"level": 5, "checksum": False}
+        assert not any(c["name"] == "blosc" for c in inner), array
+        # fill_value stays 0.0 (never NaN)
+        assert meta["fill_value"] == 0.0
+        # the shard index pipeline is untouched
+        assert [c["name"] for c in scfg["index_codecs"]] == ["bytes", "crc32c"]
+
+
+def test_wasm_profile_roundtrip_arrays_coords_attrs(tmp_path):
+    store_dir = tmp_path / "wasm.zarr"
+    expected, _ = _write(store_dir, _schema(profile="wasm"), n=5)
+    _seed_cache_from_store(store_dir, tmp_path / "cache")
+
+    cache = Cache(root=tmp_path / "cache", offline=True, verify=True)
+    nds = ZarrReader().read_store(cache, BASE, ["temp", "time", "y", "x"])
+
+    temp = nds.variables["temp"]
+    assert temp.dims == ("time", "y", "x")
+    assert temp.shape == (5, 3, 4)
+    assert temp.data.dtype == np.float64
+    # zstd is lossless, but assert on tolerance per the RFC §16.6 policy
+    np.testing.assert_allclose(temp.data, expected, rtol=1e-6, atol=1e-9)
+
+    np.testing.assert_allclose(
+        nds.variables["time"].data, np.arange(5) * 3600.0, rtol=1e-6, atol=1e-9
+    )
+    np.testing.assert_allclose(nds.variables["y"].data, [0.0, 10.0, 20.0])
+    np.testing.assert_allclose(nds.variables["x"].data, [0.0, 1.0, 2.0, 3.0])
+
+
+def test_wasm_profile_preserves_dimension_names_and_cf_attrs(tmp_path):
+    store_dir = tmp_path / "wasm.zarr"
+    _write(store_dir, _schema(profile="wasm"), n=5)
+
+    meta = json.loads((store_dir / "temp" / "zarr.json").read_text())
+    assert meta["dimension_names"] == ["time", "y", "x"]
+    assert meta["data_type"] == "float64"
+    assert meta["attributes"]["units"] == "K"
+    assert meta["attributes"]["standard_name"] == "air_temperature"
+    ymeta = json.loads((store_dir / "y" / "zarr.json").read_text())
+    assert ymeta["attributes"]["axis"] == "Y"
+    assert ymeta["attributes"]["units"] == "m"
+    group = json.loads((store_dir / "zarr.json").read_text())
+    assert group["attributes"]["title"] == "roundtrip"
+
+
+def test_wasm_profile_manifest_records_the_zstd_codec(tmp_path):
+    store_dir = tmp_path / "wasm.zarr"
+    _, manifest = _write(store_dir, _schema(profile="wasm"), n=5)
+    assert manifest["profile"] == "wasm"
+    assert manifest["codec"] == {"id": "zstd", "level": 5, "checksum": False}
+    assert manifest["codec"] == {
+        "id": "zstd",
+        "level": ZSTD_WASM.level,
+        "checksum": ZSTD_WASM.checksum,
+    }
+    # the wasm profile changes ONLY the codec — the rest of the manifest is the
+    # same shape the Blosc profiles produce
+    assert manifest["zarr_format"] == 3
+    assert manifest["chunk_shape"] == {"time": 2, "y": 3, "x": 4}
+    assert manifest["shard_shape"] == {"time": 4, "y": 3, "x": 4}
+
+
+def test_wasm_profile_values_match_the_blosc_profile_exactly(tmp_path):
+    """Both profiles are lossless, so the DECODED arrays must be identical —
+    the codec swap must not perturb a single value."""
+    diag_dir = tmp_path / "diag.zarr"
+    wasm_dir = tmp_path / "wasm.zarr"
+    exp_diag, _ = _write(diag_dir, _schema(profile="diagnostic"), n=5)
+    exp_wasm, _ = _write(wasm_dir, _schema(profile="wasm"), n=5)
+    np.testing.assert_array_equal(exp_diag, exp_wasm)
+
+    import zarr
+
+    a = zarr.open_group(str(diag_dir), mode="r")["temp"][...]
+    b = zarr.open_group(str(wasm_dir), mode="r")["temp"][...]
+    np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-9)
+    np.testing.assert_array_equal(a, b)  # lossless: bit-exact in practice
+
+
+def test_unknown_profile_rejected(tmp_path):
+    with pytest.raises(ValueError, match="unknown codec profile"):
+        ZarrWriter().write_open(
+            str(tmp_path / "bad.zarr"), _schema(profile="not-a-profile")
+        )
 
 
 # --------------------------------------------------------------------------- #

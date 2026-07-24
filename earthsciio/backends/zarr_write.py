@@ -52,8 +52,10 @@ import numpy as np
 
 __all__ = [
     "BloscProfile",
+    "ZstdProfile",
     "BLOSC_DIAGNOSTIC",
     "BLOSC_CHECKPOINT",
+    "ZSTD_WASM",
     "OutputVar",
     "OutputSchema",
     "ZarrWriter",
@@ -82,13 +84,35 @@ BLOSC_DIAGNOSTIC = BloscProfile("zstd", 5, True)
 BLOSC_CHECKPOINT = BloscProfile("zstd", 7, True)
 
 
-def _profile(name: str) -> BloscProfile:
+@dataclass(frozen=True)
+class ZstdProfile:
+    """A pinned **standard Zarr v3 zstd** codec profile: ``level`` / ``checksum``.
+
+    Unlike :class:`BloscProfile` this wraps the plain v3 ``zstd`` codec (NOT the
+    Blosc container). It exists for the ``wasm`` profile: a WebAssembly/browser
+    Zarr reader (e.g. the pure-Rust ``zarrs`` codecs) can decode the standard
+    ``zstd`` codec but NOT Blosc (``blosc-src``'s C sources do not target
+    ``wasm32-unknown-unknown``). Lossless; no standalone byte-shuffle filter."""
+
+    level: int
+    checksum: bool
+
+
+#: WASM profile — plain v3 **zstd** (level 5), no Blosc, so a wasm/browser Zarr
+#: reader can decode the store. See :class:`ZstdProfile`.
+ZSTD_WASM = ZstdProfile(5, False)
+
+
+def _profile(name: str):
     if name == "diagnostic":
         return BLOSC_DIAGNOSTIC
     if name == "checkpoint":
         return BLOSC_CHECKPOINT
+    if name == "wasm":
+        return ZSTD_WASM
     raise ValueError(
-        f"unknown codec profile {name!r} (expected 'diagnostic' or 'checkpoint')"
+        f"unknown codec profile {name!r} "
+        "(expected 'diagnostic', 'checkpoint', or 'wasm')"
     )
 
 
@@ -133,7 +157,8 @@ class OutputSchema:
       arrays, 1-D over their own dim, written once at ``write_open``. An entry
       for ``time_dim`` supplies the time coordinate's attrs (its VALUES are
       ignored — they come from the ``t`` of each record).
-    * ``profile`` — ``"diagnostic"`` or ``"checkpoint"`` (codec params).
+    * ``profile`` — ``"diagnostic"``, ``"checkpoint"`` (Blosc-zstd inner codec),
+      or ``"wasm"`` (plain v3 zstd inner codec, no Blosc — wasm/browser-loadable).
     * ``attrs`` — group-level attributes.
     * ``time_dtype`` — element type of the time coordinate (default float64).
     """
@@ -177,7 +202,7 @@ class ZarrWriteHandle:
     group: Any
     store: Any
     arrays: Dict[str, Any]
-    codec: BloscProfile
+    codec: Any  # BloscProfile | ZstdProfile (per the schema profile)
     shard_time: int
     #: buffered (not-yet-flushed) time-coord values for the current shard
     time_buffer: List[float] = field(default_factory=list)
@@ -259,7 +284,7 @@ class ZarrWriter:
         growable time coordinate, and every streaming var at ``shape[time] = 0``.
         Returns the handle threaded through the rest of the lifecycle."""
         import zarr
-        from zarr.codecs import BloscCodec
+        from zarr.codecs import BloscCodec, ZstdCodec
 
         codec = _profile(schema.profile)
         store, base = _open_output_store(base_url)
@@ -281,11 +306,18 @@ class ZarrWriter:
         for k, v in schema.attrs.items():
             group.attrs[k] = v
 
-        blosc = BloscCodec(
-            cname=codec.cname,
-            clevel=codec.clevel,
-            shuffle="shuffle" if codec.shuffle else "noshuffle",
-        )
+        # Inner (per-chunk) compressor: Blosc(zstd) for the diagnostic/checkpoint
+        # profiles; the PLAIN v3 zstd codec (no Blosc) for the wasm profile, so a
+        # WebAssembly/browser reader can decode the store (blosc-src does not
+        # target wasm32; the standard v3 zstd codec does). Sharding is unchanged.
+        if isinstance(codec, ZstdProfile):
+            compressor: Any = ZstdCodec(level=codec.level)
+        else:
+            compressor = BloscCodec(
+                cname=codec.cname,
+                clevel=codec.clevel,
+                shuffle="shuffle" if codec.shuffle else "noshuffle",
+            )
         dimlen = schema.dim_lengths
 
         def _mk(name, dims, dtype, shape):
@@ -297,7 +329,7 @@ class ZarrWriter:
                 chunks=chunks,
                 shards=shards,
                 dtype=np.dtype(dtype),
-                compressors=[blosc],
+                compressors=[compressor],
                 dimension_names=list(dims),
                 fill_value=_v3_fill(dtype),
                 overwrite=True,
@@ -447,12 +479,19 @@ class ZarrWriter:
         from datetime import datetime, timezone
 
         s = h.schema
-        codec = {
-            "id": "blosc",
-            "cname": h.codec.cname,
-            "clevel": h.codec.clevel,
-            "shuffle": "shuffle" if h.codec.shuffle else "noshuffle",
-        }
+        if isinstance(h.codec, ZstdProfile):
+            codec = {
+                "id": "zstd",
+                "level": h.codec.level,
+                "checksum": h.codec.checksum,
+            }
+        else:
+            codec = {
+                "id": "blosc",
+                "cname": h.codec.cname,
+                "clevel": h.codec.clevel,
+                "shuffle": "shuffle" if h.codec.shuffle else "noshuffle",
+            }
         vars_meta = [
             {"name": nm, "dims": list(ov.dims), "dtype": _v3_dtype(ov.dtype)}
             for nm, ov in s.vars
