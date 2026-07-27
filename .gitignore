@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
 venv/
 
 # Cache staging / scratch (never commit partial downloads)

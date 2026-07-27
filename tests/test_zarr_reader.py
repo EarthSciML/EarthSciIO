@@ -449,3 +449,163 @@ def test_per_call_select_on_non_store_reader_raises(tmp_path):
         pw.materialize(select={"axes": ["all"]})
     with pytest.raises(ValueError):
         pw.refresh(_dt.datetime(2020, 1, 1), select={"axes": ["all"]})
+
+
+# --------------------------------------------------------------------------- #
+# Peak-memory regression: the reader must STREAM chunks into the output, never
+# hold every intersected chunk at once.
+#
+# The Julia and Rust zarr readers decoded *every* chunk a selection intersects
+# into a map and only then assembled the result, so their peak memory scaled
+# with the total decompressed chunk volume instead of with the answer: on the
+# real ISRM source-receptor array that is 416 chunks x ~21 MB = ~8.7 GB held
+# simultaneously to produce a 0.59 GB result (~15x), which OOM-killed a
+# production run.
+#
+# The Python reader does NOT have that shape: it delegates chunk iteration to
+# zarr-python's ``oindex``, which scatters each decoded chunk straight into a
+# preallocated output and drops it, keeping at most ``async.concurrency`` chunks
+# live. This test PINS that property so a future refactor (e.g. hand-rolling the
+# chunk loop again, or collecting chunks into a dict "for clarity") cannot
+# silently reintroduce the amplification.
+#
+# Measured with ``tracemalloc``, which counts peak SIMULTANEOUS live bytes and
+# includes numpy's data allocations. Deliberately NOT measured with RSS: freed
+# chunk buffers are retained in the glibc arena (reusable, not live), so RSS
+# over-reports by 5-10x here and is not a liveness signal.
+#
+# See ``bench/zarr_peak_memory.py`` for the full sweep this test distils.
+# --------------------------------------------------------------------------- #
+
+_STREAM_CHUNK_ROWS = 256
+_STREAM_NCOLS = 1024
+_STREAM_CHUNK_BYTES = _STREAM_CHUNK_ROWS * _STREAM_NCOLS * 4  # 1 MiB decompressed
+_STREAM_BASE = "s3://earthsci-fixtures/stream.zarr"
+
+
+def _stream_store(root, n_chunks):
+    """A 2-D ``(n_chunks*256, 1024)`` float32 v2 array chunked ``(256, 1024)``.
+
+    Payloads are low-entropy (so the on-disk fixture stays tiny) but every chunk
+    still decompresses to a full 1 MiB — the ISRM situation of a compressed
+    object store with fat decompressed chunks.
+    """
+    import json
+
+    nrows = n_chunks * _STREAM_CHUNK_ROWS
+    objs = {
+        f"{_STREAM_BASE}/field/.zarray": _zarray(
+            (nrows, _STREAM_NCOLS), (_STREAM_CHUNK_ROWS, _STREAM_NCOLS), "<f4"
+        ),
+        f"{_STREAM_BASE}/field/.zattrs": json.dumps(
+            {"_ARRAY_DIMENSIONS": ["source", "receptor"]}
+        ).encode(),
+    }
+    col = (np.arange(_STREAM_NCOLS, dtype=np.float32) % 97.0) * 0.25
+    for c in range(n_chunks):
+        chunk = np.empty((_STREAM_CHUNK_ROWS, _STREAM_NCOLS), dtype="<f4")
+        for r in range(_STREAM_CHUNK_ROWS):
+            chunk[r] = col + np.float32(c * _STREAM_CHUNK_ROWS + r)
+        objs[f"{_STREAM_BASE}/field/{c}.0"] = _encode_chunk(chunk)
+        del chunk
+    _populate(root, objs)
+    return nrows
+
+
+def _stream_expected_row(global_row):
+    col = (np.arange(_STREAM_NCOLS, dtype=np.float32) % 97.0) * 0.25
+    return (col + np.float32(global_row)).astype(np.float64)
+
+
+def _peak_live_bytes(fn):
+    """Peak SIMULTANEOUS traced bytes allocated by ``fn`` (numpy data included)."""
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        result = fn()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return result, peak
+
+
+def _numpy_allocations_are_traced():
+    """tracemalloc only measures liveness here if numpy routes its data
+    allocations through it (numpy >= 1.17 does). Verify rather than assume —
+    otherwise the assertions below would pass vacuously."""
+    _, peak = _peak_live_bytes(lambda: np.ones(4 * 1024 * 1024, dtype=np.float64))
+    return peak > 24 * 1024 * 1024
+
+
+def _read_one_row_per_chunk(tmp_path, n_chunks):
+    """Read exactly one row out of every chunk: a tiny answer whose selection
+    nevertheless touches the whole array."""
+    root = tmp_path / f"store{n_chunks}"
+    root.mkdir()
+    _stream_store(root, n_chunks)
+    cache = Cache(LocalStore(root), offline=True, verify=False)
+    idx = [c * _STREAM_CHUNK_ROWS + 7 for c in range(n_chunks)]
+    select = {"axes": [{"indices": idx}, "all"]}
+
+    def _go():
+        nds = ZarrReader().read_store(cache, _STREAM_BASE, ["field"], select=select)
+        return nds.variables["field"].data
+
+    data, peak = _peak_live_bytes(_go)
+    assert data.shape == (n_chunks, _STREAM_NCOLS)
+    assert data.dtype == np.float64
+    # The streaming path must still be exactly correct: every output row is
+    # written by exactly one chunk, so spot-check the ends and the middle.
+    for probe in (0, n_chunks // 2, n_chunks - 1):
+        np.testing.assert_array_equal(data[probe], _stream_expected_row(idx[probe]))
+    return peak
+
+
+def test_selection_streams_chunks_and_does_not_buffer_them_all(tmp_path):
+    """Peak LIVE memory must be bounded by (output + a few chunks), NOT by the
+    total decompressed volume of the chunks the selection intersects."""
+    zarr = pytest.importorskip("zarr")
+    if not _numpy_allocations_are_traced():  # pragma: no cover - platform guard
+        pytest.skip("tracemalloc does not see numpy data allocations here")
+
+    n_chunks = 128
+    volume = n_chunks * _STREAM_CHUNK_BYTES  # 128 MiB if every chunk were held
+
+    # Pin zarr's in-flight chunk budget so the bound under test is a property of
+    # the reader, not of whatever default the installed zarr happens to ship.
+    concurrency = 8
+    with zarr.config.set({"async.concurrency": concurrency}):
+        peak = _read_one_row_per_chunk(tmp_path, n_chunks)
+
+    # A buffer-everything reader peaks at >= `volume`; a streaming one peaks at
+    # roughly `concurrency` chunks plus the (here negligible) output.
+    budget = (concurrency + 8) * _STREAM_CHUNK_BYTES
+    assert peak < budget, (
+        f"peak live memory {peak/1e6:.1f} MB exceeds the streaming budget "
+        f"{budget/1e6:.1f} MB while the intersected chunk volume is "
+        f"{volume/1e6:.1f} MB — the reader looks like it is buffering chunks "
+        f"instead of scattering each one into the output"
+    )
+    assert peak < volume / 4
+
+
+def test_peak_memory_is_flat_in_the_number_of_chunks(tmp_path):
+    """The load-bearing invariant: growing the intersected chunk volume 8x at a
+    near-constant answer size must NOT grow peak memory 8x."""
+    zarr = pytest.importorskip("zarr")
+    if not _numpy_allocations_are_traced():  # pragma: no cover - platform guard
+        pytest.skip("tracemalloc does not see numpy data allocations here")
+
+    with zarr.config.set({"async.concurrency": 8}):
+        small = _read_one_row_per_chunk(tmp_path, 16)   # 16 MiB chunk volume
+        large = _read_one_row_per_chunk(tmp_path, 128)  # 128 MiB chunk volume
+
+    # Buffering would make this ratio ~8; streaming keeps it near 1 (the only
+    # growth is the output itself, 128 KiB -> 1 MiB).
+    assert large < 2.0 * small, (
+        f"peak live memory grew from {small/1e6:.1f} MB to {large/1e6:.1f} MB when the "
+        f"intersected chunk volume grew 8x at a nearly fixed answer size — peak is "
+        f"tracking chunk volume, not output"
+    )
