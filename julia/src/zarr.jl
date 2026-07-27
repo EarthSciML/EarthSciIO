@@ -209,8 +209,64 @@ function _chunk_array(m::ZArrayMeta, raw)
     end
 end
 
-# --- assembly ---------------------------------------------------------------
+# --- assembly (CHUNK-driven scatter) ----------------------------------------
+#
+# Assembly is SCATTER, not gather, and that is a memory contract, not a style
+# choice. The obvious shape — decompress every needed chunk into a `Dict`, then
+# loop over the OUTPUT and pull each cell from its chunk — forces every chunk to
+# be resident simultaneously, because any output cell may need any chunk. On the
+# real ISRM SR array one read is 416 chunks x ~21 MB decompressed = ~8.7 GB held
+# at once to produce a 0.59 GB result (~15x amplification; it OOM-killed a
+# production run). Nothing leaks — the peak itself is the bug.
+#
+# Inverting the loop fixes it: precompute, per dimension, which output positions
+# each chunk coordinate owns (`_pos_map`), then fetch/decode ONE chunk, scatter
+# its cells into the output (`_scatter_chunk!`), and drop it before fetching the
+# next. Peak goes from (output + ALL chunks) to (output + ONE chunk), and the
+# Dict lookups go from one-per-output-element to one-per-chunk.
+#
+# The results are BIT-IDENTICAL to the gather: `g ÷ chunks[d]` is a function of
+# `g`, so every output cell belongs to exactly one chunk coordinate and is
+# written exactly once — the same `convert(OT, ...)` of the same source element,
+# only in a different order. Cells no chunk covers (an absent chunk object) keep
+# `fill_value`, exactly as before.
 
+# Per dimension `d`: chunk coord -> [(output position, 1-based within-chunk
+# position), ...] for every selected index that falls in that chunk. Every chunk
+# coord `_needed_chunks` can produce is a key here, by construction (both are
+# derived from `g ÷ chunks[d]` over the same `sel_indices`).
+function _pos_map(sel_indices, chunks)
+    ndim = length(chunks)
+    posmap = [Dict{Int,Vector{Tuple{Int,Int}}}() for _ in 1:ndim]
+    for d in 1:ndim
+        cl = chunks[d]
+        for (i, g) in enumerate(sel_indices[d])
+            push!(get!(posmap[d], g ÷ cl, Tuple{Int,Int}[]), (i, g % cl + 1))
+        end
+    end
+    return posmap
+end
+
+# Write decoded chunk `carr` (chunk id `ck`) into its cells of `out`, converting
+# to `OT`. Touches only the cells this chunk owns; leaves the rest alone.
+function _scatter_chunk!(out, carr, posmap, ck::NTuple{N,Int}, ::Type{OT}) where {N,OT}
+    for combo in Iterators.product(ntuple(d -> posmap[d][ck[d]], Val(N))...)
+        out[CartesianIndex(ntuple(d -> combo[d][1], Val(N)))] =
+            convert(OT, carr[CartesianIndex(ntuple(d -> combo[d][2], Val(N)))])
+    end
+    return out
+end
+
+# The fill-initialized output for a selection (absent chunks keep `fill_value`).
+function _alloc_out(sel_indices, m::ZArrayMeta)
+    OT = _out_type(m)
+    return fill(convert(OT, m.fill_value), Tuple(length(s) for s in sel_indices)...)
+end
+
+# The OUTPUT-driven gather this reader used to run. No production path calls it
+# any more (it is the shape that caused the ~15x peak described above); it is
+# retained as the reference oracle the scatter is differentially tested against
+# in `julia/test/test_zarr.jl` — if the two ever disagree, that test fails.
 function _assemble(sel_indices, m::ZArrayMeta, buffers)
     ndim = _ndim(m)
     sel_shape = Tuple(length(s) for s in sel_indices)
@@ -304,13 +360,20 @@ function _read_v2_array(cache::Cache, base::AbstractString, arr::AbstractString,
            [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
     sel_indices = [_resolve_axis(axes[d], meta.shape[d]) for d in 1:ndim]
 
-    buffers = Dict{NTuple{ndim,Int},Any}()
+    # Chunk-driven scatter: decode ONE chunk, write its cells, drop it. See the
+    # assembly section — buffering every chunk first held ~8.7 GB for a 0.59 GB
+    # ISRM read; peak here is (output + one chunk).
+    OT = _out_type(meta)
+    posmap = _pos_map(sel_indices, meta.chunks)
+    data = _alloc_out(sel_indices, meta)
     for ck in _needed_chunks(sel_indices, meta.chunks)
         url = "$base/$arr/" * _chunk_key(ck, meta.dim_sep)
         raw = _fetch_bytes_optional(cache, url)
-        buffers[ck] = raw === nothing ? nothing : _chunk_array(meta, _decompress(meta, raw))
+        raw === nothing && continue       # absent chunk object -> keep fill_value
+        carr = _chunk_array(meta, _decompress(meta, raw))
+        _scatter_chunk!(data, carr, posmap, ck, OT)
+        # `raw`/`carr` are dead here: this chunk is reclaimable before the next fetch.
     end
-    data = _assemble(sel_indices, meta, buffers)
     return NativeField(data, dims, Dict{String,Any}())
 end
 
@@ -475,7 +538,14 @@ function _read_v3_array(cache::Cache, base::AbstractString, arr::AbstractString,
         push!(get!(by_shard, sc, NTuple{ndim,Int}[]), ic)
     end
 
-    buffers = Dict{NTuple{ndim,Int},Any}()
+    # Same chunk-driven scatter as the v2 path, with the INNER chunk as the unit:
+    # decode one inner chunk, write its cells, drop it. Buffering every decoded
+    # inner chunk until a final gather had the identical amplification problem —
+    # a shard-per-shard fetch does not bound it, because the buffer spans shards.
+    # Peak here is (output + one shard object + one decoded inner chunk).
+    OT = _out_type(im)
+    posmap = _pos_map(sel_indices, m.inner)
+    data = _alloc_out(sel_indices, im)
     for (sc, inners) in by_shard
         skey = join((string(sc[d]) for d in 1:ndim), m.sep)
         shardbytes = Vector{UInt8}(_fetch_bytes(cache, "$base/$arr/c/$skey"))
@@ -484,16 +554,15 @@ function _read_v3_array(cache::Cache, base::AbstractString, arr::AbstractString,
             lc = ntuple(d -> ic[d] % m.ips[d], ndim)       # local coord within shard
             pos = _c_linear(lc, m.ips) + 1
             off, len = offsets[pos], nb[pos]
-            if off == typemax(UInt64) || len == typemax(UInt64)
-                buffers[ic] = nothing                       # missing inner chunk -> fill
-            else
-                raw = shardbytes[(Int(off) + 1):(Int(off) + Int(len))]
-                buffers[ic] = _chunk_array(im, _decompress(im, raw))
-            end
+            # missing inner chunk -> its cells keep fill_value
+            (off == typemax(UInt64) || len == typemax(UInt64)) && continue
+            raw = shardbytes[(Int(off) + 1):(Int(off) + Int(len))]
+            carr = _chunk_array(im, _decompress(im, raw))
+            _scatter_chunk!(data, carr, posmap, ic, OT)
         end
+        shardbytes = UInt8[]   # drop this shard before fetching the next one
     end
 
-    data = _assemble(sel_indices, im, buffers)
     return NativeField(data, m.dims, Dict{String,Any}())
 end
 
