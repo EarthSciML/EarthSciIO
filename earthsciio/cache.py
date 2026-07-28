@@ -47,6 +47,14 @@ DOWNLOADED = "downloaded"
 NOT_MODIFIED_STATUS = "not_modified"
 
 
+class _StaleValidators(Exception):
+    """INTERNAL: a conditional GET answered 304 but the blob it validates is gone.
+
+    Raised by ``Cache._commit`` and handled inside ``Cache._download``; never
+    escapes the cache. Signals "retry this candidate without validators".
+    """
+
+
 @dataclass
 class CacheEntry:
     """The result of a fetch: where the blob is + how it got there.
@@ -188,25 +196,48 @@ class Cache:
                 last_err = exc
                 errs.append(exc)
                 continue
-            staged = self.store.staging_path()
-            try:
-                result = transport.fetch(
-                    candidate, os.fspath(staged), conditional, resolver
-                )
-            except TransportError as exc:
-                last_err = exc
-                errs.append(exc)
-                _safe_unlink(staged)
+            # Two attempts at most: the conditional GET, then — only if the store
+            # turns out to hold validators without their blob — an unconditional
+            # one. Without the retry that state is terminal (the server keeps
+            # answering 304 and there is nothing to serve).
+            attempt_conditionals = [conditional, None] if conditional else [None]
+            failed = False
+            for attempt in attempt_conditionals:
+                staged = self.store.staging_path()
+                try:
+                    result = transport.fetch(
+                        candidate, os.fspath(staged), attempt, resolver
+                    )
+                except TransportError as exc:
+                    last_err = exc
+                    errs.append(exc)
+                    _safe_unlink(staged)
+                    failed = True
+                    break
+                except Exception as exc:  # defensive: a transport bug is a failed mirror
+                    last_err = exc
+                    errs.append(exc)
+                    _safe_unlink(staged)
+                    failed = True
+                    break
+                try:
+                    return self._commit(
+                        resolved_url, key, result, staged,
+                        source_loader, auth_realm, expected_checksum,
+                    )
+                except _StaleValidators as exc:
+                    if attempt is None:  # already unconditional — genuinely broken
+                        last_err = RuntimeError(
+                            "304 Not Modified with no cached blob, even "
+                            "unconditionally"
+                        )
+                        errs.append(last_err)
+                        failed = True
+                        break
+                    last_err = exc
+                    continue  # retry this same candidate without validators
+            if failed:
                 continue
-            except Exception as exc:  # defensive: a transport bug is a failed mirror
-                last_err = exc
-                errs.append(exc)
-                _safe_unlink(staged)
-                continue
-            return self._commit(
-                resolved_url, key, result, staged,
-                source_loader, auth_realm, expected_checksum,
-            )
 
         raise FetchError(resolved_url, attempts=candidates, cause=last_err, causes=errs)
 
@@ -219,10 +250,12 @@ class Cache:
             blob = self.store.get_blob(key)
             prior = self.store.get_meta(key)
             if blob is None or prior is None:
-                raise FetchError(
-                    resolved_url, attempts=[resolved_url],
-                    cause=RuntimeError("304 Not Modified with no cached blob"),
-                )
+                # Validators survived but the blob did not — a pruned store, a
+                # manual blob eviction, a partially-restored cache. The
+                # conditional GET can then only ever answer 304, so this entry
+                # would be permanently unfetchable. Signal the caller to retry
+                # UNCONDITIONALLY rather than failing forever.
+                raise _StaleValidators(resolved_url)
             # Refresh fetched_at (and any echoed validators); blob/hash unchanged.
             updated = Manifest(
                 url=prior.url,
