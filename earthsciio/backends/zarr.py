@@ -30,6 +30,44 @@ Decode contract (``spec/conformance.md`` §3, zarr notes) — preserved:
 * orthogonal ``select`` (per-axis index lists / slices, ordering preserved) is
   pushed down through zarr's ``oindex`` — fetching only the intersecting chunks.
 
+**Memory profile — measured, not assumed.** The Julia and Rust zarr readers
+decode *every* chunk a selection intersects into a map and only then assemble the
+output, so their peak memory scales with the total decompressed chunk volume
+rather than with the answer: on the real ISRM source-receptor array that is 416
+chunks x ~21 MB = ~8.7 GB held simultaneously to produce a 0.59 GB result (~15x),
+which OOM-killed a production run. **This reader does not have that shape**, and
+that was established by measurement (``bench/zarr_peak_memory.py``), not by
+reading zarr-python's source. Delegating to ``oindex`` means zarr-python
+scatters each decoded chunk straight into a preallocated output and drops it, so
+peak *live* memory is::
+
+    peak ~= output + O(zarr async.concurrency x chunk size)
+
+— independent of how many chunks the selection touches. Measured with
+``tracemalloc`` (numpy data allocations included), growing the intersected chunk
+volume 32x (50 MB -> 1602 MB) at a near-constant answer moved peak live memory
+only 1.52x (20.9 MB -> 31.8 MB); with ISRM-sized 21 MB chunks peak live memory
+sat at ~205 MB ~= 10 x 21 MB and was flat across 20/40/80 chunks. Extrapolated
+to the real ISRM read that is ~1.1 GB (0.59 GB result + the float32->float64
+``astype`` copy + ~0.2 GB of in-flight chunks) against Julia/Rust's ~8.7 GB.
+**So no scatter rewrite is needed here** — the amplification the sibling tracks
+are being fixed for does not exist in Python.
+
+Two caveats worth knowing:
+
+* peak **RSS** does grow with chunk count (5-10x above live memory), but that is
+  glibc arena retention of *freed* chunk buffers, not simultaneous liveness:
+  pinning ``MALLOC_MMAP_THRESHOLD_=131072`` collapses RSS back onto the live
+  figure (313 MB -> 30 MB at 800 chunks). Measure liveness, not RSS, here.
+* the ``astype`` below is a float32->float64 copy, so a *dense* read transiently
+  costs 1.5x the output. That is a property of the §3 float64 output contract,
+  not of chunk handling, and it does not scale with chunk count.
+
+``tests/test_zarr_reader.py`` pins both halves of the invariant
+(``test_selection_streams_chunks_and_does_not_buffer_them_all`` and
+``test_peak_memory_is_flat_in_the_number_of_chunks``) so a future refactor that
+re-collects chunks into a dict cannot silently reintroduce the amplification.
+
 **v2 compatibility deviation.** zarr-python 3.x's stricter v2 metadata parser
 rejects ``.zarray`` with ``dimension_separator: null`` (the corpus fixtures write
 ``null``; the Zarr v2 spec default is ``"."``). :class:`_CacheStore` normalizes a
