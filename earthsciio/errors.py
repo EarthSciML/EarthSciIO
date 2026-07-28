@@ -164,7 +164,25 @@ class TransportError(EarthSciIOError):
     The fetch layer catches this **per mirror candidate** and tries the next
     one; only when every candidate fails does it surface as a :class:`FetchError`.
     A ``304 Not Modified`` is **not** an error — it is a successful revalidation.
+
+    ``not_found`` distinguishes a **definitive absence** (HTTP 404/410, a missing
+    local file) from every other failure (timeout, DNS, 5xx, 403). The difference
+    is load-bearing for a *probing* consumer: a zarr store must answer "no such
+    key" with ``None`` and raise only on a genuine error, so mapping a transient
+    network fault to "absent" would silently produce a wrong answer where a loud
+    one is correct. ``status`` carries the HTTP status when the transport is HTTP.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: Optional[int] = None,
+        not_found: bool = False,
+    ) -> None:
+        self.status = status
+        self.not_found = bool(not_found)
+        super().__init__(message)
 
 
 class FetchError(EarthSciIOError):
@@ -181,10 +199,20 @@ class FetchError(EarthSciIOError):
         *,
         attempts: Optional[Iterable[str]] = None,
         cause: Optional[BaseException] = None,
+        causes: Optional[Iterable[BaseException]] = None,
     ) -> None:
         self.resolved_url = resolved_url
         self.attempts: List[str] = list(attempts) if attempts is not None else []
         self.cause = cause
+        self.causes: List[BaseException] = (
+            list(causes) if causes is not None else ([cause] if cause is not None else [])
+        )
+        #: True only when EVERY attempt failed with a definitive absence
+        #: (:attr:`TransportError.not_found`). One transient failure among the
+        #: mirrors makes the outcome "unknown", not "absent".
+        self.not_found: bool = bool(self.causes) and all(
+            getattr(c, "not_found", False) for c in self.causes
+        )
         tried = ", ".join(self.attempts) if self.attempts else resolved_url
         suffix = f": {cause}" if cause is not None else ""
         super().__init__(

@@ -30,7 +30,7 @@ from __future__ import annotations
 import os
 import pathlib
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 
 from . import validate
 from .auth import coerce_auth
@@ -177,11 +177,16 @@ class Cache:
 
         candidates = [resolved_url, *mirrors]
         last_err: Optional[BaseException] = None
+        # Every candidate's failure, so FetchError can distinguish a definitive
+        # absence (every candidate answered 404) from an unknown outcome (any
+        # transient failure among them) — see TransportError.not_found.
+        errs: List[BaseException] = []
         for candidate in candidates:
             try:
                 transport = transport_registry.create(scheme_of(candidate))
             except Exception as exc:  # unknown scheme / registration gap
                 last_err = exc
+                errs.append(exc)
                 continue
             staged = self.store.staging_path()
             try:
@@ -190,10 +195,12 @@ class Cache:
                 )
             except TransportError as exc:
                 last_err = exc
+                errs.append(exc)
                 _safe_unlink(staged)
                 continue
             except Exception as exc:  # defensive: a transport bug is a failed mirror
                 last_err = exc
+                errs.append(exc)
                 _safe_unlink(staged)
                 continue
             return self._commit(
@@ -201,7 +208,7 @@ class Cache:
                 source_loader, auth_realm, expected_checksum,
             )
 
-        raise FetchError(resolved_url, attempts=candidates, cause=last_err)
+        raise FetchError(resolved_url, attempts=candidates, cause=last_err, causes=errs)
 
     def _commit(
         self, resolved_url, key, result, staged,

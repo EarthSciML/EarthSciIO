@@ -87,7 +87,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..errors import CacheMiss, Unsupported
+from ..errors import CacheMiss, FetchError, Unsupported
 from ..native import NativeDataset, NativeField
 
 __all__ = ["ZarrReader"]
@@ -240,6 +240,17 @@ def _make_cache_store(cache: Any, base_url: str):
                 entry = self._cache.fetch(url)
             except CacheMiss:
                 return None
+            except FetchError as exc:
+                # zarr's Store contract: a MISSING key is `None`, not an error.
+                # This is not a nicety — zarr-python 3 probes `zarr.json` (v3)
+                # before falling back to `.zarray` (v2), so raising on that 404
+                # makes every v2 store over http/s3 unreadable. Only a
+                # DEFINITIVE absence maps to None; a timeout or 5xx still
+                # raises, because answering "absent" there would silently
+                # mis-report a live store as empty.
+                if exc.not_found:
+                    return None
+                raise
             with open(entry.path, "rb") as fh:
                 data = fh.read()
             if key.endswith(".zarray"):
