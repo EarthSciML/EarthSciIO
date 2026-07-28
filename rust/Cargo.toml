@@ -97,13 +97,20 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 url = { version = "2", optional = true }
 
 # Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
-# netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
-# NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle), with no
-# C/libnetcdf/HDF5 dependency — the same "C compiler alone, no clang/bindgen"
-# build story as the rustls transport and the geotiff reader. It uses `unsafe`
-# internally (memmap), but that is the dependency's code, not this crate's, so
-# it is compatible with this crate's `#![forbid(unsafe_code)]`.
-netcdf-reader = { path = "../../netcdf-rust/netcdf-reader", default-features = false, features = ["netcdf4"] }
+# netcdf-reader reads BOTH NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2,
+# deflate/shuffle), with no C/libnetcdf/HDF5 dependency — the same "C compiler
+# alone, no clang/bindgen" build story as the rustls transport and the geotiff
+# reader. It uses `unsafe` internally (memmap), but that is the dependency's
+# code, not this crate's, so it stays compatible with `#![forbid(unsafe_code)]`.
+#
+# A GIT dep, not a path dep. A relative path is resolved against THIS crate's
+# location on disk, so it only worked when the sibling checkout sat exactly
+# where the path expected: any git worktree of this repo placed elsewhere failed
+# to build, and because cargo resolves the whole dependency graph before
+# compiling anything, the failure was total rather than confined to the netcdf
+# reader. The exact revision is pinned in Cargo.lock, so builds stay
+# reproducible without depending on a particular directory layout.
+netcdf-reader = { git = "https://github.com/ctessum/netcdf-rust", branch = "fix/scalar-variable-dimension-list", default-features = false, features = ["netcdf4"] }
 
 [features]
 # Direct object_store-backed Zarr read/write (S3 + HTTP + local file://). Enables
