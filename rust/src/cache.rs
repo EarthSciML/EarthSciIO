@@ -207,13 +207,34 @@ impl Cache {
     }
 
     fn download_locked(&self, key: &str, req: &FetchRequest) -> Result<CachedBlob> {
+        match self.download_locked_with(key, req, true) {
+            // Validators survived but the blob did not — a pruned store, a disk
+            // cleanup, a partially restored cache, or a caller that evicts blobs
+            // between fetches to bound peak disk (exactly what the ISRM runners
+            // do to keep one SR pathway resident at a time). The conditional GET
+            // can then only ever answer 304 and there is nothing to serve, so the
+            // entry would be permanently unfetchable. Retry ONCE without
+            // validators. Mirrors the Python fix (EarthSciIO 195610a).
+            Err(Error::Integrity { ref detail, .. }) if detail.starts_with("304 Not Modified") => {
+                self.download_locked_with(key, req, false)
+            }
+            other => other,
+        }
+    }
+
+    fn download_locked_with(
+        &self,
+        key: &str,
+        req: &FetchRequest,
+        use_validators: bool,
+    ) -> Result<CachedBlob> {
         let prior = self.store.get_meta(key)?;
         let conditional = match &prior {
-            Some(m) => Conditional {
+            Some(m) if use_validators => Conditional {
                 etag: m.etag.clone(),
                 last_modified: m.last_modified.clone(),
             },
-            None => Conditional::default(),
+            _ => Conditional::default(),
         };
 
         // Resolve the auth resolver up front — an unknown realm is a clean error.
