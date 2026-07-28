@@ -63,12 +63,32 @@ pub enum Error {
         detail: String,
     },
 
+    /// The source answered, and the answer is **the object does not exist**
+    /// (HTTP 404/410, a missing local `file://` path).
+    ///
+    /// Distinct from [`Error::Transport`] because a *probing* consumer must be
+    /// able to tell absence from a failure to find out. A zarr store has to
+    /// report a missing key as `Ok(None)` — zarr opens an array by probing the
+    /// v3 `zarr.json` before falling back to the v2 `.zarray`, so treating that
+    /// 404 as an error makes every v2 store unreadable. Reporting "absent" for
+    /// a timeout or a 5xx would be the opposite mistake: a live store would
+    /// silently read as empty.
+    NotFound {
+        /// The URL that does not exist.
+        url: String,
+        /// How the absence was reported (e.g. `HTTP 404`).
+        detail: String,
+    },
+
     /// Every source (the primary URL plus any failover mirrors) failed.
     AllMirrorsFailed {
         /// The canonical resolved URL.
         url: String,
         /// The last underlying failure encountered.
         detail: String,
+        /// True only when EVERY source reported a definitive absence. One
+        /// transient failure among the mirrors makes the outcome unknown.
+        not_found: bool,
     },
 
     /// An authenticated realm was requested but no resolver is registered for it.
@@ -118,6 +138,23 @@ impl Error {
     pub fn is_cache_miss(&self) -> bool {
         matches!(self, Error::CacheMiss { .. })
     }
+
+    /// True when the source DEFINITIVELY reported that the object does not
+    /// exist — a 404/410, a missing local file, or an all-mirrors failure in
+    /// which every source said so.
+    ///
+    /// A probing consumer (a zarr store answering "is this key present?")
+    /// treats this as absence; every other failure stays an error, because
+    /// there existence is unknown.
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            Error::NotFound { .. } => true,
+            Error::AllMirrorsFailed { not_found, .. } => *not_found,
+            // A missing local path surfaces as an ordinary I/O error.
+            Error::Io { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -138,7 +175,8 @@ impl std::fmt::Display for Error {
             Error::UnknownStore { name } => write!(f, "no store registered as '{name}'"),
             Error::BadUrl { url, detail } => write!(f, "bad url '{url}': {detail}"),
             Error::Transport { url, detail } => write!(f, "transport error for {url}: {detail}"),
-            Error::AllMirrorsFailed { url, detail } => {
+            Error::NotFound { url, detail } => write!(f, "not found: {url} ({detail})"),
+            Error::AllMirrorsFailed { url, detail, .. } => {
                 write!(f, "all sources failed for {url}: {detail}")
             }
             Error::MissingAuth { realm } => {

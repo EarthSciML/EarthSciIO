@@ -230,9 +230,16 @@ impl Cache {
         sources.extend_from_slice(req.mirrors);
 
         let mut last_err: Option<Error> = None;
+        // Track whether EVERY source reported a definitive absence, so the
+        // caller can distinguish "the object is not there" from "we could not
+        // find out" (see Error::is_not_found).
+        let mut attempted = false;
+        let mut all_not_found = true;
         for src in sources {
+            attempted = true;
             let scheme = scheme_of(src)?.to_ascii_lowercase();
             let Some(transport) = self.transports.get(&scheme) else {
+                all_not_found = false; // a registration gap is not an absence
                 last_err = Some(Error::UnknownScheme {
                     scheme,
                     url: src.to_string(),
@@ -245,6 +252,7 @@ impl Cache {
                     return self.commit_result(key, req, src, result, prior.as_ref(), staging);
                 }
                 Err(e) => {
+                    all_not_found &= e.is_not_found();
                     last_err = Some(e);
                     // staging drops here → the partial file is removed; try the
                     // next mirror.
@@ -254,8 +262,14 @@ impl Cache {
         Err(Error::AllMirrorsFailed {
             url: req.resolved_url.to_string(),
             detail: last_err
+                .as_ref()
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "no sources".to_string()),
+            // Only a definitive absence propagates. `attempted` guards the
+            // no-sources case, and `all_not_found` is false the moment any
+            // source failed for a reason that leaves existence unknown — one
+            // timed-out mirror might well have had the object.
+            not_found: attempted && all_not_found,
         })
     }
 

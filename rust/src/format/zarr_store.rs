@@ -92,7 +92,16 @@ impl CacheStorage {
                 };
                 Ok(Some(Bytes::from(data)))
             }
-            Err(e) if e.is_cache_miss() => Ok(None),
+            // zarr's store contract: a MISSING key is `None`, not an error.
+            // `is_cache_miss` covers the offline path; `is_not_found` covers a
+            // live source that answered 404 / "no such file". Both matter here:
+            // zarrs opens an array by probing the v3 `zarr.json` FIRST and
+            // falling back to the v2 `.zarray`, so raising on that probe makes
+            // every v2 store unreadable ONLINE. (Every existing v2 test runs
+            // `.offline(true)`, which is why only the cache-miss arm existed.)
+            // A timeout or 5xx still errors — reporting absence there would
+            // present a live store as empty.
+            Err(e) if e.is_cache_miss() || e.is_not_found() => Ok(None),
             Err(e) => Err(StorageError::Other(format!(
                 "cache fetch of zarr object {url}: {e}"
             ))),
