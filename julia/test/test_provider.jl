@@ -132,6 +132,59 @@
         end
     end
 
+    @testset "multi-file cadence: the record is located inside its OWN file" begin
+        # A cadence that spans several files is the ordinary case for a long run
+        # (GEOS-FP publishes one file per day; a week is seven of them). The
+        # record index must restart at 1 on every file seam, because the tick
+        # index counts the whole cadence while each file only holds its own
+        # slice of it: tick 3 of a 4-tick cadence over two 2-record files is
+        # record 1 of file 2, NOT record 3 of file 1 -- which does not exist.
+        #
+        # Two "days" published under two URLs, both served by the one era5
+        # fixture blob, so the resolver genuinely switches files mid-cadence
+        # (values repeat per file: record 1 = 282.5, record 2 = 282.6).
+        day1, day2 = era5, "https://data.earthsci.dev/era5/2018/11/20181109.nc"
+        root = mktempdir()
+        src = joinpath(CORPUS, "cache", "v1", "blobs", cache_key(era5)[1:2],
+                       cache_key(era5) * ".nc")
+        for u in (day1, day2)
+            k = cache_key(u)
+            d = joinpath(root, "v1", "blobs", k[1:2]); mkpath(d)
+            cp(src, joinpath(d, k * ".nc"))
+        end
+        # verify=false: the copies carry no manifest to check the digest against.
+        two = Cache(LocalStore(root); offline = true, verify = false)
+        urls = t -> t < 2.0 ? day1 : day2
+        times = [0.0, 1.0, 2.0, 3.0]          # 4 ticks over 2 files of 2 records
+
+        @testset "sliced (records_per_sample=1)" begin
+            p = discrete_provider(two, urls, times; format = "netcdf", time_dim = "time")
+            @test refresh(p, 0.0)["t2m"].data[1, 1] ≈ 282.5   # file 1, record 1
+            @test refresh(p, 1.0)["t2m"].data[1, 1] ≈ 282.6   # file 1, record 2
+            @test refresh(p, 2.0)["t2m"].data[1, 1] ≈ 282.5   # file 2, record 1
+            @test refresh(p, 3.0)["t2m"].data[1, 1] ≈ 282.6   # file 2, record 2
+        end
+
+        @testset "bracketed (records_per_sample=2)" begin
+            p = discrete_provider(two, urls, times; format = "netcdf",
+                                  time_dim = "time", records_per_sample = 2)
+            seam = refresh(p, 1.0)              # last record of file 1 -> first of file 2
+            @test seam["t2m"].data[1, 1, 1] ≈ 282.6
+            @test seam["t2m"].data[2, 1, 1] ≈ 282.5
+
+            past = refresh(p, 2.0)              # BOTH ends inside the second file
+            @test past["t2m"].data[1, 1, 1] ≈ 282.5
+            @test past["t2m"].data[2, 1, 1] ≈ 282.6
+
+            last = refresh(p, 3.0)              # final tick still degenerates
+            @test last["t2m"].data[1, 1, 1] ≈ 282.6
+            @test last["t2m"].data[2, 1, 1] ≈ 282.6
+            @test last["time"].data[1] == last["time"].data[2]
+
+            @test length(prefetch(p)) == 2      # one fetch per distinct file
+        end
+    end
+
     @testset "DISCRETE per-tick URLs (url-function form, no internal slice)" begin
         # url resolver form: the same fixture stands in for every tick; without
         # time_dim the provider returns the file's full native arrays per tick.
