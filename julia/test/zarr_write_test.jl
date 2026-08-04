@@ -284,6 +284,56 @@ end
     @test decoded[:diagnostic] == decoded[:wasm]
 end
 
+# REGRESSION (streaming corruption): `write_flush!` interleaved with ordinary
+# records mid-shard used to advance the shard index on a PARTIAL commit. The next
+# record then jumped to the next shard's first slot, so the skipped slots read back
+# as fill-valued (all-zero) phantom records, and `shape[time]` — a running sum of
+# committed records — stopped covering the records written past the gap, silently
+# losing the tail of the run. A durable barrier must never move a record.
+#
+# The flush cadence (3) deliberately does NOT divide the shard depth (2) so a flush
+# lands both mid-shard and on a shard boundary, and 11 records cross five shards.
+@testset "zarr writer: mid-shard write_flush! leaves no gap and loses no record" begin
+    for flush_every in (1, 2, 3, 5)
+        dir = mktempdir()
+        store_dir = joinpath(dir, "flush.zarr")
+        base_url = "file://" * store_dir
+
+        schema = _demo_schema()          # shard_shape[time] == 2
+        w = ZarrWriter()
+        h = write_open!(w, nothing, base_url, schema)
+
+        nrec = 11
+        for k in 1:nrec
+            a = Float64[_cell(k, i, j) for i in 1:3, j in 1:4]
+            write_record!(w, h, Float64(k) * 100.0, Dict("temp" => a))
+            k % flush_every == 0 && write_flush!(w, h)
+        end
+        man = write_close!(w, h)
+
+        @test man.n_records == nrec
+        @test man.last_t == nrec * 100.0
+        # one manifest entry per shard actually occupied — a re-committed partial
+        # shard REFRESHES its entry instead of pushing a duplicate.
+        @test length(man.time_shards) == cld(nrec, 2)
+        @test [s.index for s in man.time_shards] == collect(0:(cld(nrec, 2) - 1))
+        @test sum(s.n for s in man.time_shards) == nrec
+
+        cache = Cache(LocalStore(joinpath(dir, "cache")); offline = false)
+        nds = read_store(ZarrReader(), cache, base_url; variables = ["temp", "time"])
+
+        # no phantom slots: the time axis is exactly the records written, in order
+        @test isapprox(nds.variables["time"].data,
+                       Float64[k * 100.0 for k in 1:nrec]; atol = WTOL)
+
+        temp = nds.variables["temp"]
+        @test size(temp.data) == (nrec, 3, 4)
+        for k in 1:nrec, i in 1:3, j in 1:4
+            @test isapprox(temp.data[k, i, j], _cell(k, i, j); atol = WTOL)
+        end
+    end
+end
+
 @testset "zarr writer: unknown codec profile is rejected" begin
     dir = mktempdir()
     @test_throws ErrorException write_open!(

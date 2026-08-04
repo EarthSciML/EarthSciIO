@@ -533,20 +533,50 @@ function _flush_shard!(h::ZarrWriteHandle)
                              valid, tb, ti, h.shard_time_index)
     end
 
-    # 2) record the committed time-shard + advance durable counters
-    push!(h.time_shards, TimeShardRecord(h.shard_time_index, h.shard_t_start,
-                                         h.last_t === nothing ? h.shard_t_start : h.last_t, n))
-    h.total_records += n
-    h.shard_time_index += 1
-    h.n_in_shard = 0
+    # 2) record (or REFRESH) this time-shard's manifest entry + durable counters.
+    #    A PARTIAL commit must not push a second entry for the same shard index:
+    #    the shard object is rewritten in place as later records land in its
+    #    remaining slots, so the entry is updated to the new (t_end, n).
+    rec = TimeShardRecord(h.shard_time_index, h.shard_t_start,
+                          h.last_t === nothing ? h.shard_t_start : h.last_t, n)
+    if !isempty(h.time_shards) && h.time_shards[end].index == h.shard_time_index
+        h.time_shards[end] = rec
+    else
+        push!(h.time_shards, rec)
+    end
+    # Records live at global time positions `tbase .. tbase+n-1`, so the durable
+    # record count IS that end position — never a running sum, which would drift
+    # away from where the data actually is the moment a shard is committed twice.
+    h.total_records = tvalid
 
     # 3) bump each growable array's shape[time] (atomic, guarded)
     _update_shapes!(h)
     # 4) refresh the output manifest (crash-recovery record)
     _write_output_manifest!(h)
 
-    _alloc_buffers!(h)
+    # 5) Roll to the next shard ONLY when this one is full. A partial commit
+    #    (`write_flush!`/`write_close!` mid-shard) leaves the shard OPEN — buffer
+    #    and slot counter retained — so the next `write_record!` continues filling
+    #    it and re-commits the same shard object. Advancing the shard index on a
+    #    partial commit is what used to corrupt a flushed stream: the next record
+    #    jumped to the next shard's first slot, leaving the skipped slots as
+    #    fill-valued (all-zero) phantom records, and `shape[time]` no longer
+    #    covered the records written past the gap (they silently vanished).
+    if n == h.shard_time
+        h.shard_time_index += 1
+        h.n_in_shard = 0
+        _alloc_buffers!(h)
+    end
     return nothing
+end
+
+# Records of the CURRENT (open) shard already committed to its shard object. Zero
+# when the last manifest entry is for an earlier shard, i.e. nothing of this shard
+# is durable yet. Used to make a redundant flush/close a genuine no-op.
+function _committed_in_current_shard(h::ZarrWriteHandle)
+    isempty(h.time_shards) && return 0
+    last = h.time_shards[end]
+    return last.index == h.shard_time_index ? last.n : 0
 end
 
 function _update_shapes!(h::ZarrWriteHandle)
@@ -614,20 +644,23 @@ end
 Force any buffered-but-unflushed records out as a durable (partial) shard and
 refresh the output manifest — the checkpoint durable barrier
 (streaming-output-sinks RFC §10, §16.7). After this returns, a restart reading the
-manifest sees every record written so far as committed. Because it advances the
-shard index, it is meant for a checkpoint boundary that is followed by termination
-or `write_close!` (not interleaved between ordinary records mid-shard, which would
-leave a gap in the time axis). A no-op when the buffer is empty (already durable).
+manifest sees every record written so far as committed.
+
+Safe to interleave with ordinary records at any cadence: a partial commit leaves
+the shard OPEN, so the following records fill its remaining slots and rewrite the
+same shard object. The time axis stays gap-free and `shape[time]` always equals
+the number of records written. A no-op when nothing new is buffered.
 """
 function write_flush!(::ZarrWriter, h::ZarrWriteHandle)
-    h.n_in_shard > 0 && _flush_shard!(h)
+    h.n_in_shard > _committed_in_current_shard(h) && _flush_shard!(h)
     return nothing
 end
 
 # --- write_close! -----------------------------------------------------------
 
 function write_close!(::ZarrWriter, h::ZarrWriteHandle)
-    h.n_in_shard > 0 && _flush_shard!(h)        # partial trailing shard
+    # partial trailing shard (skipped when it is already durable)
+    h.n_in_shard > _committed_in_current_shard(h) && _flush_shard!(h)
     # consolidated metadata is per-array `zarr.json` (already durable + up to
     # date); rewrite the group node + the final output manifest as the close record.
     with_output_lock(h.base, "__group__") do
