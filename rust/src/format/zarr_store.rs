@@ -12,12 +12,15 @@
 //!   compressor metadata to a v3 codec chain on open and decodes the chunks.
 //!
 //! * an `object_store`-backed opener (`object_store` module, feature-gated) — a
-//!   **direct** (non-cache) read/write path over Apache Arrow `object_store` via the
-//!   `zarrs_object_store` adapter, covering `s3://`, `http(s)://`, and local
-//!   `file://` roots. This is where S3 access is backed by `object_store`'s
-//!   mature S3 client rather than any hand-rolled S3 code on the Rust side.
-//!   (Feature-gated behind `object-store` to keep the default build's C/TLS
-//!   footprint small; see `Cargo.toml`.)
+//!   **direct** (non-cache) read/write path over Apache Arrow `object_store` via
+//!   the `zarrs_object_store` adapter, dispatched purely by URL scheme:
+//!   `file://`, `memory://`, `s3://`/`s3a://` (including every S3-compatible
+//!   endpoint — R2, MinIO, Backblaze B2, Ceph — via an endpoint override),
+//!   `gs://`, `az://`/`abfs(s)://` and `http(s)://`. This is where cloud access
+//!   is backed by `object_store`'s mature clients rather than any hand-rolled
+//!   vendor code on the Rust side. (Feature-gated behind `object-store` to keep
+//!   the default build's C/TLS footprint small; see `Cargo.toml`, and
+//!   `format::zarr_object_store` for the scheme table and endpoint override.)
 
 use std::sync::Arc;
 

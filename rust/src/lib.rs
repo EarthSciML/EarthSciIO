@@ -78,7 +78,10 @@ pub use format::{
     ZSTD_WASM,
 };
 #[cfg(feature = "object-store")]
-pub use format::{read_zarr_object_store, write_zarr_object_store};
+pub use format::{
+    read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
+    write_zarr_object_store, write_zarr_object_store_with_options,
+};
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};
 pub use offline::{is_offline, OFFLINE_ENV};
