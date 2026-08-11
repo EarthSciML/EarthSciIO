@@ -21,10 +21,40 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, AxisSelect, Cache, Coord, DType, DataLoader, FormatRegistry, NativeField, Provider,
-    Selection,
+    ArrayData, AxisSelect, Cache, Coord, DType, DataLoader, Ff10Reader, FormatRegistry,
+    NativeField, Provider, Selection,
 };
 use serde_json::{json, Map, Value};
+
+/// Build a configured [`Ff10Reader`] from an ff10 case's `decode` block —
+/// `member` (singular), `members`/`member_glob` (multi-member; sorted-name
+/// concat), `skip_header_row` (drop one asserted `country_cd` header line per
+/// member). Returns `None` when the case pins none of them (the default
+/// registered reader already decodes the bare blob). The configured reader is
+/// injected via `Provider::with_formats` — `FormatRegistry::register` keys by
+/// `formats()`, so it REPLACES the default `ff10` registration for that case.
+fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
+    let dec = case.get("decode")?;
+    let mut reader = Ff10Reader::new();
+    let mut configured = false;
+    if let Some(m) = dec.get("member").and_then(Value::as_str) {
+        reader = reader.member(m);
+        configured = true;
+    }
+    if let Some(ms) = dec.get("members").and_then(Value::as_array) {
+        reader = reader.members(ms.iter().filter_map(Value::as_str));
+        configured = true;
+    }
+    if let Some(g) = dec.get("member_glob").and_then(Value::as_str) {
+        reader = reader.member_glob(g);
+        configured = true;
+    }
+    if dec.get("skip_header_row").and_then(Value::as_bool).unwrap_or(false) {
+        reader = reader.skip_header_row(true);
+        configured = true;
+    }
+    configured.then_some(reader)
+}
 
 /// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
 /// zarr cases); absent ⇒ `Selection::All`.
@@ -108,15 +138,26 @@ fn encode_coord(c: &Coord) -> Value {
 /// Run the Rust Provider over one corpus case and encode its native arrays. Skips
 /// (without error) a case whose format has no reader, so the harness reports the
 /// gap instead of failing — the Rust track ships `netcdf` only today.
-fn dump_case(corpus: &Path, case: &Value, formats: &FormatRegistry) -> Value {
+fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Value {
     let fmt = case["format"].as_str().unwrap();
-    if formats.get(fmt).is_none() {
+    if base_formats.get(fmt).is_none() {
         return json!({
             "format": fmt,
             "status": "skipped",
             "reason": format!("no active reader registered for format '{fmt}' in the Rust track"),
         });
     }
+
+    // The Rust Reader trait takes no kwargs, so a case whose decode block pins
+    // ff10 zip member selection / header handling gets a reader CONFIGURED at
+    // construction, injected through the `Provider::with_formats` seam.
+    let mut formats = base_formats.clone();
+    if fmt == "ff10" {
+        if let Some(reader) = ff10_reader_from_decode(case) {
+            formats.register(Arc::new(reader));
+        }
+    }
+    let formats = &formats;
 
     // An OFFLINE cache rooted at the corpus: each case resolves from disk by its
     // sha256(resolved_url) key; verify_on_read checks the blob against its manifest.
@@ -140,8 +181,8 @@ fn dump_case(corpus: &Path, case: &Value, formats: &FormatRegistry) -> Value {
             .collect();
         loader = loader.variables(vars).select(parse_selection(case));
     }
-    let mut provider =
-        Provider::new(loader, Arc::new(cache), None).expect("provider over corpus");
+    let mut provider = Provider::with_formats(loader, Arc::new(cache), None, formats)
+        .expect("provider over corpus");
     let buffers = provider.materialize().expect("materialize the corpus blob");
 
     let mut variables = Map::new();

@@ -107,6 +107,7 @@ the oracle [`verify.py`](verify.py).
 | `era5-grid-sub-tile` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `openaq-points-slice` | csv | ✅ | ✅ | ⊘ no reader |
 | `ff10-point-slice` | ff10 | ✅ | ✅ | ✅ (three-way) |
+| `ff10-zip-egu-glob` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 | `permuted-order-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 

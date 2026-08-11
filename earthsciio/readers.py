@@ -22,6 +22,7 @@ imports them lazily so the cache/transport core stays lean.
 from __future__ import annotations
 
 import csv as _csv
+import fnmatch as _fnmatch
 import zipfile as _zipfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -532,6 +533,66 @@ FF10_POINT_NUMERIC = frozenset({
 })
 
 
+def _ff10_select_members(
+    names: Sequence[str],
+    members: Optional[Sequence[str]],
+    member_glob: Optional[str],
+) -> List[str]:
+    """Resolve ``members``/``member_glob`` against a zip's member list.
+
+    The selection is the union of the explicit ``members`` list and the
+    ``member_glob`` matches (fnmatch-style, case-sensitive, against the full
+    member path), deduplicated, returned in ascending lexicographic (byte)
+    order — the deterministic concatenation order. A ``members`` name absent
+    from the archive, and a glob matching zero members, are errors. Selection
+    considers only FILE members: directory placeholder entries (names ending in
+    ``/``, e.g. the real 2016fd zip's ``…/ptegu/``) are ignored.
+    """
+    names = [n for n in names if not n.endswith("/")]
+    selected = set()
+    if members is not None:
+        missing = [m for m in members if m not in names]
+        if missing:
+            raise KeyError(
+                f"zip members {sorted(missing)!r} not found in archive; "
+                f"members: {sorted(names)!r}"
+            )
+        selected.update(str(m) for m in members)
+    if member_glob is not None:
+        hits = [n for n in names if _fnmatch.fnmatchcase(n, member_glob)]
+        if not hits:
+            raise ValueError(
+                f"member_glob {member_glob!r} matched no members in archive; "
+                f"members: {sorted(names)!r}"
+            )
+        selected.update(hits)
+    if not selected:
+        raise ValueError("members/member_glob selected no zip members")
+    return sorted(selected)
+
+
+def _ff10_skip_header(data_lines: List[str], delimiter: str) -> List[str]:
+    """Drop the asserted ``country_cd`` header line from one input's data lines.
+
+    The first non-comment, non-empty line's first delimiter-separated field must
+    equal ``country_cd`` (case-insensitive) — anything else is an error, so the
+    option can never silently drop a data row.
+    """
+    if not data_lines:
+        raise ValueError(
+            "skip_header_row: no non-comment lines — the asserted header row "
+            "is missing"
+        )
+    first_field = data_lines[0].split(delimiter, 1)[0].strip().lower()
+    if first_field != "country_cd":
+        raise ValueError(
+            "skip_header_row: first non-comment line does not start with a "
+            f"'country_cd' header field (got {first_field!r}); refusing to "
+            "drop a data row"
+        )
+    return data_lines[1:]
+
+
 class FF10Reader:
     """The active ``ff10`` reader — the RAW long-format FF10 **point** table.
 
@@ -556,9 +617,26 @@ class FF10Reader:
 
     ``reader_kwargs``: ``member="path/in/zip"`` extracts a named member from a
     ``.zip`` blob (the whole zip stays the content-addressed cached blob; the
-    member is reader config so it never enters the cache key). ``kind="point"``
-    selects the schema (only point ships). ``numeric_columns``, ``delimiter``,
-    ``comment`` override the defaults.
+    member is reader config so it never enters the cache key). ``members`` (an
+    explicit list of member names) and/or ``member_glob`` (an fnmatch-style
+    pattern — ``*``, ``?``, ``[...]``, case-sensitive, matched against the full
+    member path, e.g. ``*egu*``) select MULTIPLE members: the selection is the
+    union of the explicit list and the glob matches, deduplicated, and the
+    members are read and their rows concatenated in ascending lexicographic
+    (byte) order of member name. A ``members`` name absent from the archive, and
+    a ``member_glob`` matching zero members, are errors; directory placeholder
+    entries (names ending in ``/``) are never selected; ``member`` (singular)
+    is mutually exclusive with ``members``/``member_glob``. Like ``member``,
+    none of these enter the cache key. ``skip_header_row=True`` handles the EPA
+    2016fd-style column-header line: after comment (``#``) and blank lines are
+    dropped, the first remaining line of each selected input (each selected zip
+    member, or the bare file) must be a header row — its first
+    delimiter-separated field, compared case-insensitively, must be
+    ``country_cd`` — and exactly that one line is skipped per member; if the
+    first field is anything else the reader errors (the option asserts a header
+    row and never silently drops a data row). ``kind="point"`` selects the
+    schema (only point ships). ``numeric_columns``, ``delimiter``, ``comment``
+    override the defaults.
     """
 
     #: Registry name + format key(s) + extension sniff hints.
@@ -582,6 +660,9 @@ class FF10Reader:
         select: Optional[Any] = None,
         *,
         member: Optional[str] = None,
+        members: Optional[Sequence[str]] = None,
+        member_glob: Optional[str] = None,
+        skip_header_row: bool = False,
         kind: str = "point",
         numeric_columns: Optional[Sequence[str]] = None,
         delimiter: str = ",",
@@ -594,26 +675,39 @@ class FF10Reader:
                 f"FF10Reader only supports kind='point' (got {kind!r}); the 45-col "
                 "nonpoint/onroad/nonroad schemas are not implemented yet"
             )
-        if member is not None:
+        if members is not None or member_glob is not None:
+            if member is not None:
+                raise ValueError(
+                    "`member` is mutually exclusive with `members`/`member_glob`"
+                )
             with _zipfile.ZipFile(handle) as zf:
-                text = zf.read(member).decode("utf-8")
-            lines = text.splitlines()
+                selected = _ff10_select_members(zf.namelist(), members, member_glob)
+                texts = [zf.read(n).decode("utf-8") for n in selected]
+        elif member is not None:
+            with _zipfile.ZipFile(handle) as zf:
+                texts = [zf.read(member).decode("utf-8")]
         else:
             with open(handle, newline="") as fh:
-                lines = fh.read().splitlines()
+                texts = [fh.read()]
 
-        # Skip empty + '#' comment lines, then RFC-4180 parse each data line.
-        data_lines = [
-            ln for ln in lines
-            if ln.strip() and not ln.lstrip().startswith(comment)
-        ]
-        rows = list(_csv.reader(data_lines, delimiter=delimiter))
+        # Per selected input: skip empty + '#' comment lines, drop the asserted
+        # `country_cd` header line (if skip_header_row), then RFC-4180 parse.
         ncol = len(FF10_POINT_COLUMNS)
-        for r in rows:
-            if len(r) != ncol:
-                raise ValueError(
-                    f"FF10 point row has {len(r)} fields, expected {ncol}: {r!r}"
-                )
+        rows: List[List[str]] = []
+        for text in texts:
+            data_lines = [
+                ln for ln in text.splitlines()
+                if ln.strip() and not ln.lstrip().startswith(comment)
+            ]
+            if skip_header_row:
+                data_lines = _ff10_skip_header(data_lines, delimiter)
+            member_rows = list(_csv.reader(data_lines, delimiter=delimiter))
+            for r in member_rows:
+                if len(r) != ncol:
+                    raise ValueError(
+                        f"FF10 point row has {len(r)} fields, expected {ncol}: {r!r}"
+                    )
+            rows.extend(member_rows)
 
         numset = (
             set(numeric_columns) if numeric_columns is not None
@@ -685,5 +779,7 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(FF10Reader.EXTENSIONS),
         notes="FF10 point long-format; '#' header skipped; fixed 77-col schema; "
-              "numeric->float64 (empty->NaN), ids/codes/text->string; zip member via `member`.",
+              "numeric->float64 (empty->NaN), ids/codes/text->string; zip member via "
+              "`member`; multi-member via `members`/`member_glob` (sorted-name concat); "
+              "`skip_header_row` drops one asserted `country_cd` header line per member.",
     )

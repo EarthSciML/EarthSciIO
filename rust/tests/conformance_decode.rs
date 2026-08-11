@@ -16,9 +16,37 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use earthsciio::{ArrayData, AxisSelect, Coord, DType};
+use earthsciio::{ArrayData, AxisSelect, Coord, DType, Ff10Reader};
 use earthsciio::{Cache, FetchRequest, FormatRegistry, NativeField, Selection};
 use serde_json::Value;
+
+/// Build a configured [`Ff10Reader`] from an ff10 case's `decode` block —
+/// `member` (singular), `members`/`member_glob` (multi-member; sorted-name
+/// concat), `skip_header_row` (drop one asserted `country_cd` header line per
+/// member). `None` when the case pins none of them (the default reader already
+/// decodes the bare blob). Mirrors `rust/examples/conformance_dump.rs`.
+fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
+    let dec = case.get("decode")?;
+    let mut reader = Ff10Reader::new();
+    let mut configured = false;
+    if let Some(m) = dec.get("member").and_then(Value::as_str) {
+        reader = reader.member(m);
+        configured = true;
+    }
+    if let Some(ms) = dec.get("members").and_then(Value::as_array) {
+        reader = reader.members(ms.iter().filter_map(Value::as_str));
+        configured = true;
+    }
+    if let Some(g) = dec.get("member_glob").and_then(Value::as_str) {
+        reader = reader.member_glob(g);
+        configured = true;
+    }
+    if dec.get("skip_header_row").and_then(Value::as_bool).unwrap_or(false) {
+        reader = reader.skip_header_row(true);
+        configured = true;
+    }
+    configured.then_some(reader)
+}
 
 /// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
 /// zarr cases); absent ⇒ `Selection::All`.
@@ -102,9 +130,20 @@ fn decodes_every_corpus_case_to_match_expected() {
                 .unwrap_or_else(|e| panic!("store decode failed for {id}: {e}"))
         } else {
             // Resolve the blob offline (reuses the Python-cached bytes), then decode.
+            // An ff10 case whose decode block pins zip member selection / header
+            // handling gets a reader CONFIGURED at construction (the Reader trait
+            // takes no kwargs) — the same `with_formats`-style seam the dumper uses.
             let blob = cache
                 .fetch(&FetchRequest::new(case["resolved_url"].as_str().unwrap()))
                 .unwrap_or_else(|e| panic!("offline resolve failed for {id}: {e}"));
+            let reader: Arc<dyn earthsciio::Reader> = if format == "ff10" {
+                match ff10_reader_from_decode(&case) {
+                    Some(configured) => Arc::new(configured),
+                    None => reader,
+                }
+            } else {
+                reader
+            };
             reader
                 .read_native(&blob.path, &[], &Selection::All)
                 .unwrap_or_else(|e| panic!("decode failed for {id}: {e}"))

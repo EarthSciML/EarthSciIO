@@ -84,8 +84,21 @@ end
                 kwargs = if fmt == "csv"
                     (; numeric_columns = String.(case["decode"]["numeric_columns"]))
                 elseif fmt == "ff10"
-                    (; numeric_columns = String.(case["decode"]["numeric_columns"]),
-                       kind = String(get(case["decode"], "kind", "point")))
+                    # forward the zip member selection + header handling the case
+                    # pins (member/members/member_glob/skip_header_row).
+                    dec = case["decode"]
+                    kw = Dict{Symbol,Any}(
+                        :numeric_columns => String.(dec["numeric_columns"]),
+                        :kind => String(get(dec, "kind", "point")),
+                        :member => get(dec, "member", nothing),
+                    )
+                    ms = get(dec, "members", nothing)
+                    ms === nothing || (kw[:members] = String.(ms))
+                    mg = get(dec, "member_glob", nothing)
+                    mg === nothing || (kw[:member_glob] = String(mg))
+                    shr = get(dec, "skip_header_row", false)
+                    kw[:skip_header_row] = shr === nothing ? false : Bool(shr)
+                    (; kw...)
                 else
                     NamedTuple()
                 end
@@ -233,4 +246,110 @@ import ZipFile
     @test zipped["FACILITY_NAME"].data == bare["FACILITY_NAME"].data
     # a missing member is a clear error, not a silent empty.
     @test_throws ArgumentError read_native(FF10Reader(), zippath; member = "nope.csv")
+end
+
+# The lowercase `country_cd,region_cd,…` header line the EPA 2016fd members
+# carry (77 fields, NOT a `#` comment).
+_ff10_header_line() = join(lowercase.(EarthSciIO.FF10_POINT_COLUMNS), ',')
+
+# One 77-field row with the given FACILITY_ID/POLID/ANN_VALUE.
+function _ff10_tiny_row(fac, polid, ann)
+    idx = Dict(n => j for (j, n) in enumerate(EarthSciIO.FF10_POINT_COLUMNS))
+    r = fill("", length(EarthSciIO.FF10_POINT_COLUMNS))
+    r[idx["COUNTRY_CD"]] = "US"
+    r[idx["REGION_CD"]] = "01001"
+    r[idx["FACILITY_ID"]] = fac
+    r[idx["POLID"]] = polid
+    r[idx["ANN_VALUE"]] = ann
+    return join(r, ',')
+end
+
+# A zip with two `*egu*` members + one excluded member, each carrying a `#`
+# comment block and the `country_cd` header line. Written in NON-sorted order to
+# prove the read order is sorted-name.
+function _ff10_egu_zip(dir)
+    member(rows) = "#FORMAT=FF10_POINT\n" * _ff10_header_line() * "\n" *
+                   join(rows, '\n') * "\n"
+    zippath = joinpath(dir, "2016fd_inputs_point.zip")
+    w = ZipFile.Writer(zippath)
+    # a glob-matching DIRECTORY placeholder entry (like the real 2016fd
+    # `…/ptegu/`) — selection must ignore it (file members only).
+    ZipFile.addfile(w, "point_egu/")
+    for (name, rows) in [
+        ("point/egu_beta.csv", [_ff10_tiny_row("F202", "NOX", "333.3")]),
+        ("point/egu_alpha.csv", [_ff10_tiny_row("F101", "NOX", "111.1"),
+                                 _ff10_tiny_row("F101", "SO2", "22.2")]),
+        ("point/ptnonipm.csv", [_ff10_tiny_row("F999", "NOX", "999.9")]),
+    ]
+        f = ZipFile.addfile(w, name)
+        write(f, member(rows))
+    end
+    close(w)
+    return zippath
+end
+
+@testset "FF10 reader — multi-member glob + header skip" begin
+    dir = mktempdir()
+    zippath = _ff10_egu_zip(dir)
+
+    # glob selects BOTH egu members (not ptnonipm); rows concatenate in sorted
+    # member-name order (alpha's 2 rows, then beta's 1); one header dropped each.
+    nds = read_native(FF10Reader(), zippath;
+                      member_glob = "*egu*", skip_header_row = true)
+    @test nds["FACILITY_ID"].data == ["F101", "F101", "F202"]
+    @test nds["ANN_VALUE"].data == [111.1, 22.2, 333.3]
+    @test !("F999" in nds["FACILITY_ID"].data)
+
+    # a glob matching zero members is an error, not a silent empty.
+    @test_throws ArgumentError read_native(FF10Reader(), zippath;
+                                           member_glob = "*nope*")
+
+    # explicit members ∪ glob, deduplicated, sorted.
+    both = read_native(FF10Reader(), zippath;
+                       members = ["point/ptnonipm.csv", "point/egu_alpha.csv"],
+                       member_glob = "*egu*", skip_header_row = true)
+    @test both["FACILITY_ID"].data == ["F101", "F101", "F202", "F999"]
+
+    # an explicit member absent from the archive is an error.
+    @test_throws ArgumentError read_native(FF10Reader(), zippath;
+                                           members = ["point/absent.csv"],
+                                           skip_header_row = true)
+
+    # without skip_header_row the header line is a 77-field data row that dies
+    # at the numeric parse of ann_value (it is NOT silently accepted).
+    @test_throws ArgumentError read_native(FF10Reader(), zippath;
+                                           member_glob = "*egu*")
+
+    # singular member + skip_header_row composes.
+    one = read_native(FF10Reader(), zippath;
+                      member = "point/egu_beta.csv", skip_header_row = true)
+    @test one["FACILITY_ID"].data == ["F202"]
+
+    # `member` is mutually exclusive with `members`/`member_glob`.
+    @test_throws ArgumentError read_native(FF10Reader(), zippath;
+                                           member = "point/egu_beta.csv",
+                                           member_glob = "*egu*")
+
+    # asserting a header on an input that has none errors — never a silently
+    # dropped data row.
+    bare = joinpath(dir, "noheader.csv")
+    write(bare, _ff10_fixture_text())
+    @test_throws ArgumentError read_native(FF10Reader(), bare;
+                                           skip_header_row = true)
+end
+
+@testset "FF10 reader — glob matcher semantics" begin
+    m(p, t) = occursin(EarthSciIO._glob_regex(p), t)
+    @test m("*egu*", "point/egucems_2016fd.csv")
+    @test m("*egu*", "egu")
+    @test !m("*egu*", "point/ptnonipm.csv")
+    @test m("?gu", "egu")
+    @test !m("?gu", "eegu")
+    @test m("egu[12].csv", "egu1.csv")
+    @test !m("egu[12].csv", "egu3.csv")
+    @test m("egu[!12].csv", "egu3.csv")
+    @test m("egu[a-c].csv", "egub.csv")
+    @test !m("egu[a-c].csv", "egud.csv")
+    @test m("lit[", "lit[")            # unclosed class is a literal
+    @test !m("*EGU*", "point/egucems.csv")  # case-sensitive
 end

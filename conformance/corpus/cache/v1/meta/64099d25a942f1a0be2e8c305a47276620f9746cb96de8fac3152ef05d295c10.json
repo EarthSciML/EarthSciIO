@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 3937,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "d95f6e48b8155374a94613dbc8a507c866817978c050108704c2551aaf4c9a2d",
+  "source_loader": "nei2016",
+  "url": "https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip"
+}
