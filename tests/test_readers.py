@@ -317,3 +317,125 @@ def test_ff10_absent_variable_raises(tmp_path):
     p.write_text(_ff10_fixture_text())
     with pytest.raises(KeyError):
         FF10Reader().read_native(str(p), ["NOT_A_COLUMN"])
+
+
+# --------------------------------------------------------------------------- #
+# FF10 zip member selection (members/member_glob) + skip_header_row — the EPA
+# 2016fd zip shape: members carry a non-comment `country_cd,…` header line.
+# --------------------------------------------------------------------------- #
+
+
+def _ff10_header_line() -> str:
+    """The lowercase 77-field `country_cd,…` header line 2016fd members carry."""
+    return ",".join(c.lower() for c in FF10_POINT_COLUMNS)
+
+
+def _ff10_tiny_row(fac: str, polid: str, ann: str) -> str:
+    idx = {n: j for j, n in enumerate(FF10_POINT_COLUMNS)}
+    r = [""] * len(FF10_POINT_COLUMNS)
+    r[idx["COUNTRY_CD"]] = "US"
+    r[idx["REGION_CD"]] = "01001"
+    r[idx["FACILITY_ID"]] = fac
+    r[idx["POLID"]] = polid
+    r[idx["ANN_VALUE"]] = ann
+    return ",".join(r)
+
+
+def _ff10_egu_zip(tmp_path) -> str:
+    """A zip with two `*egu*` members + one excluded member, each carrying a `#`
+    comment block and the `country_cd` header line. Written in NON-sorted order
+    to prove the read order is sorted-name."""
+    def member(rows):
+        return "#FORMAT=FF10_POINT\n" + _ff10_header_line() + "\n" + "\n".join(rows) + "\n"
+
+    zpath = tmp_path / "2016fd_inputs_point.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        # a glob-matching DIRECTORY placeholder entry (like the real 2016fd
+        # `…/ptegu/`) — selection must ignore it (file members only).
+        zf.writestr("point_egu/", b"")
+        zf.writestr("point/egu_beta.csv", member([_ff10_tiny_row("F202", "NOX", "333.3")]))
+        zf.writestr("point/egu_alpha.csv", member([
+            _ff10_tiny_row("F101", "NOX", "111.1"),
+            _ff10_tiny_row("F101", "SO2", "22.2"),
+        ]))
+        zf.writestr("point/ptnonipm.csv", member([_ff10_tiny_row("F999", "NOX", "999.9")]))
+    return str(zpath)
+
+
+def test_ff10_member_glob_concatenates_sorted(tmp_path):
+    zpath = _ff10_egu_zip(tmp_path)
+    nds = FF10Reader().read_native(zpath, member_glob="*egu*", skip_header_row=True)
+    # alpha (2 rows) sorts before beta (1 row); ptnonipm excluded.
+    assert nds["FACILITY_ID"].data == ["F101", "F101", "F202"]
+    assert list(nds["ANN_VALUE"].data) == [111.1, 22.2, 333.3]
+    assert "F999" not in nds["FACILITY_ID"].data
+
+
+def test_ff10_member_glob_zero_matches_raises(tmp_path):
+    zpath = _ff10_egu_zip(tmp_path)
+    with pytest.raises(ValueError, match="matched no members"):
+        FF10Reader().read_native(zpath, member_glob="*nope*")
+
+
+def test_ff10_members_union_glob_and_missing_name(tmp_path):
+    zpath = _ff10_egu_zip(tmp_path)
+    # explicit list ∪ glob, deduplicated, sorted-name concatenation order.
+    nds = FF10Reader().read_native(
+        zpath,
+        members=["point/ptnonipm.csv", "point/egu_alpha.csv"],
+        member_glob="*egu*",
+        skip_header_row=True,
+    )
+    assert nds["FACILITY_ID"].data == ["F101", "F101", "F202", "F999"]
+    # an explicit member absent from the archive is an error.
+    with pytest.raises(KeyError, match="not found"):
+        FF10Reader().read_native(zpath, members=["point/absent.csv"],
+                                 skip_header_row=True)
+
+
+def test_ff10_header_row_skipped_exactly_once_per_member(tmp_path):
+    zpath = _ff10_egu_zip(tmp_path)
+    # WITHOUT skip_header_row, the header line is a 77-field data row that dies
+    # at the numeric parse of ann_value — it is never silently accepted.
+    with pytest.raises(ValueError):
+        FF10Reader().read_native(zpath, member_glob="*egu*")
+    # singular member + skip_header_row composes.
+    nds = FF10Reader().read_native(zpath, member="point/egu_beta.csv",
+                                   skip_header_row=True)
+    assert nds["FACILITY_ID"].data == ["F202"]
+
+
+def test_ff10_skip_header_row_asserts_header_present(tmp_path):
+    # asserting a header on an input that has none errors — never a silently
+    # dropped data row.
+    p = tmp_path / "noheader.csv"
+    p.write_text(_ff10_fixture_text())
+    with pytest.raises(ValueError, match="refusing to drop"):
+        FF10Reader().read_native(str(p), skip_header_row=True)
+
+
+def test_ff10_member_exclusive_with_members(tmp_path):
+    zpath = _ff10_egu_zip(tmp_path)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        FF10Reader().read_native(zpath, member="point/egu_beta.csv",
+                                 member_glob="*egu*")
+
+
+def test_ff10_zip_case_decodes_to_oracle_arrays(offline_cache):
+    """The committed ff10-zip-egu-glob case decodes through the reader's own
+    zip path (member_glob + skip_header_row) to the oracle arrays."""
+    case = json.loads((CORPUS / "cases" / "ff10-zip-egu-glob.json").read_text())
+    blob = offline_cache.fetch(case["resolved_url"])
+    dec = case["decode"]
+    nds = FF10Reader().read_native(
+        blob.path,
+        numeric_columns=dec["numeric_columns"],
+        member_glob=dec["member_glob"],
+        skip_header_row=dec["skip_header_row"],
+    )
+    assert len(nds.variables) == 77
+    for name, spec in case["expected"]["variables"].items():
+        if spec["dtype"] == "string":
+            _assert_string(nds[name], spec["data"], name)
+        else:
+            _assert_numeric(nds[name], spec["data"], name)

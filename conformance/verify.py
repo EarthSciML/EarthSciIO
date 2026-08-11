@@ -129,17 +129,61 @@ _FF10_POINT_COLUMNS = [
 ]
 
 
-def read_ff10(path, expected):
-    """FF10 point decode oracle: skip '#'/blank lines, RFC-4180 split, assign the
-    77-column schema positionally, then type each column per the case's expected
-    dtype (blank -> NaN in a float64 column, str otherwise). Matches the
-    Julia/Python/Rust ff10 readers' bare-member (member=None) path."""
+def read_ff10(path, expected, decode=None):
+    """FF10 point decode oracle: resolve the case's zip member selection (if
+    any), skip '#'/blank lines, drop the asserted ``country_cd`` header line per
+    member (``skip_header_row``), RFC-4180 split, assign the 77-column schema
+    positionally, then type each column per the case's expected dtype (blank ->
+    NaN in a float64 column, str otherwise). Member-selection semantics mirror
+    the readers: ``members`` (explicit list) union ``member_glob`` (fnmatch,
+    case-sensitive) matches, read in ascending lexicographic member-name order;
+    an absent explicit member or a zero-match glob is an error; directory
+    placeholder entries (names ending in ``/``) are never selected."""
+    import fnmatch
+    import zipfile
+
+    decode = decode or {}
+    member = decode.get("member")
+    members = decode.get("members")
+    member_glob = decode.get("member_glob")
+    skip_header = bool(decode.get("skip_header_row", False))
+
+    if members is not None or member_glob is not None:
+        with zipfile.ZipFile(path) as zf:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            selected = set()
+            if members is not None:
+                missing = [m for m in members if m not in names]
+                if missing:
+                    raise ValueError(f"zip members {missing!r} not in archive")
+                selected.update(members)
+            if member_glob is not None:
+                hits = [n for n in names if fnmatch.fnmatchcase(n, member_glob)]
+                if not hits:
+                    raise ValueError(f"member_glob {member_glob!r} matched no members")
+                selected.update(hits)
+            texts = [zf.read(n).decode("utf-8") for n in sorted(selected)]
+    elif member is not None:
+        with zipfile.ZipFile(path) as zf:
+            texts = [zf.read(member).decode("utf-8")]
+    else:
+        with open(path, newline="") as fh:
+            texts = [fh.read()]
+
     index = {name: j for j, name in enumerate(_FF10_POINT_COLUMNS)}
-    with open(path, newline="") as fh:
-        rows = [
-            r for r in csv.reader(fh)
-            if r and not (r[0].lstrip().startswith("#"))
+    rows = []
+    for text in texts:
+        lines = [
+            ln for ln in text.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
         ]
+        if skip_header:
+            if not lines or lines[0].split(",", 1)[0].strip().lower() != "country_cd":
+                raise ValueError(
+                    "skip_header_row: asserted 'country_cd' header line missing"
+                )
+            lines = lines[1:]
+        rows.extend(csv.reader(lines))
     ncol = len(_FF10_POINT_COLUMNS)
     for r in rows:
         if len(r) != ncol:
@@ -311,6 +355,10 @@ def verify_case(case_path: pathlib.Path) -> list:
     # the objects + selection from the whole case, not just one blob_path.
     if case["format"] == "zarr":
         got, coords = read_zarr(CORPUS, case)
+    elif case["format"] == "ff10":
+        # ff10 needs the case's decode block (zip member selection + header skip).
+        got, coords = read_ff10(CORPUS / case["blob_path"], case["expected"],
+                                case.get("decode"))
     else:
         got, coords = reader(CORPUS / case["blob_path"], case["expected"])
     for name, spec in case["expected"]["variables"].items():

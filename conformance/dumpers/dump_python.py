@@ -130,10 +130,18 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
         reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
     elif fmt == "ff10":
         # FF10 point: the case pins the 42 numeric columns, the schema kind, and
-        # member=null (the committed fixture is the already-extracted CSV member).
-        reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
-        reader_kwargs["kind"] = case["decode"].get("kind", "point")
-        reader_kwargs["member"] = case["decode"].get("member")
+        # the zip member selection — member (singular), members/member_glob
+        # (multi-member; sorted-name concat), skip_header_row (drop one asserted
+        # `country_cd` header line per member). member=null decodes the bare blob.
+        dec = case["decode"]
+        reader_kwargs["numeric_columns"] = list(dec["numeric_columns"])
+        reader_kwargs["kind"] = dec.get("kind", "point")
+        reader_kwargs["member"] = dec.get("member")
+        if dec.get("members") is not None:
+            reader_kwargs["members"] = list(dec["members"])
+        if dec.get("member_glob") is not None:
+            reader_kwargs["member_glob"] = str(dec["member_glob"])
+        reader_kwargs["skip_header_row"] = bool(dec.get("skip_header_row") or False)
     elif fmt == "zarr":
         # Store-backed: the reader is handed (cache, base_url, variables, select).
         # `variables` names the arrays (no .zmetadata to enumerate); `select` (the

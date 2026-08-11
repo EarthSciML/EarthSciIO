@@ -35,6 +35,7 @@ import itertools
 import json
 import os
 import pathlib
+import zipfile
 
 import numpy as np
 
@@ -400,6 +401,119 @@ def build_ff10_point() -> tuple[bytes, dict, dict]:
 
 
 # -----------------------------------------------------------------------------
+# Fixture 3b — FF10 point members inside a zip (transport=file, format=ff10).
+#
+# The EPA 2016fd zip shape: a `.zip` blob holding several FF10 member CSVs, each
+# opening with a `#` comment block AND a `country_cd,region_cd,…` column-header
+# line that is NOT a comment (77 fields, so it passes the arity check and would
+# die at the numeric parse of ann_value if treated as data). Pins the two reader
+# options that make the zip directly readable — no pre-extraction to temp files:
+#
+#   * `member_glob` — `*egu*` selects the TWO egu members (a third, non-matching
+#     member is present and MUST be excluded); rows concatenate in ascending
+#     lexicographic member-name order (alpha before beta);
+#   * `skip_header_row` — drops exactly ONE asserted `country_cd` header line
+#     per member (errors, never drops data, if the header is absent).
+#
+# Determinism: members are STORED (no compression, so no zlib variance), with a
+# pinned DOS timestamp (1980-01-01), pinned create_system/external_attr, and no
+# extra fields — regeneration is byte-identical on any Python.
+# -----------------------------------------------------------------------------
+def build_ff10_zip() -> tuple[bytes, dict, dict]:
+    def row(**over) -> list:
+        r = {c: "" for c in FF10_POINT_COLUMNS}
+        r.update(over)
+        return [r[c] for c in FF10_POINT_COLUMNS]
+
+    def member_text(rows) -> str:
+        sio = io.StringIO()
+        w = csv.writer(sio, lineterminator="\n")
+        for r in rows:
+            w.writerow(r)
+        header = ",".join(c.lower() for c in FF10_POINT_COLUMNS)
+        return (
+            "#FORMAT=FF10_POINT\n#COUNTRY US\n#YEAR 2016\n"
+            + header + "\n" + sio.getvalue()
+        )
+
+    # Two `*egu*` members (mirrors the real 2016fd zip, which has exactly two)
+    # + one member the glob must EXCLUDE. egu_alpha sorts before egu_beta.
+    alpha_rows = [
+        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F101", UNIT_ID="U1",
+            REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101", POLID="NOX",
+            ANN_VALUE="111.1", FACILITY_NAME="Alpha Station, Unit 1",
+            STKHGT="100.0", STKTEMP="500.0", LONGITUDE="-86.51045",
+            LATITUDE="32.43878", ZIPCODE="00000"),
+        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F101", UNIT_ID="U1",
+            REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101", POLID="SO2",
+            ANN_VALUE="22.2", FACILITY_NAME="Alpha Station, Unit 1",
+            STKHGT="100.0", STKTEMP="500.0", LONGITUDE="-86.51045",
+            LATITUDE="32.43878", ZIPCODE="00000"),
+    ]
+    beta_rows = [
+        row(COUNTRY_CD="US", REGION_CD="17031", FACILITY_ID="F202", UNIT_ID="U2",
+            REL_POINT_ID="R2", PROCESS_ID="P2", SCC="0030700201", POLID="NOX",
+            ANN_VALUE="333.3", FACILITY_NAME="Beta Plant",
+            STKHGT="75.0", STKTEMP="400.0", LONGITUDE="-87.65000",
+            LATITUDE="41.85000"),  # blank DESIGN_CAPACITY et al -> NaN
+    ]
+    other_rows = [
+        row(COUNTRY_CD="US", REGION_CD="99999", FACILITY_ID="F999", POLID="NOX",
+            ANN_VALUE="999.9", FACILITY_NAME="Excluded Nonpoint-ish"),
+    ]
+    members = {
+        "point/egu_2016fd_alpha.csv": member_text(alpha_rows),
+        "point/egu_2016fd_beta.csv": member_text(beta_rows),
+        "point/ptnonipm_2016fd.csv": member_text(other_rows),
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        # A directory placeholder entry whose name MATCHES the glob (the real
+        # 2016fd zip has `…/ptegu/`): selection must ignore it (file members
+        # only), pinned by this fixture.
+        zdir = zipfile.ZipInfo("point_egu/", date_time=(1980, 1, 1, 0, 0, 0))
+        zdir.create_system = 3
+        zdir.external_attr = (0o755 << 16) | 0x10  # dir mode + MS-DOS dir bit
+        zdir.compress_type = zipfile.ZIP_STORED
+        zf.writestr(zdir, b"")
+        for name in sorted(members):
+            zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            zi.create_system = 3            # pinned (else platform-dependent)
+            zi.external_attr = 0o644 << 16  # pinned unix mode
+            zi.compress_type = zipfile.ZIP_STORED  # no zlib version variance
+            zf.writestr(zi, members[name])
+    data = buf.getvalue()
+
+    # Expected: `*egu*` selects alpha+beta (NOT ptnonipm); concatenation is in
+    # sorted member-name order (alpha's 2 rows, then beta's 1); each member's
+    # `country_cd` header line is skipped exactly once.
+    sel_rows = alpha_rows + beta_rows
+    nrows = len(sel_rows)
+    variables = {}
+    for j, col in enumerate(FF10_POINT_COLUMNS):
+        vals = [r[j] for r in sel_rows]
+        if col in FF10_POINT_NUMERIC:
+            variables[col] = {
+                "dtype": "float64", "dims": ["index"], "shape": [nrows],
+                "fill_value": None,
+                "data": [None if str(v).strip() == "" else round(float(v), 10)
+                         for v in vals],
+            }
+        else:
+            variables[col] = {
+                "dtype": "string", "dims": ["index"], "shape": [nrows],
+                "fill_value": None, "data": [str(v) for v in vals],
+            }
+    expected = {"variables": variables, "coords": {}}
+    decode = {"kind": "point", "container": "zip", "member": None,
+              "member_glob": "*egu*", "skip_header_row": True,
+              "delimiter": ",", "comment": "#",
+              "numeric_columns": sorted(FF10_POINT_NUMERIC)}
+    return data, expected, decode
+
+
+# -----------------------------------------------------------------------------
 # Fixture 4 — synthetic Zarr v2 store (transport=s3, format=zarr, store=local).
 #
 # A tiny multi-chunk Zarr v2 store that pins the load-bearing capability: LAZY
@@ -728,6 +842,25 @@ def main() -> None:
                "FACILITY_NAME with an embedded comma. 3 rows share one stack, "
                "differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/"
                "filter). member=null decodes the bare extracted CSV member."),
+    ))
+
+    zf_data, zf_expected, zf_decode = build_ff10_zip()
+    summary.append(("ff10-zip-egu-glob",) + emit_case(
+        "ff10-zip-egu-glob",
+        loader="nei2016", kind="points", fmt="ff10", transport="file", store="local",
+        resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip",
+        ext="zip", data=zf_data, expected=zf_expected, decode=zf_decode,
+        select={"all_rows": True},
+        notes=("EPA-2016fd-shaped zip of FF10 point members: two `*egu*` members "
+               "+ one excluded member + a glob-matching DIRECTORY placeholder "
+               "entry (`point_egu/`, ignored — file members only), each member "
+               "with a `#` comment block AND a non-comment `country_cd,…` "
+               "column-header line (77 fields). Pins member_glob selection "
+               "(glob `*egu*`, exclusion of the third member, sorted "
+               "member-name concatenation: alpha rows then beta) and "
+               "skip_header_row (exactly one asserted header line dropped per "
+               "member). The blob is the WHOLE zip; member selection is reader "
+               "config, never part of the cache key."),
     ))
 
     zarr_objects, zarr_expected = build_zarr_store()

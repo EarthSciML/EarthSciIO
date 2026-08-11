@@ -381,7 +381,22 @@ NO EGU/pollutant filter — those transforms move DOWNSTREAM into the `.esm`.
 
 `reader_kwargs`: `member="path/in/zip"` extracts a named member from a `.zip`
 blob (the whole zip stays the cached content-addressed blob; the member is reader
-config so it never enters the cache key). `kind="point"` selects the schema (only
+config so it never enters the cache key). `members=[…]` (an explicit list of
+member names) and/or `member_glob="*egu*"` (fnmatch-style — `*`, `?`, `[...]`,
+case-sensitive, matched against the full member path) select MULTIPLE members:
+the selection is the union of the explicit list and the glob matches,
+deduplicated, and the members are read and their rows concatenated in ascending
+lexicographic (byte) order of member name. An explicit name absent from the
+archive, and a glob matching zero members, are errors; directory placeholder
+entries (names ending in `/`) are never selected; `member` (singular) is
+mutually exclusive with `members`/`member_glob`. None of these enter the cache
+key. `skip_header_row=true` handles the EPA 2016fd-style column-header line:
+after comment (`#`) and blank lines are dropped, the first remaining line of
+each selected input (each selected zip member, or the bare file) must be a
+header row — its first delimiter-separated field, compared case-insensitively,
+must be `country_cd` — and exactly that one line is skipped per member; if the
+first field is anything else the reader errors (the option asserts a header row
+and never silently drops a data row). `kind="point"` selects the schema (only
 point ships). `numeric_columns`, `delimiter`, `comment` override the defaults;
 `variables=[…]` restricts the returned columns (default = all 77)."""
 struct FF10Reader <: Reader end
@@ -441,28 +456,138 @@ function _ff10_member_text(path::AbstractString, member::AbstractString)
     end
 end
 
+# Translate an fnmatch-style glob (`*` any run incl. empty, `?` one char,
+# `[...]`/`[!...]` character class; case-sensitive; an unclosed `[` is literal)
+# into an anchored Regex. Semantics match Python `fnmatch.fnmatchcase` and the
+# Rust reader's matcher — the cross-language `member_glob` contract.
+function _glob_regex(pat::AbstractString)
+    io = IOBuffer()
+    write(io, '^')
+    chars = collect(pat)
+    n = length(chars)
+    i = 1
+    while i <= n
+        c = chars[i]
+        if c == '*'
+            write(io, ".*")
+        elseif c == '?'
+            write(io, '.')
+        elseif c == '['
+            j = i + 1
+            j <= n && chars[j] == '!' && (j += 1)
+            j <= n && chars[j] == ']' && (j += 1)
+            while j <= n && chars[j] != ']'
+                j += 1
+            end
+            if j > n
+                write(io, "\\[")                    # unclosed class -> literal '['
+            else
+                inner = join(chars[i+1:j-1])
+                inner = replace(inner, "\\" => "\\\\")
+                startswith(inner, "!") && (inner = "^" * inner[2:end])
+                write(io, '[')
+                write(io, inner)
+                write(io, ']')
+                i = j
+            end
+        elseif c in ('\\', '^', '$', '.', '|', '+', '(', ')', '{', '}', ']')
+            write(io, '\\')
+            write(io, c)
+        else
+            write(io, c)
+        end
+        i += 1
+    end
+    write(io, '$')
+    return Regex(String(take!(io)))
+end
+
+# Resolve `members`/`member_glob` against the archive and return the selected
+# member TEXTS in ascending lexicographic (byte) order of member name — the
+# deterministic concatenation order. An explicit name absent from the archive,
+# and a glob matching zero members, are errors. Selection considers only FILE
+# members: directory placeholder entries (names ending in `/`, e.g. the real
+# 2016fd zip's `…/ptegu/`) are ignored. Like `member`, this is reader config —
+# NOT part of the cache key (the blob is the whole zip).
+function _ff10_member_texts(path::AbstractString, members, member_glob)
+    reader = ZipFile.Reader(String(path))
+    try
+        names = String[f.name for f in reader.files if !endswith(f.name, '/')]
+        selected = Set{String}()
+        if members !== nothing
+            want = String[String(m) for m in members]
+            miss = sort!(String[m for m in want if !(m in names)])
+            isempty(miss) || throw(ArgumentError(
+                "zip members $(repr(miss)) not found in $(path); members: $(sort(names))"))
+            union!(selected, want)
+        end
+        if member_glob !== nothing
+            re = _glob_regex(String(member_glob))
+            hits = String[n for n in names if occursin(re, n)]
+            isempty(hits) && throw(ArgumentError(
+                "member_glob $(repr(member_glob)) matched no members in $(path); " *
+                "members: $(sort(names))"))
+            union!(selected, hits)
+        end
+        isempty(selected) && throw(ArgumentError(
+            "members/member_glob selected no zip members"))
+        byname = Dict(f.name => f for f in reader.files)
+        return [String(read(byname[n])) for n in sort!(collect(selected))]
+    finally
+        close(reader)
+    end
+end
+
+# Drop the asserted `country_cd` header line from one input's data lines. The
+# first non-comment, non-empty line's first delimiter-separated field must equal
+# `country_cd` (case-insensitive) — anything else is an error, so the option can
+# never silently drop a data row.
+function _ff10_skip_header(data_lines::Vector{<:AbstractString}, delimiter::AbstractString)
+    isempty(data_lines) && throw(ArgumentError(
+        "skip_header_row: no non-comment lines — the asserted header row is missing"))
+    first_field = lowercase(strip(first(split(first(data_lines), delimiter; limit = 2))))
+    first_field == "country_cd" || throw(ArgumentError(
+        "skip_header_row: first non-comment line does not start with a " *
+        "'country_cd' header field (got $(repr(first_field))); refusing to " *
+        "drop a data row"))
+    return data_lines[2:end]
+end
+
 function read_native(::FF10Reader, path::AbstractString;
-                     member = nothing, kind::AbstractString = "point",
+                     member = nothing, members = nothing, member_glob = nothing,
+                     skip_header_row::Bool = false, kind::AbstractString = "point",
                      numeric_columns = FF10_POINT_NUMERIC,
                      delimiter::AbstractString = ",", comment::AbstractString = "#",
                      variables = nothing)
     kind == "point" || throw(ArgumentError(
         "FF10Reader only supports kind=\"point\" (got $(repr(kind))); the 45-col " *
         "nonpoint/onroad/nonroad schemas are not implemented yet"))
-    text = member === nothing ? read(String(path), String) :
-           _ff10_member_text(String(path), String(member))
+    texts = if members !== nothing || member_glob !== nothing
+        member === nothing || throw(ArgumentError(
+            "`member` is mutually exclusive with `members`/`member_glob`"))
+        _ff10_member_texts(String(path), members, member_glob)
+    elseif member !== nothing
+        [_ff10_member_text(String(path), String(member))]
+    else
+        [read(String(path), String)]
+    end
     delim = first(delimiter)
     ncol = length(FF10_POINT_COLUMNS)
 
+    # Per selected input: skip empty + '#' comment lines, drop the asserted
+    # `country_cd` header line (if skip_header_row), then RFC-4180 parse.
     rows = Vector{String}[]
-    for ln in split(text, '\n')
-        s = strip(ln)
-        (isempty(s) || startswith(s, comment)) && continue
-        fields = _split_ff10_fields(rstrip(ln, ['\r']), delim)
-        length(fields) == ncol || throw(ArgumentError(
-            "FF10 point row has $(length(fields)) fields, expected $ncol; " *
-            "row=$(repr(ln))"))
-        push!(rows, fields)
+    for text in texts
+        data_lines = String[rstrip(ln, ['\r']) for ln in split(text, '\n')
+                            if !isempty(strip(ln)) && !startswith(strip(ln), comment)]
+        skip_header_row && (data_lines = _ff10_skip_header(data_lines, delimiter))
+        for ln in data_lines
+            fields = _split_ff10_fields(ln, delim)
+            length(fields) == ncol || throw(ArgumentError(
+                "FF10 point row has $(length(fields)) fields, expected $ncol; " *
+                "row=$(repr(ln))"))
+            push!(rows, fields)
+        end
     end
 
     numset = Set(String.(collect(numeric_columns)))

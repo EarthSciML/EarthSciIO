@@ -34,6 +34,7 @@ data tooling beyond the format reader.
 | `era5-grid-sub-tile` | era5 | grid | netcdf | file | local | CF scale/offset + `_FillValue`→NaN + a masked cell; packed int16 → float64 |
 | `openaq-points-slice` | openaq | points | csv | file | local | a 2nd reader behind the `format` registry; numeric→float64, text→string |
 | `ff10-point-slice` | nei2016 | points | ff10 | file | local | FF10 point long-format: `#` header skipped, fixed 77-col schema, RFC-4180 quoted `FACILITY_NAME`, numeric→float64 (blank→NaN), ids/codes→string; 3 rows share one stack (no pivot). member=null decodes the extracted CSV member |
+| `ff10-zip-egu-glob` | nei2016 | points | ff10 | file | local | EPA-2016fd-shaped **zip** of FF10 members (two `*egu*` + one excluded + a glob-matching **directory placeholder** entry, ignored), each member with a non-comment `country_cd,…` header line. Pins `member_glob` selection (exclusion, **sorted member-name concatenation**) + `skip_header_row` (one asserted header line dropped per member). The blob is the whole zip; member selection is reader config, never part of the cache key |
 | `isrm-zarr-tile` | isrm | grid | zarr | s3 | local | **store-backed** Zarr v2: lazy orthogonal chunk selection (fetch only the intersecting chunk objects), blosc/lz4+shuffle decode, partial edge chunk, `fill_value` 0.0 NOT→NaN, no coords. `objects[]` per-object key/integrity. |
 
 GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
@@ -78,6 +79,28 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
 - **Variable identity** — arrays are keyed by the **on-disk `file_variable`**
   name. No remap, no `unit_conversion` (Risk R3 — those stay in ESS).
 - **Strings** — text columns (CSV/JSON) are returned as `string` arrays verbatim.
+- **FF10 zip member selection** — an `ff10` blob may be a `.zip`; the reader's
+  `member` (singular), `members` (explicit list), and `member_glob`
+  (fnmatch-style `*`/`?`/`[...]`, case-sensitive, matched against the full
+  member path) select which member CSV(s) to decode. `members`/`member_glob`
+  combine as a **union, deduplicated**, and the selected members are read and
+  their rows **concatenated in ascending lexicographic (byte) order of member
+  name** — the deterministic multi-member ordering rule all three tracks share.
+  An explicit member absent from the archive, and a glob matching zero members,
+  are errors. Selection considers only **file** members — directory placeholder
+  entries (names ending in `/`, e.g. the real 2016fd zip's `…/ptegu/`) are
+  ignored. `member` is mutually exclusive with `members`/`member_glob`. All
+  of these are reader config and **never part of the cache key** — the blob is
+  the whole zip.
+- **FF10 header skip** — with `skip_header_row = true`, after comment (`#`) and
+  blank lines are dropped, the first remaining line of **each selected input**
+  (each selected zip member, or the bare file) must be a header row — its first
+  delimiter-separated field, compared case-insensitively, must equal
+  `country_cd` — and **exactly that one line is skipped per member**. If the
+  first field is anything else (or no line remains) the reader errors: the
+  option asserts a header row and never silently drops a data row. (The EPA
+  2016fd members carry this `country_cd,region_cd,…` line as a non-comment row
+  of 77 fields, which would otherwise die at the numeric parse of `ann_value`.)
 
 ### Zarr decode notes (store-backed reader)
 

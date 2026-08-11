@@ -100,12 +100,23 @@ function dump_case(corpus, case)
         nc = String.(case["decode"]["numeric_columns"])
         const_provider(cache, url; format = fmt, reader_kwargs = (; numeric_columns = nc))
     elseif fmt == "ff10"
-        # FF10 point: the case pins the 42 numeric columns + schema kind; member is
-        # nothing (the committed fixture is the already-extracted CSV member).
-        nc = String.(case["decode"]["numeric_columns"])
-        kind = String(get(case["decode"], "kind", "point"))
-        const_provider(cache, url; format = fmt,
-                       reader_kwargs = (; numeric_columns = nc, kind = kind, member = nothing))
+        # FF10 point: the case pins the 42 numeric columns, schema kind, and the
+        # zip member selection — member (singular), members/member_glob (multi-
+        # member; sorted-name concat), skip_header_row (drop one asserted
+        # `country_cd` header line per member). member=null decodes the bare blob.
+        dec = case["decode"]
+        kw = Dict{Symbol,Any}(
+            :numeric_columns => String.(dec["numeric_columns"]),
+            :kind => String(get(dec, "kind", "point")),
+            :member => get(dec, "member", nothing),
+        )
+        ms = get(dec, "members", nothing)
+        ms === nothing || (kw[:members] = String.(ms))
+        mg = get(dec, "member_glob", nothing)
+        mg === nothing || (kw[:member_glob] = String(mg))
+        shr = get(dec, "skip_header_row", false)
+        kw[:skip_header_row] = shr === nothing ? false : Bool(shr)
+        const_provider(cache, url; format = fmt, reader_kwargs = (; kw...))
     elseif fmt == "zarr"
         # Store-backed: `url` is the store base; `variables` names the arrays (no
         # .zmetadata to enumerate); `select` (the orthogonal selection) rides in

@@ -26,10 +26,12 @@
 //! the reader **instance** (configured at construction, like the GeoTIFF reader's
 //! band handling). The default-registered [`Ff10Reader::new`] (`member = None`)
 //! decodes a bare `.csv` — the committed conformance fixture + cross-language
-//! crosscheck path. For the zipped tutorial input, a caller injects a
-//! member-configured reader through the existing `Provider::with_formats` seam.
+//! crosscheck path. For a zipped input, a caller injects a configured reader
+//! (via [`Ff10Reader::member`], [`Ff10Reader::members`],
+//! [`Ff10Reader::member_glob`], [`Ff10Reader::skip_header_row`]) through the
+//! existing `Provider::with_formats` seam.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::io::Read;
 use std::path::Path;
 
@@ -89,12 +91,16 @@ pub enum Ff10Kind {
     Point,
 }
 
-/// The active `ff10` reader. `member`/`kind`/`numeric` are carried on the
-/// instance (see the module docs on the reader-kwarg asymmetry).
+/// The active `ff10` reader. `member`/`members`/`member_glob`/
+/// `skip_header_row`/`kind`/`numeric` are carried on the instance (see the
+/// module docs on the reader-kwarg asymmetry).
 #[derive(Debug, Clone)]
 pub struct Ff10Reader {
     kind: Ff10Kind,
     member: Option<String>,
+    members: Vec<String>,
+    member_glob: Option<String>,
+    skip_header_row: bool,
     numeric: &'static [&'static str],
 }
 
@@ -111,14 +117,56 @@ impl Ff10Reader {
         Self {
             kind: Ff10Kind::Point,
             member: None,
+            members: Vec::new(),
+            member_glob: None,
+            skip_header_row: false,
             numeric: &FF10_POINT_NUMERIC,
         }
     }
 
     /// Extract the named member from a `.zip` blob (reader config; NOT part of the
-    /// cache key — many members share one cached zip).
+    /// cache key — many members share one cached zip). Mutually exclusive with
+    /// [`Self::members`]/[`Self::member_glob`].
     pub fn member(mut self, member: impl Into<String>) -> Self {
         self.member = Some(member.into());
+        self
+    }
+
+    /// Select MULTIPLE members of a `.zip` blob by explicit name. Combined
+    /// (union, deduplicated) with any [`Self::member_glob`] matches; the selected
+    /// members are read and their rows concatenated in ascending lexicographic
+    /// (byte) order of member name. A name absent from the archive is an error.
+    /// Reader config; NOT part of the cache key.
+    pub fn members<I, S>(mut self, members: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.members = members.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Select MULTIPLE members of a `.zip` blob by an fnmatch-style glob (`*` any
+    /// run incl. empty, `?` one char, `[...]`/`[!...]` character class;
+    /// case-sensitive; matched against the full member path, e.g. `*egu*`). A
+    /// glob matching zero members is an error; directory placeholder entries
+    /// (names ending in `/`) are never selected. Combined (union) with
+    /// [`Self::members`]; concatenation is in ascending lexicographic (byte)
+    /// order of member name. Reader config; NOT part of the cache key.
+    pub fn member_glob(mut self, glob: impl Into<String>) -> Self {
+        self.member_glob = Some(glob.into());
+        self
+    }
+
+    /// Handle the EPA 2016fd-style column-header line: after comment (`#`) and
+    /// blank lines are dropped, the first remaining line of each selected input
+    /// (each selected zip member, or the bare file) must be a header row — its
+    /// first comma-separated field, compared case-insensitively, must be
+    /// `country_cd` — and exactly that one line is skipped per member. If the
+    /// first field is anything else the reader errors (the option asserts a
+    /// header row and never silently drops a data row).
+    pub fn skip_header_row(mut self, yes: bool) -> Self {
+        self.skip_header_row = yes;
         self
     }
 
@@ -147,12 +195,24 @@ impl Reader for Ff10Reader {
     ) -> Result<NativeDataset> {
         // Selection::All is the only variant today; the whole table is read.
         let Ff10Kind::Point = self.kind;
-        let text = match &self.member {
-            Some(m) => read_zip_member(blob_path, m)?,
-            None => std::fs::read_to_string(blob_path)
-                .map_err(|e| Error::io(Some(blob_path.to_path_buf()), e))?,
+        let texts: Vec<String> = if !self.members.is_empty() || self.member_glob.is_some() {
+            if self.member.is_some() {
+                return Err(fmt_err(
+                    "`member` is mutually exclusive with `members`/`member_glob`",
+                ));
+            }
+            read_zip_selected(blob_path, &self.members, self.member_glob.as_deref())?
+        } else if let Some(m) = &self.member {
+            vec![read_zip_member(blob_path, m)?]
+        } else {
+            vec![std::fs::read_to_string(blob_path)
+                .map_err(|e| Error::io(Some(blob_path.to_path_buf()), e))?]
         };
-        decode(&text, self.numeric, variables)
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for text in &texts {
+            parse_rows(&mut rows, text, self.skip_header_row)?;
+        }
+        build_dataset(rows, self.numeric, variables)
     }
 }
 
@@ -170,26 +230,211 @@ fn read_zip_member(path: &Path, member: &str) -> Result<String> {
     Ok(text)
 }
 
-/// Decode FF10 point text into 77 native fields on a single `index` dim.
-fn decode(text: &str, numeric: &[&str], variables: &[String]) -> Result<NativeDataset> {
+/// Resolve `members`/`glob` against the archive and return the selected member
+/// TEXTS in ascending lexicographic (byte) order of member name — the
+/// deterministic concatenation order. An explicit name absent from the archive,
+/// and a glob matching zero members, are errors. Selection considers only FILE
+/// members: directory placeholder entries (names ending in `/`, e.g. the real
+/// 2016fd zip's `…/ptegu/`) are ignored.
+fn read_zip_selected(path: &Path, members: &[String], glob: Option<&str>) -> Result<Vec<String>> {
+    let file = std::fs::File::open(path).map_err(|e| Error::io(Some(path.to_path_buf()), e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(zip_err)?;
+    let names: Vec<String> = archive
+        .file_names()
+        .filter(|n| !n.ends_with('/'))
+        .map(str::to_string)
+        .collect();
+
+    // BTreeSet: dedup + the sorted (byte-lexicographic) concatenation order.
+    let mut selected: BTreeSet<String> = BTreeSet::new();
+    for m in members {
+        if !names.iter().any(|n| n == m) {
+            return Err(fmt_err(&format!(
+                "zip member {m:?} not found in {}; members: {names:?}",
+                path.display()
+            )));
+        }
+        selected.insert(m.clone());
+    }
+    if let Some(g) = glob {
+        let toks = glob_tokens(g);
+        let hits: Vec<&String> = names.iter().filter(|n| glob_match(&toks, n)).collect();
+        if hits.is_empty() {
+            return Err(fmt_err(&format!(
+                "member_glob {g:?} matched no members in {}; members: {names:?}",
+                path.display()
+            )));
+        }
+        for h in hits {
+            selected.insert(h.clone());
+        }
+    }
+    if selected.is_empty() {
+        return Err(fmt_err("members/member_glob selected no zip members"));
+    }
+
+    let mut out = Vec::with_capacity(selected.len());
+    for name in &selected {
+        let mut zf = archive.by_name(name).map_err(zip_err)?;
+        let mut text = String::new();
+        zf.read_to_string(&mut text)
+            .map_err(|e| Error::io(Some(path.to_path_buf()), e))?;
+        out.push(text);
+    }
+    Ok(out)
+}
+
+/// One parsed element of an fnmatch-style glob pattern.
+enum GlobTok {
+    /// `*` — any run of characters, including empty.
+    Star,
+    /// `?` — exactly one character.
+    Any,
+    /// A literal character.
+    Lit(char),
+    /// `[...]` / `[!...]` — a (possibly negated) character class of literal
+    /// chars and `a-z` ranges. An unclosed `[` is treated as a literal (fnmatch
+    /// semantics).
+    Class { neg: bool, ranges: Vec<(char, char)> },
+}
+
+/// Parse an fnmatch-style glob (`*`, `?`, `[...]`/`[!...]`; case-sensitive) into
+/// tokens. Semantics match Python `fnmatch.fnmatchcase` and the Julia reader's
+/// `_glob_regex` — the cross-language `member_glob` contract.
+fn glob_tokens(pat: &str) -> Vec<GlobTok> {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut toks = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => toks.push(GlobTok::Star),
+            '?' => toks.push(GlobTok::Any),
+            '[' => {
+                let mut j = i + 1;
+                let neg = j < chars.len() && chars[j] == '!';
+                if neg {
+                    j += 1;
+                }
+                let body_start = j;
+                if j < chars.len() && chars[j] == ']' {
+                    j += 1; // a ']' first in the class is a literal member
+                }
+                while j < chars.len() && chars[j] != ']' {
+                    j += 1;
+                }
+                if j >= chars.len() {
+                    toks.push(GlobTok::Lit('[')); // unclosed class -> literal '['
+                } else {
+                    let body = &chars[body_start..j];
+                    let mut ranges = Vec::new();
+                    let mut k = 0;
+                    while k < body.len() {
+                        if k + 2 < body.len() && body[k + 1] == '-' {
+                            ranges.push((body[k], body[k + 2]));
+                            k += 3;
+                        } else {
+                            ranges.push((body[k], body[k]));
+                            k += 1;
+                        }
+                    }
+                    toks.push(GlobTok::Class { neg, ranges });
+                    i = j;
+                }
+            }
+            c => toks.push(GlobTok::Lit(c)),
+        }
+        i += 1;
+    }
+    toks
+}
+
+fn tok_match(t: &GlobTok, c: char) -> bool {
+    match t {
+        GlobTok::Star => unreachable!("Star handled by glob_match"),
+        GlobTok::Any => true,
+        GlobTok::Lit(l) => *l == c,
+        GlobTok::Class { neg, ranges } => {
+            let inside = ranges.iter().any(|&(lo, hi)| lo <= c && c <= hi);
+            inside != *neg
+        }
+    }
+}
+
+/// Match tokens against `text` with classic single-pointer `*` backtracking.
+fn glob_match(toks: &[GlobTok], text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let (mut ti, mut si) = (0usize, 0usize);
+    let mut star: Option<usize> = None;
+    let mut mark = 0usize;
+    while si < chars.len() {
+        if ti < toks.len() && matches!(toks[ti], GlobTok::Star) {
+            star = Some(ti);
+            mark = si;
+            ti += 1;
+        } else if ti < toks.len()
+            && !matches!(toks[ti], GlobTok::Star)
+            && tok_match(&toks[ti], chars[si])
+        {
+            ti += 1;
+            si += 1;
+        } else if let Some(s) = star {
+            ti = s + 1;
+            mark += 1;
+            si = mark;
+        } else {
+            return false;
+        }
+    }
+    while ti < toks.len() && matches!(toks[ti], GlobTok::Star) {
+        ti += 1;
+    }
+    ti == toks.len()
+}
+
+/// Parse one input's FF10 text into 77-field rows, appended to `rows`.
+///
+/// Skips empty + '#' comment lines; with `skip_header_row`, drops the asserted
+/// `country_cd` header line (the first remaining line's first comma-separated
+/// field must equal `country_cd` case-insensitively — anything else is an error,
+/// so the option can never silently drop a data row); then RFC-4180 parses.
+fn parse_rows(rows: &mut Vec<Vec<String>>, text: &str, skip_header_row: bool) -> Result<()> {
     let ncol = FF10_POINT_COLUMNS.len();
 
-    // Skip empty + '#' comment lines, then RFC-4180 parse each data line.
-    let data: String = text
+    let mut data_lines: Vec<&str> = text
         .lines()
         .filter(|ln| {
             let s = ln.trim_start();
             !s.is_empty() && !ln.trim().is_empty() && !s.starts_with('#')
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
 
+    if skip_header_row {
+        let Some(first) = data_lines.first() else {
+            return Err(fmt_err(
+                "skip_header_row: no non-comment lines — the asserted header row is missing",
+            ));
+        };
+        let first_field = first
+            .split(',')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if first_field != "country_cd" {
+            return Err(fmt_err(&format!(
+                "skip_header_row: first non-comment line does not start with a \
+                 'country_cd' header field (got {first_field:?}); refusing to \
+                 drop a data row"
+            )));
+        }
+        data_lines.remove(0);
+    }
+
+    let data = data_lines.join("\n");
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(false)
         .from_reader(data.as_bytes());
-
-    let mut rows: Vec<Vec<String>> = Vec::new();
     for rec in rdr.records() {
         let rec = rec.map_err(csv_err)?;
         if rec.len() != ncol {
@@ -200,7 +445,25 @@ fn decode(text: &str, numeric: &[&str], variables: &[String]) -> Result<NativeDa
         }
         rows.push(rec.iter().map(str::to_string).collect());
     }
+    Ok(())
+}
 
+/// Decode FF10 point text into 77 native fields on a single `index` dim
+/// (bare-text convenience over [`parse_rows`] + [`build_dataset`]; test-only —
+/// production goes through [`Ff10Reader::read_native`]).
+#[cfg(test)]
+fn decode(text: &str, numeric: &[&str], variables: &[String]) -> Result<NativeDataset> {
+    let mut rows = Vec::new();
+    parse_rows(&mut rows, text, false)?;
+    build_dataset(rows, numeric, variables)
+}
+
+/// Assemble parsed 77-field rows into the native `points` dataset.
+fn build_dataset(
+    rows: Vec<Vec<String>>,
+    numeric: &[&str],
+    variables: &[String],
+) -> Result<NativeDataset> {
     let numset: HashSet<&str> = numeric.iter().copied().collect();
     let want: Option<HashSet<&str>> = if variables.is_empty() {
         None
@@ -403,6 +666,167 @@ mod tests {
         // A missing member is a clear error, not a silent empty.
         let miss = Ff10Reader::new().member("nope.csv");
         assert!(miss.read_native(&zpath, &[], &Selection::All).is_err());
+    }
+
+    /// The lowercase `country_cd,region_cd,…` header line the EPA 2016fd members
+    /// carry (77 fields, NOT a `#` comment).
+    fn header_line() -> String {
+        FF10_POINT_COLUMNS
+            .iter()
+            .map(|c| c.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// One 77-field row with the given POLID/ANN_VALUE (plus fixed ids).
+    fn tiny_row(fac: &str, polid: &str, ann: &str) -> String {
+        let idx = |name: &str| FF10_POINT_COLUMNS.iter().position(|&c| c == name).unwrap();
+        let mut r = vec![String::new(); FF10_POINT_COLUMNS.len()];
+        r[idx("COUNTRY_CD")] = "US".into();
+        r[idx("REGION_CD")] = "01001".into();
+        r[idx("FACILITY_ID")] = fac.into();
+        r[idx("POLID")] = polid.into();
+        r[idx("ANN_VALUE")] = ann.into();
+        r.join(",")
+    }
+
+    /// A zip with two `*egu*` members + one excluded member, each carrying a
+    /// `#` comment block and the `country_cd` header line.
+    fn egu_zip(dir: &Path) -> std::path::PathBuf {
+        let member = |rows: &[String]| {
+            format!(
+                "#FORMAT=FF10_POINT\n{}\n{}\n",
+                header_line(),
+                rows.join("\n")
+            )
+        };
+        let zpath = dir.join("2016fd_inputs_point.zip");
+        let f = std::fs::File::create(&zpath).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        // A glob-matching DIRECTORY placeholder entry (like the real 2016fd
+        // `…/ptegu/`) — selection must ignore it (file members only).
+        zw.add_directory::<_, ()>("point_egu", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        // Written in NON-sorted order to prove the read order is sorted-name.
+        for (name, rows) in [
+            ("point/egu_beta.csv", vec![tiny_row("F202", "NOX", "333.3")]),
+            (
+                "point/egu_alpha.csv",
+                vec![tiny_row("F101", "NOX", "111.1"), tiny_row("F101", "SO2", "22.2")],
+            ),
+            ("point/ptnonipm.csv", vec![tiny_row("F999", "NOX", "999.9")]),
+        ] {
+            zw.start_file::<_, ()>(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(member(&rows).as_bytes()).unwrap();
+        }
+        zw.finish().unwrap();
+        zpath
+    }
+
+    #[test]
+    fn member_glob_concatenates_in_sorted_name_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        let reader = Ff10Reader::new().member_glob("*egu*").skip_header_row(true);
+        let ds = reader.read_native(&zpath, &[], &Selection::All).unwrap();
+        // alpha (2 rows) sorts before beta (1 row); ptnonipm excluded.
+        assert_eq!(strs(&ds, "FACILITY_ID"), &["F101", "F101", "F202"]);
+        assert_eq!(f64s(&ds, "ANN_VALUE"), &[111.1, 22.2, 333.3]);
+        assert!(!strs(&ds, "FACILITY_ID").contains(&"F999".to_string()));
+    }
+
+    #[test]
+    fn member_glob_zero_matches_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        let err = Ff10Reader::new()
+            .member_glob("*nope*")
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap_err();
+        assert!(err.to_string().contains("matched no members"), "{err}");
+    }
+
+    #[test]
+    fn explicit_members_union_glob_and_missing_name_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        // explicit list ∪ glob, deduplicated, sorted: alpha + beta + ptnonipm.
+        let ds = Ff10Reader::new()
+            .members(["point/ptnonipm.csv", "point/egu_alpha.csv"])
+            .member_glob("*egu*")
+            .skip_header_row(true)
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap();
+        assert_eq!(strs(&ds, "FACILITY_ID"), &["F101", "F101", "F202", "F999"]);
+        // an explicit member absent from the archive is an error.
+        let err = Ff10Reader::new()
+            .members(["point/absent.csv"])
+            .skip_header_row(true)
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn skip_header_row_skips_exactly_once_per_member_and_asserts() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        // Without skip_header_row, the header line is a 77-field data row that
+        // dies at the numeric parse of ann_value.
+        let err = Ff10Reader::new()
+            .member_glob("*egu*")
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap_err();
+        assert!(err.to_string().contains("cannot parse"), "{err}");
+
+        // singular member + skip_header_row composes.
+        let ds = Ff10Reader::new()
+            .member("point/egu_beta.csv")
+            .skip_header_row(true)
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap();
+        assert_eq!(strs(&ds, "FACILITY_ID"), &["F202"]);
+
+        // asserting a header on a member that has none is an error, never a
+        // silently-dropped data row.
+        let bare = dir.path().join("noheader.csv");
+        std::fs::write(&bare, fixture_text()).unwrap();
+        let err = Ff10Reader::new()
+            .skip_header_row(true)
+            .read_native(&bare, &[], &Selection::All)
+            .unwrap_err();
+        assert!(err.to_string().contains("refusing to drop"), "{err}");
+    }
+
+    #[test]
+    fn member_is_exclusive_with_members_and_glob() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        let err = Ff10Reader::new()
+            .member("point/egu_alpha.csv")
+            .member_glob("*egu*")
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn glob_matcher_semantics() {
+        let m = |p: &str, t: &str| glob_match(&glob_tokens(p), t);
+        assert!(m("*egu*", "point/egucems_2016fd.csv"));
+        assert!(m("*egu*", "egu"));
+        assert!(!m("*egu*", "point/ptnonipm.csv"));
+        assert!(m("?gu", "egu"));
+        assert!(!m("?gu", "eegu"));
+        assert!(m("egu[12].csv", "egu1.csv"));
+        assert!(!m("egu[12].csv", "egu3.csv"));
+        assert!(m("egu[!12].csv", "egu3.csv"));
+        assert!(m("a-c.csv", "a-c.csv"));
+        assert!(m("egu[a-c].csv", "egub.csv"));
+        assert!(!m("egu[a-c].csv", "egud.csv"));
+        assert!(m("lit[", "lit[")); // unclosed class is a literal
+        assert!(!m("*EGU*", "point/egucems.csv")); // case-sensitive
     }
 
     #[test]
