@@ -97,6 +97,58 @@ function lock_key(f::Function, s::LocalStore, key::AbstractString)
     end
 end
 
+# --- output store (WRITE path: a plain Zarr v3 directory tree) --------------
+#
+# The content-addressed cache above is the READ side (blobs keyed by hash). The
+# WRITE side emits a REAL directory tree (`<base>/<array>/zarr.json`,
+# `<base>/<array>/c/<shard coords>`), so it needs its own object `put` — but the
+# commit discipline is IDENTICAL to `put_blob!`: stage to `tmp/<uuid>.part`, then
+# `rename(2)` into place. The rename is the crash barrier (a reader never sees a
+# partial shard/metadata object even without taking a lock). Local/parallel-FS
+# only in Wave 1 (s3 multipart is a later wave; the `S3Store` stub stays as-is).
+
+"""A fresh `<base>/tmp/<uuid>.part` staging path under an OUTPUT base directory
+(the write-path mirror of [`staging_path`])."""
+function output_staging_path(base::AbstractString)
+    d = joinpath(base, "tmp")
+    mkpath(d)
+    return joinpath(d, string(uuid4(), ".part"))
+end
+
+"""
+    put_object!(base, relpath, bytes) -> committed path
+
+Atomically write `bytes` to `<base>/<relpath>`: stage under `<base>/tmp/`, then
+`rename(2)` into place (the write-path mirror of [`put_blob!`]). The rename is
+the real guarantee — a reader never sees a partial object."""
+function put_object!(base::AbstractString, relpath::AbstractString,
+                     bytes::AbstractVector{UInt8})
+    staged = output_staging_path(base)
+    target = joinpath(base, relpath)
+    mkpath(dirname(target))
+    try
+        write(staged, bytes)
+        Base.Filesystem.rename(staged, target)
+    finally
+        isfile(staged) && rm(staged; force = true)
+    end
+    return target
+end
+
+"""Run `f` under a `<base>/locks/<name>.lock` advisory `mkpidlock` — the same
+crash-healing lock the READ side uses ([`lock_key`]). Guards concurrent metadata
+rewrites (`zarr.json`, the output manifest) when multiple writers share a store."""
+function with_output_lock(f::Function, base::AbstractString, name::AbstractString)
+    lp = joinpath(base, "locks", string(name, ".lock"))
+    mkpath(dirname(lp))
+    lk = mkpidlock(lp; wait = true, stale_age = _lock_stale_age())
+    try
+        return f()
+    finally
+        close(lk)
+    end
+end
+
 # --- s3 store (STUB; esio-9nb.8) --------------------------------------------
 
 """Registered stub for the future object-store backend (esio-9nb.8). Conditional

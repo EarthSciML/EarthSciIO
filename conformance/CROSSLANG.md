@@ -145,3 +145,179 @@ track's registered readers — there is nothing per-case to edit:
   reader for its format decodes it and is cross-checked automatically.
 - **New reader in a track** → it appears in that track's dump `readers`, and the
   coverage gate begins requiring it for that format's cases.
+
+---
+
+# Cross-language WRITE conformance (streaming-output-sinks Wave 5)
+
+The harness above proves the three **readers** decode a shared corpus to equal
+arrays. This section proves the symmetric claim for the write boundary: the
+**Python, Julia, and Rust Zarr v3 sharded WRITERS emit stores that decode to the
+same arrays and carry the same structural / CF metadata** — for one shared,
+language-neutral input spec.
+
+```
+conformance/
+  write_spec.json                # shared input spec, `diagnostic` profile
+  write_spec_wasm.json           # shared input spec, `wasm` profile (same data)
+  gen_write_spec.py              # deterministic regenerator for both spec variants
+  dumpers/codec_weakdeps.jl      # loads the Blosc + CodecZstd weakdep extensions
+  dumpers/write_python.py        # drives earthsciio.backends.zarr_write.ZarrWriter -> store
+  dumpers/write_julia.jl         # drives EarthSciIO.ZarrWriter (reference)         -> store
+  ../rust/examples/conformance_write.rs  # drives earthsciio::write_zarr_v3         -> store
+  dumpers/read_python.py         # reads a store with the Python ZarrReader -> write-native-dump/v1
+  dumpers/read_julia.jl          # reads a store with the Julia ZarrReader  -> write-native-dump/v1
+  crosscheck_write.py            # asserts: vs spec oracle, pairwise, + store metadata
+  run_write_conformance.sh       # driver: run every writer + every reader + crosscheck (the gate)
+```
+
+## Run it
+
+```bash
+# Python needs >=3.11 with the `zarr` extra (zarr>=3); point PYTHON at it:
+PYTHON=/path/to/py311/bin/python conformance/run_write_conformance.sh
+conformance/run_write_conformance.sh /tmp/wstores   # keep the stores + dumps
+PROFILES=wasm conformance/run_write_conformance.sh  # just one codec profile
+```
+
+Each track whose toolchain is present writes a store; each present reader decodes
+every produced store; the comparator gates. A missing toolchain is a logged skip,
+never a silent pass. The run is **parameterized over codec profiles**
+(`PROFILES`, default `diagnostic wasm`): each profile is an independent
+write → read → compare round over its own spec variant.
+
+## The shared input spec — `earthsciio/write-conformance-spec/v1`
+
+`write_spec.json` is a tiny deterministic dataset with the values written out in
+full (no language re-derives them from a formula), so it is simultaneously the
+**writer input** and the **decode oracle**:
+
+* dims `time` (growable) + `lat`(3) + `lon`(4); `lon` split into **2 inner chunks
+  per shard**, `time` sharded **2 records/shard** → 4 records = 2 committed shards
+  + a streaming time-axis resize;
+* CF coordinate variables `lat`/`lon` (`units`/`standard_name`/`axis`) and a
+  growable `time` coordinate with CF time attrs;
+* two `float64` variables `temperature`/`pressure` over `(time, lat, lon)` carrying
+  CF `units`/`standard_name`/`coordinates`; group attrs `title`/`Conventions`;
+* a **codec profile** (below), sharding codec (`sharding_indexed`, index
+  `[bytes(little), crc32c]`, `index_location:"end"`).
+
+Each record's `vars[name]` is a `[lat][lon]` list (row-major); the full variable
+array is `[time][lat][lon]`.
+
+## Codec profiles — and why `wasm` exists
+
+The Zarr v3 codec pipeline is `array -> bytes(endian) -> <compressor>`. Every
+profile shares the same dataset, dim order, chunk/shard grid, `dimension_names`,
+CF coordinate variables and attrs, `fill_value` 0.0 (never NaN), and output
+manifest; **only the inner (per-chunk) compressor differs**.
+
+| profile | spec file | inner pipeline | notes |
+|---|---|---|---|
+| `diagnostic` | `write_spec.json` | `[bytes(little), blosc(zstd, clevel=5, shuffle)]` | default streaming output |
+| `checkpoint` | *(not in the harness)* | `[bytes(little), blosc(zstd, clevel=7, shuffle)]` | lossless durability |
+| `wasm` | `write_spec_wasm.json` | `[bytes(little), zstd(level=5, checksum=false)]` | **no Blosc** — browser/wasm-loadable |
+
+**Why `wasm`.** The Blosc *container* — not zstd itself — is what a
+WebAssembly/browser Zarr reader cannot decode. The `zarrs` crate's Blosc support
+comes from `blosc-src`, whose vendored C sources do **not** build for the
+`wasm32-unknown-unknown` target, whereas the standard Zarr v3 `zstd` codec is pure
+Rust there. So the `wasm` profile swaps the inner compressor for the plain v3
+`zstd` codec and keeps everything else identical. In particular the
+`sharding_indexed` outer codec and the crc32c shard index are **retained** — both
+are pure Rust and wasm-safe, so sharding's object-count benefits survive.
+
+Blosc's byte-shuffle filter is deliberately **not** replaced: shuffle is not
+available as a standalone standard v3 codec, so the chain is plainly
+`bytes + zstd`. This costs nothing in practice for smooth model output — zstd
+alone compresses it at least as well as blosc-shuffle at the same level — and it
+is lossless either way, so decoded values are bit-identical to `diagnostic`.
+
+Selection mirrors each language's existing surface, and an unknown name is
+rejected:
+
+| language | profile type | selection |
+|---|---|---|
+| Julia  | `ZstdProfile <: CodecProfile`, `ZSTD_WASM` | `OutputSchema(; profile = :wasm)` |
+| Python | `ZstdProfile` dataclass, `ZSTD_WASM` | `OutputSchema(profile="wasm")` |
+| Rust   | `ZstdProfile` / `CodecProfile::Zstd`, `ZSTD_WASM` | `OutputSchema { profile: "wasm".into(), .. }` |
+
+The Julia track's plain-zstd encode/decode rides a weakdep extension
+(`CodecZstd` → `EarthSciIOZstdExt`) exactly as Blosc does (`Blosc` →
+`EarthSciIOBloscExt`), so a base install stays light.
+
+## How it works — tolerance, not bytes (RFC §16.6)
+
+3rd-party codec builds (Julia Blosc.jl / Python numcodecs / Rust zarrs) legitimately
+produce **different compressed bytes** — verified: the three writers' first
+`temperature` shard objects have three distinct sha256s. So conformance is on
+**decoded arrays within tolerance** + structural metadata, never byte identity.
+Two independent checks in [`crosscheck_write.py`](crosscheck_write.py):
+
+1. **Decoded-array agreement.** Each store is read back to
+   `earthsciio/write-native-dump/v1` (one dump per (writer, reader) pair) and
+   checked (a) against the spec **oracle** and (b) **pairwise** against every other
+   dump — same dtype, dims, dim order, shape, and values within
+   `|a-b| <= atol + rtol·|b|` (`atol=1e-9`, `rtol=1e-6` for float64). A fill/`null`
+   cell matches only `null`; `fill_value` (0.0) is **not** mapped to NaN.
+2. **Structural / CF-metadata agreement.** Each store's `zarr.json` objects are read
+   **directly** (language-neutral JSON, no reader) and compared pairwise:
+   `data_type`, `shape`, `dimension_names`, the shard grid, the sharding inner
+   `chunk_shape`, the **ordered inner codec chain** plus the Blosc *and*
+   plain-`zstd` params, `fill_value`, and the key CF attributes
+   (`units`/`standard_name`/`axis`/`coordinates`/`calendar`) + group attrs. This
+   pins dim order, shape, coord metadata and CF attrs even for a store no local
+   reader could open — and, per profile, proves every track emitted the *same*
+   compressor (a track that silently fell back from `zstd` to `blosc` fails here
+   even though the decoded values would still match).
+
+The readback drivers run the **real** store-backed readers (the ones the read
+harness proves conformant) over a freshly-written local store: `read_python.py`
+via a trivial `<base>/<key>`→file cache shim, `read_julia.jl` via a plain online
+`Cache` pointed at a `file://` base URL (a local copy, no network).
+
+## Coverage (executed in-sandbox, 2026-07)
+
+Run for **both** codec profiles (`diagnostic` and `wasm`), identically:
+
+| writer store | python reader | julia reader | structural (zarr.json) |
+|---|---|---|---|
+| python (`ZarrWriter`)       | ✅ | ✅ | ✅ vs julia, vs rust |
+| julia (`ZarrWriter`, ref)   | ✅ | ✅ | ✅ vs python, vs rust |
+| rust (`write_zarr_v3`)      | ✅ | ✅ | ✅ vs python, vs julia |
+
+Per profile: all **6** (writer, reader) readbacks agree with the oracle (5 fields
+each); all **15** pairwise decoded comparisons agree within tolerance; all **3**
+stores agree structurally on every array plus group attrs (18 array + 3 group
+pairwise comparisons) — a full three-way write-conformance proof, twice over.
+
+Because both Blosc-zstd and plain zstd are lossless, the decoded float64 values
+are in fact bit-exact across languages *and* across profiles (the tolerance is the
+sanctioned envelope, not a fudge). The three tracks emit **byte-identical codec
+metadata** per profile — verified on disk:
+
+```
+diagnostic  python  ['bytes','blosc'] cname=zstd clevel=5 shuffle=shuffle typesize=8
+diagnostic  julia   ['bytes','blosc'] cname=zstd clevel=5 shuffle=shuffle typesize=8
+diagnostic  rust    ['bytes','blosc'] cname=zstd clevel=5 shuffle=shuffle typesize=8
+wasm        python  ['bytes','zstd']  level=5 checksum=False
+wasm        julia   ['bytes','zstd']  level=5 checksum=False
+wasm        rust    ['bytes','zstd']  level=5 checksum=False
+```
+
+### Environment notes
+
+* **Python** requires Python ≥3.11 + `pip install -e ".[zarr]"` (zarr≥3;
+  zarr 3.2.1 known-good). The repo's system Python 3.9 cannot run the writer —
+  point `PYTHON` at a 3.11+ interpreter.
+* **Rust** builds `conformance_write` against the existing crate deps; it needs the
+  sibling `netcdf-reader` path dep present (the same dep the whole crate needs). If
+  that fork is absent, `cargo` skips with a logged reason and the gate runs on the
+  tracks that built. The `wasm` profile needs **no new crate dependency**: `zarrs`'
+  default feature set already includes the pure-Rust-friendly `zstd` codec.
+* **Julia** uses the minimal `--project=julia` env. The writer/reader load their
+  codec weakdeps through `dumpers/codec_weakdeps.jl`: `Blosc`
+  (→ `EarthSciIOBloscExt`) for the Blosc profiles and `CodecZstd`
+  (→ `EarthSciIOZstdExt`) for `wasm`. Each is tried as a direct import first and
+  falls back to a temp env stacked onto `LOAD_PATH`, so a checkout without them in
+  the active project still runs.

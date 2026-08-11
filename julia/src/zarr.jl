@@ -160,16 +160,28 @@ _blosc_decompress(raw) = error(
     "`using Blosc` so the EarthSciIOBloscExt extension supplies the decode (kept " *
     "a weakdep to keep a base EarthSciIO install light, mirroring the TiffImages path).")
 
+# The plain (non-Blosc) `zstd` codec decode lives in the `CodecZstd` weakdep
+# extension (`using CodecZstd`), mirroring the Blosc weakdep above. It is what
+# the writer's `:wasm` profile emits — a standard Zarr v3 `zstd` codec, which a
+# wasm/browser reader can decode where Blosc cannot.
+_zstd_decompress(raw) = error(
+    "the zarr reader needs the CodecZstd backend for plain zstd-compressed " *
+    "chunks (the `wasm` output profile): add `using CodecZstd` so the " *
+    "EarthSciIOZstdExt extension supplies the decode (kept a weakdep to keep a " *
+    "base EarthSciIO install light, mirroring the Blosc path).")
+
 _decompress(m::ZArrayMeta, raw) = _decompress(m.compressor, raw)
 _decompress(::Nothing, raw) = raw
 function _decompress(comp::AbstractDict, raw)
     id = lowercase(String(get(comp, "id", "")))
     if id == "blosc"
         return _blosc_decompress(raw)
+    elseif id == "zstd"
+        return _zstd_decompress(raw)
     elseif id in ("", "none")
         return raw
     else
-        error("unsupported zarr compressor id '$id' (the Julia track supports blosc)")
+        error("unsupported zarr compressor id '$id' (the Julia track supports blosc and zstd)")
     end
 end
 
@@ -197,8 +209,64 @@ function _chunk_array(m::ZArrayMeta, raw)
     end
 end
 
-# --- assembly ---------------------------------------------------------------
+# --- assembly (CHUNK-driven scatter) ----------------------------------------
+#
+# Assembly is SCATTER, not gather, and that is a memory contract, not a style
+# choice. The obvious shape — decompress every needed chunk into a `Dict`, then
+# loop over the OUTPUT and pull each cell from its chunk — forces every chunk to
+# be resident simultaneously, because any output cell may need any chunk. On the
+# real ISRM SR array one read is 416 chunks x ~21 MB decompressed = ~8.7 GB held
+# at once to produce a 0.59 GB result (~15x amplification; it OOM-killed a
+# production run). Nothing leaks — the peak itself is the bug.
+#
+# Inverting the loop fixes it: precompute, per dimension, which output positions
+# each chunk coordinate owns (`_pos_map`), then fetch/decode ONE chunk, scatter
+# its cells into the output (`_scatter_chunk!`), and drop it before fetching the
+# next. Peak goes from (output + ALL chunks) to (output + ONE chunk), and the
+# Dict lookups go from one-per-output-element to one-per-chunk.
+#
+# The results are BIT-IDENTICAL to the gather: `g ÷ chunks[d]` is a function of
+# `g`, so every output cell belongs to exactly one chunk coordinate and is
+# written exactly once — the same `convert(OT, ...)` of the same source element,
+# only in a different order. Cells no chunk covers (an absent chunk object) keep
+# `fill_value`, exactly as before.
 
+# Per dimension `d`: chunk coord -> [(output position, 1-based within-chunk
+# position), ...] for every selected index that falls in that chunk. Every chunk
+# coord `_needed_chunks` can produce is a key here, by construction (both are
+# derived from `g ÷ chunks[d]` over the same `sel_indices`).
+function _pos_map(sel_indices, chunks)
+    ndim = length(chunks)
+    posmap = [Dict{Int,Vector{Tuple{Int,Int}}}() for _ in 1:ndim]
+    for d in 1:ndim
+        cl = chunks[d]
+        for (i, g) in enumerate(sel_indices[d])
+            push!(get!(posmap[d], g ÷ cl, Tuple{Int,Int}[]), (i, g % cl + 1))
+        end
+    end
+    return posmap
+end
+
+# Write decoded chunk `carr` (chunk id `ck`) into its cells of `out`, converting
+# to `OT`. Touches only the cells this chunk owns; leaves the rest alone.
+function _scatter_chunk!(out, carr, posmap, ck::NTuple{N,Int}, ::Type{OT}) where {N,OT}
+    for combo in Iterators.product(ntuple(d -> posmap[d][ck[d]], Val(N))...)
+        out[CartesianIndex(ntuple(d -> combo[d][1], Val(N)))] =
+            convert(OT, carr[CartesianIndex(ntuple(d -> combo[d][2], Val(N)))])
+    end
+    return out
+end
+
+# The fill-initialized output for a selection (absent chunks keep `fill_value`).
+function _alloc_out(sel_indices, m::ZArrayMeta)
+    OT = _out_type(m)
+    return fill(convert(OT, m.fill_value), Tuple(length(s) for s in sel_indices)...)
+end
+
+# The OUTPUT-driven gather this reader used to run. No production path calls it
+# any more (it is the shape that caused the ~15x peak described above); it is
+# retained as the reference oracle the scatter is differentially tested against
+# in `julia/test/test_zarr.jl` — if the two ever disagree, that test fails.
 function _assemble(sel_indices, m::ZArrayMeta, buffers)
     ndim = _ndim(m)
     sel_shape = Tuple(length(s) for s in sel_indices)
@@ -232,57 +300,286 @@ function _fetch_bytes_optional(cache::Cache, url::AbstractString)
     end
 end
 
+# Probe fetch: returns bytes or `nothing` on ANY fetch failure (a missing object).
+# Used only to detect v3 `zarr.json` vs v2 `.zarray` — a missing object is not an
+# error there, it's the other layout (or absence). Distinct from
+# `_fetch_bytes_optional`, which is v2-chunk-specific (only swallows `CacheMiss`).
+function _probe_bytes(cache::Cache, url::AbstractString)
+    try
+        return _fetch_bytes(cache, url)
+    catch
+        return nothing
+    end
+end
+
 # --- the store-backed entry point -------------------------------------------
 
 """
     read_store(::ZarrReader, cache, base_url; variables, select=nothing, _...)
 
-Read `variables` (array names) from the Zarr v2 store at `base_url` under an
-orthogonal `select`. `variables` is REQUIRED (the store cannot be enumerated
-without a consolidated `.zmetadata`). `select` (`Dict("axes"=>[...])`) is applied
-to each array whose rank matches the axis count; other-rank arrays read whole."""
+Read `variables` (array names) from the Zarr store at `base_url` under an
+orthogonal `select`. Reads BOTH Zarr **v2** (`.zarray`/`.zattrs`, plain chunk
+objects) and Zarr **v3** (`zarr.json`, the sharding codec) — the layout is
+detected per array by probing for `zarr.json` first, then `.zarray`. `variables`
+is REQUIRED (the store cannot be enumerated). `select` (`Dict("axes"=>[...])`) is
+applied to each array whose rank matches the axis count; other-rank arrays read
+whole."""
 function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
                     variables = nothing, select = nothing, _...)
     (variables === nothing || isempty(variables)) && error(
         "the zarr reader requires an explicit list of variables (arrays); the " *
-        "store cannot be enumerated without a consolidated .zmetadata")
+        "store cannot be enumerated without consolidated metadata")
     base = rstrip(String(base_url), '/')
     axes_spec = _select_axes(select)
 
     vars = Dict{String,NativeField}()
     for array in variables
         arr = String(array)
-        meta = _parse_zarray(_fetch_bytes(cache, "$base/$arr/.zarray"))
-        ndim = _ndim(meta)
-        zattrs = _fetch_bytes_optional(cache, "$base/$arr/.zattrs")
-        dims = _parse_zattrs(zattrs, ndim)
-
-        axes = (axes_spec !== nothing && length(axes_spec) == ndim) ?
-               [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
-        sel_indices = [_resolve_axis(axes[d], meta.shape[d]) for d in 1:ndim]
-
-        buffers = Dict{NTuple{ndim,Int},Any}()
-        for ck in _needed_chunks(sel_indices, meta.chunks)
-            url = "$base/$arr/" * _chunk_key(ck, meta.dim_sep)
-            raw = _fetch_bytes_optional(cache, url)
-            buffers[ck] = raw === nothing ? nothing : _chunk_array(meta, _decompress(meta, raw))
-        end
-
-        data = _assemble(sel_indices, meta, buffers)
-        vars[arr] = NativeField(data, dims, Dict{String,Any}())
+        # Probe v2 `.zarray` FIRST: the existing corpus is all-v2, so a v2 array
+        # costs exactly one metadata fetch (no extra probe) — preserving the
+        # laziness fetch-count contract. Only a v2-miss falls back to v3 `zarr.json`.
+        z2 = _probe_bytes(cache, "$base/$arr/.zarray")
+        vars[arr] = z2 !== nothing ?
+            _read_v2_array(cache, base, arr, z2, axes_spec) :
+            _read_v3_array(cache, base, arr,
+                           _fetch_bytes(cache, "$base/$arr/zarr.json"), axes_spec)
     end
     return NativeDataset(vars, Dict{String,NativeField}())
+end
+
+# --- v2 array read (the original path; `zbytes` = already-fetched .zarray) ---
+
+function _read_v2_array(cache::Cache, base::AbstractString, arr::AbstractString,
+                        zbytes, axes_spec)
+    meta = _parse_zarray(zbytes)
+    ndim = _ndim(meta)
+    zattrs = _fetch_bytes_optional(cache, "$base/$arr/.zattrs")
+    dims = _parse_zattrs(zattrs, ndim)
+
+    axes = (axes_spec !== nothing && length(axes_spec) == ndim) ?
+           [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
+    sel_indices = [_resolve_axis(axes[d], meta.shape[d]) for d in 1:ndim]
+
+    # Chunk-driven scatter: decode ONE chunk, write its cells, drop it. See the
+    # assembly section — buffering every chunk first held ~8.7 GB for a 0.59 GB
+    # ISRM read; peak here is (output + one chunk).
+    OT = _out_type(meta)
+    posmap = _pos_map(sel_indices, meta.chunks)
+    data = _alloc_out(sel_indices, meta)
+    for ck in _needed_chunks(sel_indices, meta.chunks)
+        url = "$base/$arr/" * _chunk_key(ck, meta.dim_sep)
+        raw = _fetch_bytes_optional(cache, url)
+        raw === nothing && continue       # absent chunk object -> keep fill_value
+        carr = _chunk_array(meta, _decompress(meta, raw))
+        _scatter_chunk!(data, carr, posmap, ck, OT)
+        # `raw`/`carr` are dead here: this chunk is reclaimable before the next fetch.
+    end
+    return NativeField(data, dims, Dict{String,Any}())
+end
+
+# --- v3 array read (the sharding codec) -------------------------------------
+#
+# A Zarr v3 array is one `zarr.json` + shard objects under `<arr>/c/<shard coords>`.
+# The array's `chunk_grid.chunk_shape` is the SHARD (outer) shape; the
+# `sharding_indexed` codec's `chunk_shape` is the INNER (read) chunk. Each shard
+# packs its inner chunks back-to-back followed by an index at the END: one
+# (offset,nbytes) uint64-LE pair per inner chunk (missing = 2^64-1), plus a
+# trailing crc32c (LE) over the index bytes. We reuse the v2 chunk decode
+# (`_chunk_array`/`_assemble`) by treating the INNER chunk as the unit: resolve
+# the selection's needed inner chunks, group them by shard, fetch each shard once,
+# slice + blosc-decode the needed inner chunks, then assemble.
+
+struct ZV3Meta
+    shape::Vector{Int}
+    shard::Vector{Int}          # outer chunk (chunk_grid.chunk_shape)
+    inner::Vector{Int}          # sharding codec inner chunk_shape
+    ips::Vector{Int}            # inner chunks per shard, per dim
+    byteorder::Char
+    typechar::Char
+    itemsize::Int
+    blosc::Bool
+    zstd::Bool                  # plain v3 `zstd` codec (the `wasm` write profile)
+    fill_value::Float64
+    sep::String
+    has_crc::Bool
+    index_end::Bool
+    dims::Vector{String}
+end
+
+# a ZArrayMeta view of a v3 array's INNER chunk, so `_chunk_array`/`_assemble`
+# (written for v2) decode v3 inner chunks unchanged.
+_inner_zarray(m::ZV3Meta) = ZArrayMeta(
+    m.shape, m.inner, m.byteorder, m.typechar, m.itemsize,
+    m.blosc ? Dict{String,Any}("id" => "blosc") :
+    m.zstd  ? Dict{String,Any}("id" => "zstd")  : nothing,
+    "C", m.fill_value, "/")
+
+_v3_typecode(dt::AbstractString) =
+    dt == "float64" ? ('f', 8) : dt == "float32" ? ('f', 4) :
+    dt == "int32"   ? ('i', 4) : dt == "int64"   ? ('i', 8) :
+    dt == "uint32"  ? ('u', 4) : dt == "uint64"  ? ('u', 8) :
+    error("unsupported zarr v3 data_type '$dt' (the Julia track supports f4/f8/i4/i8/u4/u8)")
+
+function _parse_zarr_json(bytes)::ZV3Meta
+    d = JSON.parse(String(bytes))
+    Int(get(d, "zarr_format", 3)) == 3 ||
+        error("v3 parser got zarr_format $(get(d,"zarr_format",nothing))")
+    get(d, "node_type", "array") == "array" ||
+        error("zarr.json is a $(get(d,"node_type",nothing)) node, not an array")
+    shape = Int[Int(s) for s in d["shape"]]
+    tc, isz = _v3_typecode(String(d["data_type"]))
+
+    cg = d["chunk_grid"]
+    String(cg["name"]) == "regular" || error("unsupported chunk_grid '$(cg["name"])'")
+    shard = Int[Int(s) for s in cg["configuration"]["chunk_shape"]]
+
+    # locate the sharding_indexed codec
+    codecs = get(d, "codecs", Any[])
+    shc = nothing
+    for c in codecs
+        String(get(c, "name", "")) == "sharding_indexed" && (shc = c; break)
+    end
+    shc === nothing &&
+        error("zarr v3 reader supports the sharding_indexed codec only (none found)")
+    scfg = shc["configuration"]
+    inner = Int[Int(s) for s in scfg["chunk_shape"]]
+
+    byteorder = '<'
+    blosc = false
+    zstd = false
+    for c in get(scfg, "codecs", Any[])
+        nm = String(get(c, "name", ""))
+        if nm == "bytes"
+            en = String(get(get(c, "configuration", Dict()), "endian", "little"))
+            byteorder = en == "big" ? '>' : '<'
+        elseif nm == "blosc"
+            blosc = true
+        elseif nm == "zstd"
+            zstd = true
+        elseif nm == "transpose"
+            error("zarr v3 reader does not support the transpose codec (C-order only)")
+        end
+    end
+
+    has_crc = any(String(get(c, "name", "")) == "crc32c"
+                  for c in get(scfg, "index_codecs", Any[]))
+    index_end = String(get(scfg, "index_location", "end")) == "end"
+
+    fv = get(d, "fill_value", 0.0)
+    fill_value = fv === nothing ? 0.0 : Float64(fv)
+
+    sep = "/"
+    cke = get(d, "chunk_key_encoding", nothing)
+    if cke !== nothing
+        s = get(get(cke, "configuration", Dict()), "separator", "/")
+        sep = String(s)
+    end
+
+    ndim = length(shape)
+    ips = Int[shard[k] ÷ inner[k] for k in 1:ndim]
+
+    attrs = get(d, "attributes", Dict())
+    dims = if haskey(attrs, "_ARRAY_DIMENSIONS")
+        String[String(x) for x in attrs["_ARRAY_DIMENSIONS"]]
+    elseif haskey(d, "dimension_names") && d["dimension_names"] !== nothing
+        String[String(x) for x in d["dimension_names"]]
+    else
+        String["dim_$(i)" for i in 0:(ndim - 1)]
+    end
+    length(dims) == ndim || (dims = String["dim_$(i)" for i in 0:(ndim - 1)])
+
+    return ZV3Meta(shape, shard, inner, ips, byteorder, tc, isz, blosc, zstd,
+                   fill_value, sep, has_crc, index_end, dims)
+end
+
+# Parse a shard's index into (offsets, nbytes) vectors (C-order over `ips`).
+function _shard_index(m::ZV3Meta, shardbytes::Vector{UInt8})
+    n_inner = prod(m.ips)
+    idxlen = n_inner * 16 + (m.has_crc ? 4 : 0)
+    length(shardbytes) >= idxlen ||
+        error("shard object too small ($(length(shardbytes))B) for a $(n_inner)-chunk index")
+    m.index_end || error("zarr v3 reader supports index_location=end only")
+    tail = shardbytes[(end - idxlen + 1):end]
+    body = m.has_crc ? tail[1:(end - 4)] : tail
+    words = reinterpret(UInt64, body)
+    offsets = Vector{UInt64}(undef, n_inner)
+    nbytes = Vector{UInt64}(undef, n_inner)
+    for i in 1:n_inner
+        offsets[i] = ltoh(words[2i - 1])
+        nbytes[i]  = ltoh(words[2i])
+    end
+    return offsets, nbytes
+end
+
+# C-order linear index (last dim fastest) of `coord` over grid `dims`.
+function _c_linear(coord, dims)
+    lin = 0
+    for k in 1:length(dims)
+        lin = lin * dims[k] + coord[k]
+    end
+    return lin
+end
+
+function _read_v3_array(cache::Cache, base::AbstractString, arr::AbstractString,
+                        zjson, axes_spec)
+    m = _parse_zarr_json(zjson)
+    ndim = length(m.shape)
+    im = _inner_zarray(m)
+
+    axes = (axes_spec !== nothing && length(axes_spec) == ndim) ?
+           [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
+    sel_indices = [_resolve_axis(axes[d], m.shape[d]) for d in 1:ndim]
+
+    # needed INNER chunks, grouped by the shard that contains them
+    needed = _needed_chunks(sel_indices, m.inner)          # inner-chunk id tuples
+    by_shard = Dict{NTuple{ndim,Int},Vector{NTuple{ndim,Int}}}()
+    for ic in needed
+        sc = ntuple(d -> ic[d] ÷ m.ips[d], ndim)
+        push!(get!(by_shard, sc, NTuple{ndim,Int}[]), ic)
+    end
+
+    # Same chunk-driven scatter as the v2 path, with the INNER chunk as the unit:
+    # decode one inner chunk, write its cells, drop it. Buffering every decoded
+    # inner chunk until a final gather had the identical amplification problem —
+    # a shard-per-shard fetch does not bound it, because the buffer spans shards.
+    # Peak here is (output + one shard object + one decoded inner chunk).
+    OT = _out_type(im)
+    posmap = _pos_map(sel_indices, m.inner)
+    data = _alloc_out(sel_indices, im)
+    for (sc, inners) in by_shard
+        skey = join((string(sc[d]) for d in 1:ndim), m.sep)
+        shardbytes = Vector{UInt8}(_fetch_bytes(cache, "$base/$arr/c/$skey"))
+        offsets, nb = _shard_index(m, shardbytes)
+        for ic in inners
+            lc = ntuple(d -> ic[d] % m.ips[d], ndim)       # local coord within shard
+            pos = _c_linear(lc, m.ips) + 1
+            off, len = offsets[pos], nb[pos]
+            # missing inner chunk -> its cells keep fill_value
+            (off == typemax(UInt64) || len == typemax(UInt64)) && continue
+            raw = shardbytes[(Int(off) + 1):(Int(off) + Int(len))]
+            carr = _chunk_array(im, _decompress(im, raw))
+            _scatter_chunk!(data, carr, posmap, ic, OT)
+        end
+        shardbytes = UInt8[]   # drop this shard before fetching the next one
+    end
+
+    return NativeField(data, m.dims, Dict{String,Any}())
 end
 
 """
     array_shape(::ZarrReader, cache, base_url, var) -> NTuple{N,Int}
 
-The full (dims-order) shape of array `var` in the Zarr v2 store at `base_url`,
-learned by fetching ONLY that array's `.zarray` metadata object — NEVER a chunk.
-A lightweight honour/refuse probe for projection-pushdown decisions."""
+The full (dims-order) shape of array `var` in the Zarr store at `base_url`,
+learned by fetching ONLY that array's metadata object (v3 `zarr.json` or v2
+`.zarray`) — NEVER a chunk/shard. A lightweight honour/refuse probe for
+projection-pushdown decisions."""
 function array_shape(::ZarrReader, cache::Cache, base_url::AbstractString,
                      var::AbstractString)
     base = rstrip(String(base_url), '/')
-    meta = _parse_zarray(_fetch_bytes(cache, "$base/$(String(var))/.zarray"))
-    return Tuple(meta.shape)
+    arr = String(var)
+    # v2 `.zarray` first (see `read_store`): an all-v2 store keeps the single-fetch
+    # honour/refuse probe exact; only a v2-miss reads the v3 `zarr.json`.
+    z2 = _probe_bytes(cache, "$base/$arr/.zarray")
+    z2 !== nothing && return Tuple(_parse_zarray(z2).shape)
+    return Tuple(_parse_zarr_json(_fetch_bytes(cache, "$base/$arr/zarr.json")).shape)
 end

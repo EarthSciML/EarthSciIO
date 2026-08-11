@@ -106,6 +106,15 @@ impl Transport for HttpTransport {
             });
         }
         if !status.is_success() {
+            // 404/410 are a DEFINITIVE absence — the store answered, and the
+            // answer is "no such object". Everything else (5xx, 403, a timeout)
+            // leaves existence UNKNOWN and must stay a hard error.
+            if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
+                return Err(Error::NotFound {
+                    url: url.to_string(),
+                    detail: format!("HTTP {}", status.as_u16()),
+                });
+            }
             return Err(Error::Transport {
                 url: url.to_string(),
                 detail: format!("HTTP {}", status.as_u16()),

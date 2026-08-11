@@ -42,7 +42,8 @@ class FileTransport:
         src = file_url_to_path(resolved_url)
         if not os.path.isfile(src):
             raise TransportError(
-                f"file transport: source not found: {src} (from {resolved_url})"
+                f"file transport: source not found: {src} (from {resolved_url})",
+                not_found=True,
             )
         try:
             shutil.copyfile(src, os.fspath(dest))

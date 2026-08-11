@@ -35,10 +35,23 @@ A data provider over the shared cache.
   * `cadence` — [`CONST`] or [`DISCRETE`]. `DISCRETE` requires non-empty `times`;
     `CONST` requires empty `times`.
   * `times` — the discrete cadence grid (sorted on construction); what
-    [`refresh_times`] returns.
-  * `time_dim` — when set on a `DISCRETE` provider whose single file holds the
-    whole cadence on an internal axis (e.g. a daily file of hourly steps),
+    [`refresh_times`] returns. It may span MANY files: pair it with a `t -> url`
+    resolver and the cadence walks from one file to the next (see `time_dim`).
+  * `time_dim` — when set on a `DISCRETE` provider whose files hold the cadence
+    on an internal axis (e.g. a daily file of hourly steps),
     [`materialize`]`(p, t)` slices that dimension to the tick's record.
+
+    The record is located WITHIN its file, not within the whole cadence: tick
+    `i` is record `mod1(i, L)` of the file the resolver returns for it, where `L`
+    is that file's length along `time_dim`. So a cadence of 56 three-hourly ticks
+    over seven 8-record daily files reads record 1 of day 2 at tick 9, not
+    record 9 of day 1 (which does not exist). A single file holding the whole
+    cadence is the `L >= length(times)` case, where `mod1` is the identity — the
+    behaviour is unchanged. This assumes files are UNIFORM in length and that
+    their records are consecutive on the cadence; a short/trimmed file mid-run
+    shifts every later tick (the Python track avoids that by matching the file's
+    own decoded time axis, which the Julia track cannot do because `times` is a
+    caller-defined grid rather than the file's raw axis).
   * `records_per_sample` — `nothing` or `1` (default) returns the SINGLE
     at-or-before record with `time_dim` DROPPED (held piecewise-constant); `2`
     returns the TWO bracketing records (floor + successor) with `time_dim`
@@ -202,9 +215,17 @@ function _tick_index(p::Provider, t::Real)
         "t=$t precedes the provider's first refresh time $(first(p.times))"))
 end
 
+# The record index of cadence tick `tick` WITHIN its own file, given that file's
+# length `len` along `time_dim`. The cadence is global and files are local: tick
+# 9 of a 56-tick cadence laid over 8-record daily files is record 1 of day 2, not
+# record 9 of day 1. `len <= 0` means nothing in the blob carries `time_dim`, so
+# there is no wrap to apply and the tick passes through (the caller's slice then
+# reports the real out-of-range error rather than a silently wrong record).
+_file_record(tick::Integer, len::Integer) = len <= 0 ? Int(tick) : mod1(Int(tick), Int(len))
+
 # Slice `dim` out of every variable that carries it, at record `idx`; drop the
 # now-singular dimension and its coordinate. Used for an internal-axis DISCRETE
-# source (one file, many time records).
+# source (many time records per file).
 function _slice_dim(nds::NativeDataset, dim::String, idx::Integer)
     vars = Dict{String,NativeField}()
     for (name, f) in nds.variables
@@ -328,24 +349,30 @@ function _bracket_build(nds0::NativeDataset, i0::Integer,
 end
 
 function _bracket(p::Provider, t::Real; select = nothing)
-    dim = p.time_dim::String
-    rec0 = _tick_index(p, t)                 # floor tick == floor data index
-    nds0 = _load(p, t; select = select)
+    dim  = p.time_dim::String
+    tick = _tick_index(p, t)                 # floor tick on the GLOBAL cadence
+    # Resolve the URL at the TICK time, not at the query time `t`: the record we
+    # are about to slice is the tick's, so it must come from the tick's file. The
+    # two agree for any resolver that is constant across a file's own span, but
+    # only the tick time is guaranteed to name the file that holds the record.
+    u0   = p.url_for(p.times[tick])
+    nds0 = _load(p, p.times[tick]; select = select)
     scale = _cf_time_scale(_time_units(nds0, dim))
-    L = _time_len(nds0, dim)
-    t0 = _raw_to_epoch(p.times[rec0], scale)
+    L0 = _time_len(nds0, dim)
+    i0 = _file_record(tick, L0)              # ... and its record inside that file
+    t0 = _raw_to_epoch(p.times[tick], scale)
 
-    if rec0 >= length(p.times)               # last tick / past end → degenerate
-        i0 = min(rec0, L)                     # clamp to a valid record (never throw)
+    if tick >= length(p.times)               # last tick / past end → degenerate
         return _bracket_build(nds0, i0, nds0, i0, dim, t0, t0)
     end
 
-    t1 = _raw_to_epoch(p.times[rec0 + 1], scale)
-    if rec0 + 1 <= L                         # successor in the same file
-        return _bracket_build(nds0, rec0, nds0, rec0 + 1, dim, t0, t1)
+    t1 = _raw_to_epoch(p.times[tick + 1], scale)
+    if p.url_for(p.times[tick + 1]) == u0    # successor in the same file
+        return _bracket_build(nds0, i0, nds0, _file_record(tick + 1, L0), dim, t0, t1)
     end
-    nds1 = _load(p, p.times[rec0 + 1]; select = select)  # successor: record 1 of next file
-    return _bracket_build(nds0, min(rec0, L), nds1, 1, dim, t0, t1)
+    nds1 = _load(p, p.times[tick + 1]; select = select)   # successor: the next file
+    return _bracket_build(nds0, i0, nds1,
+                          _file_record(tick + 1, _time_len(nds1, dim)), dim, t0, t1)
 end
 
 """
@@ -370,11 +397,12 @@ function materialize(p::Provider, t::Real; select = nothing)
     if p.records_per_sample == 2 && p.time_dim !== nothing
         return _bracket(p, t; select = select)
     end
-    nds = _load(p, t; select = select)
     if p.time_dim !== nothing
-        return _slice_dim(nds, p.time_dim, _tick_index(p, t))
+        tick = _tick_index(p, t)
+        nds = _load(p, p.times[tick]; select = select)     # the TICK's file (see _bracket)
+        return _slice_dim(nds, p.time_dim, _file_record(tick, _time_len(nds, p.time_dim)))
     end
-    return nds
+    return _load(p, t; select = select)
 end
 
 function materialize(p::Provider; select = nothing)

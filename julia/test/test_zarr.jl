@@ -262,6 +262,138 @@ end
     @test !supports_selection(FF10Reader())
 end
 
+# --- the gather -> scatter assembly inversion (peak-memory contract) -------- #
+#
+# `_read_v2_array` used to decompress EVERY needed chunk into a `Dict` and only
+# then GATHER the output from it, which pins every chunk simultaneously: on the
+# real ISRM SR array one read held 416 chunks x ~21 MB = ~8.7 GB to produce a
+# 0.59 GB result (~15x amplification) and OOM-killed a production run. The reader
+# is now CHUNK-driven — one chunk decoded, scattered into the output, and dropped
+# before the next fetch. Two things must hold, and both are checked below:
+#   * the decoded arrays are BIT-identical to the gather's (same cells, same
+#     conversion, same fill_value; only the write ORDER changed), and
+#   * the peak simultaneous residency is O(one chunk), not O(all chunks).
+
+# The retired OUTPUT-driven read path (the old `_read_v2_array` body), over the
+# same cache: this test's oracle for bit-identity AND its buffer-everything
+# memory baseline. `EarthSciIO._assemble` is retained only for this.
+function _zarr_gather_read(cache, base, arr, axes_spec)
+    meta = EarthSciIO._parse_zarray(EarthSciIO._fetch_bytes(cache, "$base/$arr/.zarray"))
+    ndim = EarthSciIO._ndim(meta)
+    sel = [EarthSciIO._resolve_axis(EarthSciIO._parse_axis(axes_spec[d]), meta.shape[d])
+           for d in 1:ndim]
+    buffers = Dict{NTuple{ndim,Int},Any}()
+    for ck in EarthSciIO._needed_chunks(sel, meta.chunks)
+        raw = EarthSciIO._fetch_bytes_optional(
+            cache, "$base/$arr/" * EarthSciIO._chunk_key(ck, meta.dim_sep))
+        buffers[ck] = raw === nothing ? nothing :
+                      EarthSciIO._chunk_array(meta, EarthSciIO._decompress(meta, raw))
+    end
+    return EarthSciIO._assemble(sel, meta, buffers)
+end
+
+# A Store that force-collects and records the LIVE heap at every object fetch, so
+# a read's peak simultaneous residency is observable in-process (no RSS, no
+# subprocess): under the gather, the k-th chunk fetch sees k-1 decoded chunks
+# still alive; under the scatter it sees at most one.
+mutable struct ProbeStore <: EarthSciIO.Store
+    inner::LocalStore
+    live::Vector{Int}
+    on::Bool
+end
+ProbeStore(inner::LocalStore) = ProbeStore(inner, Int[], false)
+EarthSciIO.store_name(s::ProbeStore) = EarthSciIO.store_name(s.inner)
+function EarthSciIO.get_blob(s::ProbeStore, key::AbstractString)
+    if s.on
+        GC.gc(true)
+        push!(s.live, Int(Base.gc_live_bytes()))
+    end
+    return EarthSciIO.get_blob(s.inner, key)
+end
+EarthSciIO.blob_exists(s::ProbeStore, key::AbstractString) = EarthSciIO.blob_exists(s.inner, key)
+EarthSciIO.get_meta(s::ProbeStore, key::AbstractString) = EarthSciIO.get_meta(s.inner, key)
+EarthSciIO.staging_path(s::ProbeStore) = EarthSciIO.staging_path(s.inner)
+EarthSciIO.put_blob!(s::ProbeStore, key::AbstractString, staged::AbstractString; kwargs...) =
+    EarthSciIO.put_blob!(s.inner, key, staged; kwargs...)
+EarthSciIO.put_meta!(s::ProbeStore, key::AbstractString, m::EarthSciIO.Manifest) =
+    EarthSciIO.put_meta!(s.inner, key, m)
+EarthSciIO.lock_key(f::Function, s::ProbeStore, key::AbstractString) =
+    EarthSciIO.lock_key(f, s.inner, key)
+
+const ZSCAT = "s3://earthsci-fixtures/scatter-mini.zarr"
+
+# A many-chunk store: (1, NCH*ROWS, NCOL) f8 in (1, ROWS, NCOL) chunks, so the
+# selection below spans every chunk and no single chunk can serve two output
+# rows' worth of the answer. Chunk NCH-8's object is deliberately ABSENT (its
+# cells must keep fill_value under BOTH paths). Element (0,j,k) = j*10_000 + k,
+# exact in Float64, so every decoded value is self-checking.
+const ZS_NCH, ZS_ROWS, ZS_NCOL = 40, 50, 2000
+const ZS_CHUNKBYTES = ZS_ROWS * ZS_NCOL * 8          # 800_000 B decompressed
+const ZS_ABSENT = 7
+
+function _z_scatter_store(root)
+    objs = Dict{String,Vector{UInt8}}()
+    objs["$ZSCAT/sr/.zarray"] =
+        _z_zarray((1, ZS_NCH * ZS_ROWS, ZS_NCOL), (1, ZS_ROWS, ZS_NCOL), "<f8")
+    objs["$ZSCAT/sr/.zattrs"] = Vector{UInt8}(codeunits(JSON.json(
+        Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"]))))
+    for c in 0:(ZS_NCH - 1)
+        c == ZS_ABSENT && continue                   # absent object -> fill_value
+        a = Array{Float64}(undef, 1, ZS_ROWS, ZS_NCOL)
+        for j in 0:(ZS_ROWS - 1), k in 0:(ZS_NCOL - 1)
+            a[1, j + 1, k + 1] = (c * ZS_ROWS + j) * 10_000 + k
+        end
+        objs["$ZSCAT/sr/0.$c.0"] = _z_encode(a)
+    end
+    return _z_populate(root, objs)
+end
+
+@testset "zarr: chunk-driven scatter is bit-identical to the old gather" begin
+    store = ProbeStore(_z_scatter_store(mktempdir()))
+    cache = Cache(store; offline = true, verify = false)
+    # one source row out of every chunk => the selection spans all 40 chunks.
+    rows = [c * ZS_ROWS + 3 for c in 0:(ZS_NCH - 1)]
+    axes_spec = Any[Dict("indices" => [0]), Dict("indices" => rows), "all"]
+
+    store.live = Int[]; store.on = true
+    got = read_store(ZarrReader(), cache, ZSCAT;
+                     variables = ["sr"], select = Dict("axes" => axes_spec)).variables["sr"].data
+    scatter_live = copy(store.live)
+
+    store.live = Int[]
+    ref = _zarr_gather_read(cache, ZSCAT, "sr", axes_spec)
+    gather_live = copy(store.live)
+    store.on = false
+
+    # (1) same shape, and BIT-identical values — not merely approximately equal.
+    @test size(got) == (1, ZS_NCH, ZS_NCOL) == size(ref)
+    @test eltype(got) == eltype(ref) == Float64
+    @test reinterpret(UInt64, vec(got)) == reinterpret(UInt64, vec(ref))
+
+    # (2) the values are the ones the store encodes, and the ABSENT chunk's cells
+    #     kept fill_value 0.0 (never NaN) under the scatter.
+    values_ok = true
+    for c in 0:(ZS_NCH - 1)
+        c == ZS_ABSENT && continue
+        for k in 0:(ZS_NCOL - 1)
+            values_ok &= got[1, c + 1, k + 1] == (c * ZS_ROWS + 3) * 10_000 + k
+        end
+    end
+    @test values_ok
+    @test all(iszero, got[1, ZS_ABSENT + 1, :])
+    @test !any(isnan, got)
+
+    # (3) the peak-memory contract. `store.live` is the live heap at each object
+    #     fetch: the gather accumulates a decoded chunk per fetch (~linear growth
+    #     to ~39 chunks), the scatter drops each chunk before the next fetch.
+    scatter_span = maximum(scatter_live) - minimum(scatter_live)
+    gather_span = maximum(gather_live) - minimum(gather_live)
+    @info "zarr scatter vs gather live-heap span" chunk_MB=ZS_CHUNKBYTES/2^20 scatter_MB=scatter_span/2^20 gather_MB=gather_span/2^20
+    @test gather_span > 20 * ZS_CHUNKBYTES        # old path really did pin them all
+    @test scatter_span < 4 * ZS_CHUNKBYTES        # new path holds O(1) chunks
+    @test scatter_span < gather_span ÷ 5
+end
+
 @testset "zarr: per-call select on a non-store reader is a clear error" begin
     cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true)
     pw = const_provider(cache, "file:///dev/null"; format = "csv")

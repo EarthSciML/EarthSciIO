@@ -15,7 +15,9 @@ import pytest
 from earthsciio import transport_registry
 from earthsciio.backends.s3 import (
     DEFAULT_REGION,
+    S3ObjectStore,
     S3Transport,
+    parse_s3_url,
     resolve_region,
     s3_https_url,
 )
@@ -94,3 +96,55 @@ def test_fetch_delegates_to_http_with_rewritten_url():
     assert calls["dest"] == "/tmp/x.part"
     assert calls["conditional"] == {"etag": '"abc"'}  # threaded through unchanged
     assert calls["auth"] == "AUTH"  # auth resolver threaded through unchanged
+
+
+# --------------------------------------------------------------------------- #
+# S3ObjectStore — the real s3fs/fsspec-backed object store (write mirror of the
+# reader). Exercised offline against an fsspec in-memory filesystem so no socket
+# or AWS credential is touched; s3fs is used unchanged in production.
+# --------------------------------------------------------------------------- #
+
+
+def _mem_fs():
+    fsspec = pytest.importorskip("fsspec")
+    fs = fsspec.filesystem("memory")
+    # a fresh in-memory fs per test (MemoryFileSystem shares a class-level store)
+    fs.store.clear()
+    try:
+        fs.pseudo_dirs[:] = [""]
+    except Exception:
+        pass
+    return fs
+
+
+def test_parse_s3_url():
+    assert parse_s3_url("s3://bucket/prefix/x.zarr") == ("bucket", "prefix/x.zarr")
+    assert parse_s3_url("s3://bucket") == ("bucket", "")
+    with pytest.raises(ValueError):
+        parse_s3_url("https://not-s3/x")
+    with pytest.raises(ValueError):
+        parse_s3_url("s3:///key")  # empty bucket
+
+
+def test_object_store_key_path_mapping():
+    s = S3ObjectStore("s3://bucket/prefix/x.zarr", fs=_mem_fs())
+    assert s.bucket == "bucket"
+    assert s.prefix == "prefix/x.zarr"
+    assert s._path("temp/c/0/0") == "bucket/prefix/x.zarr/temp/c/0/0"
+    # no prefix → key sits directly under the bucket
+    s2 = S3ObjectStore("s3://bucket", fs=_mem_fs())
+    assert s2._path("zarr.json") == "bucket/zarr.json"
+
+
+def test_object_store_put_get_exists_delete():
+    s = S3ObjectStore("s3://bucket/x.zarr", fs=_mem_fs())
+    assert s.get_bytes("temp/zarr.json") is None  # clean miss
+    assert s.exists("temp/zarr.json") is False
+    s.put_bytes("temp/zarr.json", b'{"zarr_format": 3}')
+    s.put_bytes("temp/c/0/0", b"\x01\x02\x03chunk")
+    assert s.exists("temp/zarr.json") is True
+    assert s.get_bytes("temp/zarr.json") == b'{"zarr_format": 3}'
+    assert s.get_bytes("temp/c/0/0") == b"\x01\x02\x03chunk"
+    s.delete("temp/zarr.json")
+    assert s.exists("temp/zarr.json") is False
+    assert s.name() == "s3-object"

@@ -22,9 +22,15 @@ netcdf = ["xarray>=2022.3", "netCDF4>=1.5"]
 # GeoTIFF reader: rasterio (GDAL) is the spec-preferred backend; the reader also
 # falls back to pure-Python tifffile when GDAL is unavailable.
 geotiff = ["rasterio>=1.3"]
-# Zarr reader: numcodecs supplies the blosc/lz4/zstd/zlib codecs (c-blosc-backed,
-# undoes the shuffle filter internally); numpy is already a core dependency.
-zarr = ["numcodecs>=0.11"]
+# Zarr reader + writer: zarr-python 3.x natively handles Zarr v3 sharding and v2,
+# the Blosc/zstd codecs, and the store abstraction; fsspec supplies the filesystem
+# seam (local + object stores). Imported lazily so a base install stays lean.
+# NOTE: zarr>=3 requires Python >=3.11 (the reader/writer are gated to that);
+# a 3.9/3.10 install gets the lean core without the zarr extra.
+zarr = ["zarr>=3", "fsspec>=2023.1", "numcodecs>=0.13"]
+# S3 (object-store) read/write: s3fs (+ fsspec) back the streaming writer's
+# s3:// output and the S3ObjectStore. Optional so the core transport stays SDK-free.
+s3 = ["s3fs>=2023.1", "fsspec>=2023.1"]
 test = ["pytest>=7", "jsonschema>=4", "referencing>=0.30"]
 
 [tool.setuptools.packages.find]

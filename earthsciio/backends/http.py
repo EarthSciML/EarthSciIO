@@ -80,8 +80,14 @@ class HttpTransport:
                     bytes_written=0,
                 )
             if resp.status_code != 200:
+                # 404/410 are a DEFINITIVE absence: the store answered, and the
+                # answer is "no such key". Everything else (timeout, 5xx, 403)
+                # leaves existence UNKNOWN and must stay a hard error — see
+                # TransportError.not_found.
                 raise TransportError(
-                    f"http GET returned {resp.status_code} for {resolved_url}"
+                    f"http GET returned {resp.status_code} for {resolved_url}",
+                    status=resp.status_code,
+                    not_found=resp.status_code in (404, 410),
                 )
             # Capture validators from the response *before* consuming the body.
             etag = resp.headers.get("ETag")
