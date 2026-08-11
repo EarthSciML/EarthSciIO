@@ -96,21 +96,23 @@ zarrs_object_store = { version = "0.7", optional = true }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread"] }
 url = { version = "2", optional = true }
 
-# Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
-# netcdf-reader reads BOTH NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2,
-# deflate/shuffle), with no C/libnetcdf/HDF5 dependency — the same "C compiler
-# alone, no clang/bindgen" build story as the rustls transport and the geotiff
-# reader. It uses `unsafe` internally (memmap), but that is the dependency's
-# code, not this crate's, so it stays compatible with `#![forbid(unsafe_code)]`.
+# Pure-Rust NetCDF decode for the `netcdf` format reader. netcdf-reader reads
+# BOTH NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle),
+# with no C/libnetcdf/HDF5 dependency — the same "C compiler alone, no
+# clang/bindgen" build story as the rustls transport and the geotiff reader. It
+# uses `unsafe` internally (memmap), but that is the dependency's code, not this
+# crate's, so it stays compatible with `#![forbid(unsafe_code)]`.
 #
-# A GIT dep, not a path dep. A relative path is resolved against THIS crate's
-# location on disk, so it only worked when the sibling checkout sat exactly
-# where the path expected: any git worktree of this repo placed elsewhere failed
-# to build, and because cargo resolves the whole dependency graph before
-# compiling anything, the failure was total rather than confined to the netcdf
-# reader. The exact revision is pinned in Cargo.lock, so builds stay
-# reproducible without depending on a particular directory layout.
-netcdf-reader = { git = "https://github.com/ctessum/netcdf-rust", branch = "fix/scalar-variable-dimension-list", default-features = false, features = ["netcdf4"] }
+# A published release, not a path or git dep. A relative path resolved against
+# THIS crate's location on disk, so only a checkout with the sibling repo in
+# exactly the right place could build; a git dep on the fork branch fixed that
+# but still tied the build to a fork, and to cargo's libgit2 transport (which
+# needs `net.git-fetch-with-cli` for anyone whose gitconfig rewrites
+# `https://github.com/` to ssh). The rank-0 (scalar variable) DIMENSION_LIST fix
+# that ERA5 files from the Copernicus CDS need — the reason for the fork — was
+# merged upstream and shipped in 0.9.1, whose source is byte-identical to the
+# fork revision pinned here before, so the release is a straight substitute.
+netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
 
 [features]
 # Direct object_store-backed Zarr read/write (S3 + HTTP + local file://). Enables
