@@ -1,0 +1,10 @@
+# `cargo test --target wasm32-unknown-unknown` needs a runner: wasm-bindgen's,
+# which drives Node by default and a browser when a WebDriver is configured
+# (CHROMEDRIVER / GECKODRIVER / SAFARIDRIVER) plus `--headless`.
+#
+# The C toolchain for zstd-sys is NOT set here because its path is
+# machine-specific; see the top of Cargo.toml:
+#   CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang
+#   AR_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/llvm-ar
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
