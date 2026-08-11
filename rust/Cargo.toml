@@ -52,14 +52,15 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # is an `unsafe fn` this crate could not call under forbid(unsafe_code).)
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode"] }
 
-# Pure-Rust NetCDF decode for the `netcdf` format reader. This fork of
-# netcdf-reader (path dep on the sibling checkout — nothing vendored) reads BOTH
-# NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle), with no
-# C/libnetcdf/HDF5 dependency — the same "C compiler alone, no clang/bindgen"
-# build story as the rustls transport and the geotiff reader. It uses `unsafe`
-# internally (memmap), but that is the dependency's code, not this crate's, so
-# it is compatible with this crate's `#![forbid(unsafe_code)]`.
-netcdf-reader = { path = "../../netcdf-rust/netcdf-reader", default-features = false, features = ["netcdf4"] }
+# Pure-Rust NetCDF decode for the `netcdf` format reader. netcdf-reader reads
+# BOTH NetCDF-3 classic AND NetCDF-4 / HDF5 (superblock v2, deflate/shuffle),
+# with no C/libnetcdf/HDF5 dependency — the same "C compiler alone, no
+# clang/bindgen" build story as the rustls transport and the geotiff reader. It
+# uses `unsafe` internally (memmap), but that is the dependency's code, not this
+# crate's, so it is compatible with this crate's `#![forbid(unsafe_code)]`.
+# 0.9.1 is the first release carrying the rank-0 (scalar variable) DIMENSION_LIST
+# fix that ERA5 files from the Copernicus CDS need, so it is the floor here.
+netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
 
 [dev-dependencies]
 # Concurrency + mock-HTTP tests use only std (threads, TcpListener) — no extra deps.
