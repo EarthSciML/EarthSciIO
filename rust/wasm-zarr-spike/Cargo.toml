@@ -1,0 +1,113 @@
+# The `wasm32-unknown-unknown` acceptance test for the streaming-output-sinks
+# RFC's `wasm` codec profile (RFC §16.13), plus an OPFS-backed `zarrs` store.
+#
+# A SEPARATE package on purpose. `earthsciio` itself cannot target wasm32 today
+# — reqwest/blocking, fs2's flock, tempfile and netcdf-reader's memmap are all
+# native-only — and making every one of them optional is a refactor, not a
+# spike. What actually had to be proven is that the *codec chain the writer
+# emits* decodes in a browser, and that is exactly this crate's dependency set.
+# It carries its own `[workspace]` table so it is never pulled into a build of
+# the parent crate.
+#
+# ---------------------------------------------------------------------------
+# *** BUILDING FOR wasm32 — TWO NON-OBVIOUS REQUIREMENTS ***
+#
+#   CC_wasm32_unknown_unknown=/path/to/llvm/bin/clang \
+#   AR_wasm32_unknown_unknown=/path/to/llvm/bin/llvm-ar \
+#   cargo build --release --target wasm32-unknown-unknown
+#
+# 1. A **wasm-capable clang**. `zstd-sys` compiles the vendored zstd C sources
+#    with `cc`, and Apple's Xcode clang has no WebAssembly backend at all:
+#      error: unable to create target: 'No available targets are compatible
+#             with triple "wasm32-unknown-unknown"'
+#    Homebrew's `llvm` (or any upstream LLVM / wasi-sdk) does. This is a
+#    toolchain requirement, not a source change — zstd-sys ships a `wasm-shim/`
+#    of libc headers precisely so no wasm sysroot is needed.
+#
+# 2. **`zstd/no_asm`**. zstd-sys unconditionally feeds
+#    `zstd/lib/decompress/huf_decompress_amd64.S` to the assembler unless the
+#    `no_asm` feature is on (it only auto-disables for Windows), and x86-64
+#    assembly does not assemble for wasm32. `zstd` is pinned as a direct
+#    dependency below solely to turn that feature on for zarrs' copy through
+#    cargo feature unification.
+#
+# NOTHING ELSE BLOCKS. No source patches to zarrs, zstd or their dependencies.
+# ---------------------------------------------------------------------------
+
+[package]
+name = "earthsciio-wasm-zarr-spike"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+publish = false
+description = "Acceptance test: zarrs + the v3 zstd `wasm` codec profile on wasm32-unknown-unknown, over an OPFS-backed store."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The `wasm` profile's codec chain and NOTHING else: `sharding_indexed` +
+# `crc32c` (both pure Rust) wrapping a plain v3 `zstd` chunk codec. Explicitly
+# NOT `blosc` (blosc-src's C sources do not cross-compile), NOT `filesystem`
+# (no OPFS there), NOT `async` (the OPFS store below is synchronous).
+zarrs = { version = "0.23", default-features = false, features = [
+    "sharding",
+    "crc32c",
+    "zstd",
+    "ndarray",
+    "transpose",
+] }
+
+# Direct dependency ONLY to enable `no_asm` for zarrs' zstd — see the note above.
+zstd = { version = "0.13", default-features = false, features = ["no_asm"] }
+
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde_json = "1"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "console",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemHandle",
+    "FileSystemHandleKind",
+    "FileSystemReadWriteOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemSyncAccessHandle",
+    "Navigator",
+    "StorageManager",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+# `tests/opfs_browser.rs` needs a browser (OPFS does not exist in Node), so it is
+# off by default and `cargo test --target wasm32-unknown-unknown` runs only the
+# Node-safe codec tests.
+browser = []
+
+[[test]]
+name = "opfs_browser"
+required-features = ["browser"]
+
+# Keep the wasm artifact honest: this is the number the bundle-size question is
+# about, and `opt-level = "s"` + LTO + no panic unwinding is what a shipped
+# module would use.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+
+[workspace]

@@ -35,7 +35,10 @@ pub use zarr_write::{
     BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };
 #[cfg(feature = "object-store")]
-pub use zarr_object_store::{read_zarr_object_store, write_zarr_object_store};
+pub use zarr_object_store::{
+    read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
+    write_zarr_object_store, write_zarr_object_store_with_options,
+};
 
 use std::collections::HashMap;
 use std::path::Path;

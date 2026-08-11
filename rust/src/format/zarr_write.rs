@@ -26,8 +26,10 @@
 //! container bytes are host/version dependent). Conformance is on **decoded
 //! arrays** within tolerance plus metadata equality (RFC §16).
 //!
-//! Local output uses `zarrs`' pure filesystem store; an S3 (`s3://`) target is
-//! handled by the `object_store`-backed opener (feature `object-store`).
+//! Local output uses `zarrs`' pure filesystem store; an object-storage target
+//! (`s3://` — including S3-compatible endpoints — `gs://`, `az://`, `http(s)://`,
+//! `memory://`) is handled by the scheme-dispatched `object_store`-backed opener
+//! (feature `object-store`).
 
 use std::collections::BTreeMap;
 use std::path::Path;

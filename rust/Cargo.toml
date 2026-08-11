@@ -80,18 +80,40 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 #   built in (zarrs converts v2 blosc metadata to a v3 codec chain on open).
 zarrs = "0.23"
 
-# --- optional: direct (non-cache) S3 / HTTP / local Zarr via Apache Arrow
-# `object_store` (feature `object-store`). This is where S3 access is backed by
-# `object_store`'s mature S3 client rather than any hand-rolled S3 code, and it
-# also gives a direct local/HTTP path. `object_store` is async, so it is bridged
-# into the crate's sync Zarr reader/writer via zarrs' AsyncToSyncStorageAdapter
-# (needs a tokio runtime + `zarrs/async`). Kept OFF by default so the default
-# build stays lean: the AWS client pulls a TLS crypto backend (aws-lc-rs) and a
-# tokio/reqwest stack. `object_store::parse_url` dispatches by URL scheme; s3://
-# resolves only when the `aws` feature is compiled in (below), file:// and
-# http(s):// always. Content-addressed-cache S3 reads continue to work without
-# this feature via the existing `s3` transport.
-object_store = { version = "0.14", optional = true, features = ["aws", "http"] }
+# --- optional: direct (non-cache) object-storage Zarr via Apache Arrow
+# `object_store` (feature `object-store`). This is where cloud access is backed
+# by `object_store`'s mature clients rather than any hand-rolled vendor code, and
+# it also gives a direct local/HTTP path. `object_store` is async, so it is
+# bridged into the crate's sync Zarr reader/writer via zarrs'
+# AsyncToSyncStorageAdapter (needs a tokio runtime + `zarrs/async`). Kept OFF by
+# default so the default build stays lean: the cloud clients pull a TLS crypto
+# backend (aws-lc-rs) and a tokio/reqwest stack. Content-addressed-cache S3 reads
+# continue to work without this feature via the existing `s3` transport.
+#
+# STORAGE IS PROVIDER-AGNOSTIC BY CONSTRUCTION. `object_store::parse_url_opts`
+# dispatches purely on URL scheme, so a provider is a feature flag on THIS
+# dependency, never a code path in this crate. The four features below are the
+# whole vendor surface:
+#   aws   -> s3://, s3a://  (and *.amazonaws.com / *.r2.cloudflarestorage.com)
+#   gcp   -> gs://
+#   azure -> az://, adl://, azure://, abfs://, abfss://  (+ *.core.windows.net)
+#   http  -> http://, https://
+# `file://` comes from object_store's default `fs` feature and `memory://` is
+# unconditional. gcp+azure share `cloud-base` with aws, so adding them costs a
+# few modules, not a new dependency stack.
+#
+# S3-COMPATIBLE ENDPOINTS MATTER MORE THAN NEW CLOUDS: Cloudflare R2, MinIO,
+# Backblaze B2 and Ceph are all "s3:// plus a configurable endpoint URL", which
+# is why the reader/writer call `parse_url_opts` (options) rather than
+# `parse_url` (no options — a builder that reads no environment and cannot
+# express an endpoint). See src/format/zarr_object_store.rs for how a caller
+# passes one.
+object_store = { version = "0.14", optional = true, features = [
+    "aws",
+    "gcp",
+    "azure",
+    "http",
+] }
 zarrs_object_store = { version = "0.7", optional = true }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread"] }
 url = { version = "2", optional = true }
@@ -115,8 +137,10 @@ url = { version = "2", optional = true }
 netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
 
 [features]
-# Direct object_store-backed Zarr read/write (S3 + HTTP + local file://). Enables
-# zarrs' async storage traits so the async object_store can drive the sync API.
+# Direct object_store-backed Zarr read/write, provider-agnostic: file://,
+# memory://, s3:// (incl. every S3-compatible endpoint), gs://, az:// and
+# http(s)://. Enables zarrs' async storage traits so the async object_store can
+# drive the sync API.
 object-store = ["dep:object_store", "dep:zarrs_object_store", "dep:tokio", "dep:url", "zarrs/async"]
 
 [dev-dependencies]
