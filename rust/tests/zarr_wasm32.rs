@@ -25,6 +25,9 @@
 //! rather than each being self-consistent.
 
 #![cfg(all(target_arch = "wasm32", feature = "opfs"))]
+// `Arc` is what the `zarrs` API takes and there are no threads on this target;
+// see the note at the top of `src/format/zarr_opfs.rs`.
+#![allow(clippy::arc_with_non_send_sync)]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

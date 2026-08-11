@@ -47,6 +47,12 @@
 //! neither `Send` nor `Sync` — therefore implements them without any `unsafe`,
 //! so the crate keeps its `#![forbid(unsafe_code)]`.
 
+// The flip side of that: `clippy::arc_with_non_send_sync` fires on every
+// `Arc<OpfsStore>` here, and is wrong in this module specifically. `Arc` is what
+// the `zarrs` API takes, there are no threads on this target, and the `Rc` the
+// lint suggests does not satisfy the signature.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -244,8 +250,7 @@ impl OpfsStore {
                     .await?
                     .unchecked_into();
             handle.truncate_with_f64(0.0)?;
-            let mut bytes = value.to_vec();
-            handle.write_with_u8_array(&mut bytes)?;
+            handle.write_with_u8_array(&value)?;
             handle.flush()?;
             handle.close();
         }
