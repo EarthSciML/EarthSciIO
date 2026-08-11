@@ -56,6 +56,36 @@ let cache = earthsciio::Cache::builder()
 (RFC 3339 `fetched_at` + TTL). HTTPS works out of the box; offline/CI builds
 need no network.
 
+## The wasm32 target — the output half
+
+The crate also builds for `wasm32-unknown-unknown`, where it is deliberately a
+much smaller thing: the **codec profiles, the Zarr v3 writer, and an OPFS-backed
+store**, and nothing else. That exists so a browser writes a run's output with
+*this* writer rather than a fourth implementation in JavaScript — one writer,
+two hosts. The cache, the transports, the store registry, the `Provider` and
+every format **reader** are native-only, because each is built on something a
+browser tab does not have; `Cargo.toml`'s target tables and `src/lib.rs`'s
+module list carry the same split.
+
+```bash
+CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang \
+AR_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/llvm-ar \
+cargo test --target wasm32-unknown-unknown --no-default-features --features opfs
+```
+
+Two toolchain conditions, both recorded against the dependency they belong to at
+the top of `Cargo.toml`: a **wasm-capable clang** (Apple's Xcode clang has no
+WebAssembly backend; Homebrew LLVM, upstream LLVM or wasi-sdk do) and
+**`zstd/no_asm`**. No source patches, no forks, no new C dependency.
+
+[`tests/zarr_wasm32.rs`](tests/zarr_wasm32.rs) runs *in* wasm under Node and is
+the cross-target proof: the writer encodes a whole dataset inside wasm, and a
+store the **native** writer produced decodes there element for element.
+[`tests/wasm_profile_fixture.rs`](tests/wasm_profile_fixture.rs) keeps that
+committed fixture pinned to what the native writer emits today. The OPFS half
+needs a browser (sync access handles are a Worker-only API) and is exercised
+end-to-end from earthscilab's Playwright tier.
+
 ## Develop
 
 ```bash

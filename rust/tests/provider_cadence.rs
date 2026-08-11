@@ -4,6 +4,10 @@
 //! cadence"). All reads resolve from the Python-populated corpus cache — no
 //! network, no per-language data tooling beyond the netcdf reader.
 
+// Native-only: this tier drives the cache, the transports and the format
+// readers, none of which exist on wasm32 (see the crate's module docs).
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::sync::Arc;
 
 use earthsciio::{ArrayData, Cache, DataLoader, Error, LoaderTemporal, NativeField, Provider};

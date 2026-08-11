@@ -18,6 +18,10 @@
 //! Everything here is offline: the store is written to a temp dir and read back
 //! over `file://`.
 
+// Native-only: this tier drives the cache, the transports and the format
+// readers, none of which exist on wasm32 (see the crate's module docs).
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

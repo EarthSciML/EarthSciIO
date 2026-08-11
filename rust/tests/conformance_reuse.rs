@@ -7,6 +7,10 @@
 //! reference runner: cache-key agreement, manifest integrity, offline-only).
 //! Decoding the blob into native arrays (checks 3–4) is component (b).
 
+// Native-only: this tier drives the cache, the transports and the format
+// readers, none of which exist on wasm32 (see the crate's module docs).
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::fs;
 use std::path::PathBuf;
 
