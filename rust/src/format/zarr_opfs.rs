@@ -1,4 +1,13 @@
-//! A `zarrs` store backed by the **Origin Private File System**.
+//! A `zarrs` store backed by the **Origin Private File System**, and the Zarr
+//! v3 writer over it.
+//!
+//! This is the browser's storage backend, the third alongside the local
+//! [`FilesystemStore`](zarrs::filesystem::FilesystemStore) (`zarr_write.rs`) and
+//! the scheme-dispatched `object_store` one (`zarr_object_store.rs`). Nothing
+//! about the *writing* changes here — [`write_zarr_opfs`] calls the same
+//! [`write_all_to_store`](super::zarr_write::write_all_to_store) the other two
+//! do, so a store written in a tab and a store written on a server differ in
+//! where the bytes land and in nothing else.
 //!
 //! # Why the read path is synchronous and the write path stages
 //!
@@ -15,8 +24,8 @@
 //!
 //! So: *acquiring* a handle is always async, but *I/O on an acquired handle* is
 //! synchronous — and the synchronous form exists only inside a Web Worker, which
-//! is where the runner already lives. There is no sync directory API anywhere,
-//! and blocking on a Promise from wasm is not possible without an
+//! is where earthscilab's runner already lives. There is no sync directory API
+//! anywhere, and blocking on a Promise from wasm is not possible without an
 //! `Atomics.wait` shim and a second worker.
 //!
 //! That yields a store with an async *acquire* phase around a fully synchronous
@@ -29,18 +38,20 @@
 //!   inner chunk bytes it needs, straight out of OPFS — never the whole shard.
 //! * Writes stage in memory and land in OPFS at [`OpfsStore::commit`] (async),
 //!   because creating a file is a Promise and `set` is not. This matches the
-//!   whole-dataset-commit model the output plan already assumes; a streaming
-//!   writer would pre-create its files during the async phase instead.
+//!   whole-dataset-commit model the Rust writer already has; a streaming writer
+//!   would pre-create its files during the async phase instead.
 //!
 //! `zarrs` is wasm-aware here in a way that makes this work at all: its storage
 //! traits are bounded by `MaybeSend`/`MaybeSync`, which are blanket-implemented
 //! no-ops on `target_arch = "wasm32"`. A store holding `JsValue`s — which are
-//! neither `Send` nor `Sync` — therefore implements them without any `unsafe`.
+//! neither `Send` nor `Sync` — therefore implements them without any `unsafe`,
+//! so the crate keeps its `#![forbid(unsafe_code)]`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use js_sys::{Array, Uint8Array};
+use js_sys::Array;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -48,12 +59,17 @@ use web_sys::{
     FileSystemGetFileOptions, FileSystemHandle, FileSystemHandleKind, FileSystemReadWriteOptions,
     FileSystemSyncAccessHandle,
 };
+use zarrs::array::Array as ZarrArray;
 use zarrs::storage::byte_range::ByteRangeIterator;
 use zarrs::storage::{
     Bytes, ListableStorageTraits, MaybeBytesIterator, OffsetBytesIterator, ReadableStorageTraits,
     StorageError, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix, StorePrefixes,
     WritableStorageTraits,
 };
+
+use crate::error::{Error, Result};
+
+use super::zarr_write::{write_all_to_store, OutputSchema};
 
 fn js_err(context: &str, e: &JsValue) -> StorageError {
     StorageError::Other(format!("{context}: {}", format_js(e)))
@@ -69,30 +85,42 @@ fn format_js(e: &JsValue) -> String {
         .unwrap_or_else(|| format!("{e:?}"))
 }
 
+/// An OPFS rejection as a crate error, so the OPFS path reports failures in the
+/// same currency as the filesystem and object-store paths.
+fn opfs_err(context: &str, e: &JsValue) -> Error {
+    Error::Format {
+        format: "zarr".to_string(),
+        detail: format!("{context}: {}", format_js(e)),
+    }
+}
+
 /// A file already present in OPFS, with its sync access handle held open.
 struct OpenFile {
     handle: FileSystemSyncAccessHandle,
 }
 
 impl OpenFile {
-    fn size(&self) -> Result<u64, StorageError> {
+    fn size(&self) -> std::result::Result<u64, StorageError> {
         let n = self
             .handle
             .get_size()
             .map_err(|e| js_err("FileSystemSyncAccessHandle.getSize", &e))?;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Ok(n as u64)
     }
 
     /// Read `len` bytes at `offset` — a real OPFS range read, not a slice of a
     /// pre-loaded buffer.
-    fn read_at(&self, offset: u64, len: usize) -> Result<Bytes, StorageError> {
+    fn read_at(&self, offset: u64, len: usize) -> std::result::Result<Bytes, StorageError> {
         let mut buf = vec![0u8; len];
         let opts = FileSystemReadWriteOptions::new();
+        #[allow(clippy::cast_precision_loss)]
         opts.set_at(offset as f64);
         let got = self
             .handle
             .read_with_u8_array_and_options(&mut buf, &opts)
             .map_err(|e| js_err("FileSystemSyncAccessHandle.read", &e))?;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let got = got as usize;
         if got != len {
             return Err(StorageError::Other(format!(
@@ -131,7 +159,7 @@ impl OpfsStore {
     ///
     /// # Errors
     /// Returns the underlying `JsValue` if any OPFS call rejects.
-    pub async fn open(dir: &FileSystemDirectoryHandle) -> Result<Self, JsValue> {
+    pub async fn open(dir: &FileSystemDirectoryHandle) -> std::result::Result<Self, JsValue> {
         let store = Self::staging();
         let mut found = Vec::new();
         walk(dir, String::new(), &mut found).await?;
@@ -146,6 +174,16 @@ impl OpfsStore {
         Ok(store)
     }
 
+    /// Release every sync access handle this store holds open. OPFS sync
+    /// handles are **exclusive**, so a store that is not closed makes its own
+    /// files unopenable by the next reader in the same tab.
+    pub fn close(&self) {
+        for file in self.files.borrow().values() {
+            file.handle.close();
+        }
+        self.files.borrow_mut().clear();
+    }
+
     /// Number of OPFS files this store has handles open on.
     #[must_use]
     pub fn open_file_count(&self) -> usize {
@@ -156,7 +194,7 @@ impl OpfsStore {
     ///
     /// # Errors
     /// Returns a [`StorageError`] if an OPFS `getSize` fails.
-    pub fn stored_bytes(&self) -> Result<u64, StorageError> {
+    pub fn stored_bytes(&self) -> std::result::Result<u64, StorageError> {
         self.files
             .borrow()
             .values()
@@ -170,7 +208,10 @@ impl OpfsStore {
     ///
     /// # Errors
     /// Returns the underlying `JsValue` if any OPFS call rejects.
-    pub async fn commit(&self, dir: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
+    pub async fn commit(
+        &self,
+        dir: &FileSystemDirectoryHandle,
+    ) -> std::result::Result<(), JsValue> {
         let erased: Vec<StoreKey> = self.erased.borrow_mut().iter().cloned().collect();
         for key in erased {
             let (parents, name) = split_key(key.as_str());
@@ -213,7 +254,7 @@ impl OpfsStore {
     }
 
     /// Whole-object read: staged bytes win over OPFS bytes.
-    fn whole(&self, key: &StoreKey) -> Result<Option<Bytes>, StorageError> {
+    fn whole(&self, key: &StoreKey) -> std::result::Result<Option<Bytes>, StorageError> {
         if let Some(b) = self.staged.borrow().get(key) {
             return Ok(Some(b.clone()));
         }
@@ -222,7 +263,17 @@ impl OpfsStore {
             return Ok(None);
         };
         let size = file.size()?;
+        #[allow(clippy::cast_possible_truncation)]
         Ok(Some(file.read_at(0, size as usize)?))
+    }
+
+    /// Whole-object convenience read by key string (`conc/zarr.json`).
+    ///
+    /// # Errors
+    /// Returns a [`StorageError`] if the key is invalid or the OPFS read fails.
+    pub fn get_whole(&self, key: &str) -> std::result::Result<Option<Bytes>, StorageError> {
+        let key = StoreKey::new(key).map_err(|e| StorageError::Other(e.to_string()))?;
+        self.whole(&key)
     }
 
     fn known_keys(&self) -> StoreKeys {
@@ -248,7 +299,7 @@ async fn resolve_dir(
     dir: &FileSystemDirectoryHandle,
     parents: &[String],
     create: bool,
-) -> Result<Option<FileSystemDirectoryHandle>, JsValue> {
+) -> std::result::Result<Option<FileSystemDirectoryHandle>, JsValue> {
     let mut cur = dir.clone();
     for part in parents {
         let opts = FileSystemGetDirectoryOptions::new();
@@ -271,7 +322,7 @@ fn walk<'a>(
     dir: &'a FileSystemDirectoryHandle,
     prefix: String,
     out: &'a mut Vec<(String, FileSystemFileHandle)>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), JsValue>> + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<(), JsValue>> + 'a>> {
     Box::pin(async move {
         let entries = dir.entries();
         loop {
@@ -309,13 +360,15 @@ impl ReadableStorageTraits for OpfsStore {
         &'a self,
         key: &StoreKey,
         byte_ranges: ByteRangeIterator<'a>,
-    ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+    ) -> std::result::Result<MaybeBytesIterator<'a>, StorageError> {
         // Staged (not yet in OPFS): slice the in-memory buffer.
         if let Some(whole) = self.staged.borrow().get(key).cloned() {
             let size = whole.len() as u64;
-            let mut out: Vec<Result<Bytes, StorageError>> = Vec::new();
+            let mut out: Vec<std::result::Result<Bytes, StorageError>> = Vec::new();
             for br in byte_ranges {
+                #[allow(clippy::cast_possible_truncation)]
                 let start = br.start(size) as usize;
+                #[allow(clippy::cast_possible_truncation)]
                 let end = start + br.length(size) as usize;
                 out.push(if end > whole.len() {
                     Err(StorageError::Other(format!(
@@ -337,16 +390,17 @@ impl ReadableStorageTraits for OpfsStore {
             return Ok(None);
         };
         let size = file.size()?;
-        let mut out: Vec<Result<Bytes, StorageError>> = Vec::new();
+        let mut out: Vec<std::result::Result<Bytes, StorageError>> = Vec::new();
         for br in byte_ranges {
             let start = br.start(size);
             let len = br.length(size);
+            #[allow(clippy::cast_possible_truncation)]
             out.push(file.read_at(start, len as usize));
         }
         Ok(Some(Box::new(out.into_iter())))
     }
 
-    fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+    fn size_key(&self, key: &StoreKey) -> std::result::Result<Option<u64>, StorageError> {
         if let Some(b) = self.staged.borrow().get(key) {
             return Ok(Some(b.len() as u64));
         }
@@ -360,7 +414,7 @@ impl ReadableStorageTraits for OpfsStore {
 }
 
 impl WritableStorageTraits for OpfsStore {
-    fn set(&self, key: &StoreKey, value: Bytes) -> Result<(), StorageError> {
+    fn set(&self, key: &StoreKey, value: Bytes) -> std::result::Result<(), StorageError> {
         self.erased.borrow_mut().remove(key);
         self.staged.borrow_mut().insert(key.clone(), value);
         Ok(())
@@ -370,11 +424,11 @@ impl WritableStorageTraits for OpfsStore {
         &self,
         key: &StoreKey,
         offset_values: OffsetBytesIterator,
-    ) -> Result<(), StorageError> {
+    ) -> std::result::Result<(), StorageError> {
         zarrs::storage::store_set_partial_many(self, key, offset_values)
     }
 
-    fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
+    fn erase(&self, key: &StoreKey) -> std::result::Result<(), StorageError> {
         self.staged.borrow_mut().remove(key);
         if self.files.borrow_mut().remove(key).is_some() {
             self.erased.borrow_mut().insert(key.clone());
@@ -382,7 +436,7 @@ impl WritableStorageTraits for OpfsStore {
         Ok(())
     }
 
-    fn erase_prefix(&self, prefix: &StorePrefix) -> Result<(), StorageError> {
+    fn erase_prefix(&self, prefix: &StorePrefix) -> std::result::Result<(), StorageError> {
         for key in self.known_keys() {
             if key.has_prefix(prefix) {
                 self.erase(&key)?;
@@ -403,11 +457,11 @@ impl WritableStorageTraits for OpfsStore {
 // from zarrs' blanket impls over the three traits above.
 
 impl ListableStorageTraits for OpfsStore {
-    fn list(&self) -> Result<StoreKeys, StorageError> {
+    fn list(&self) -> std::result::Result<StoreKeys, StorageError> {
         Ok(self.known_keys())
     }
 
-    fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
+    fn list_prefix(&self, prefix: &StorePrefix) -> std::result::Result<StoreKeys, StorageError> {
         Ok(self
             .known_keys()
             .into_iter()
@@ -415,7 +469,10 @@ impl ListableStorageTraits for OpfsStore {
             .collect())
     }
 
-    fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
+    fn list_dir(
+        &self,
+        prefix: &StorePrefix,
+    ) -> std::result::Result<StoreKeysPrefixes, StorageError> {
         let mut keys: StoreKeys = Vec::new();
         let mut prefixes: BTreeSet<String> = BTreeSet::new();
         for key in self.known_keys() {
@@ -433,12 +490,12 @@ impl ListableStorageTraits for OpfsStore {
         let prefixes: StorePrefixes = prefixes
             .into_iter()
             .map(StorePrefix::new)
-            .collect::<Result<_, _>>()
+            .collect::<std::result::Result<_, _>>()
             .map_err(|e| StorageError::Other(e.to_string()))?;
         Ok(StoreKeysPrefixes::new(keys, prefixes))
     }
 
-    fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
+    fn size_prefix(&self, prefix: &StorePrefix) -> std::result::Result<u64, StorageError> {
         let mut total = 0;
         for key in self.list_prefix(prefix)? {
             total += self.size_key(&key)?.unwrap_or(0);
@@ -447,20 +504,83 @@ impl ListableStorageTraits for OpfsStore {
     }
 }
 
-impl OpfsStore {
-    /// Whole-object convenience read used by the verification entry points.
-    ///
-    /// # Errors
-    /// Returns a [`StorageError`] if the underlying OPFS read fails.
-    pub fn get_whole(&self, key: &str) -> Result<Option<Bytes>, StorageError> {
-        let key = StoreKey::new(key).map_err(|e| StorageError::Other(e.to_string()))?;
-        self.whole(&key)
-    }
+// ---------------------------------------------------------------------------
+// The writer, over OPFS
+// ---------------------------------------------------------------------------
+
+/// Write a complete sharded Zarr **v3** store into the OPFS directory `dir`,
+/// following [`OutputSchema`], plus the JSON output manifest — the OPFS mirror
+/// of [`write_zarr_v3`](super::write_zarr_v3) and
+/// [`write_zarr_object_store`](super::write_zarr_object_store).
+///
+/// Returns the number of bytes the store occupies in OPFS.
+///
+/// `base_url` is recorded verbatim in the manifest's `base_url` field. It is
+/// **provenance, not an address**: OPFS has no URL space a reader outside this
+/// origin could resolve, so a saved dataset's durable address is assigned by
+/// whatever registers it, and `opfs:/…` merely says where these bytes were
+/// written.
+///
+/// The whole write is staged in memory and lands in one [`OpfsStore::commit`],
+/// which is the same whole-dataset-commit model `write_zarr_v3` has; see the
+/// module docs for why OPFS cannot do better without a streaming writer.
+///
+/// # Errors
+/// [`Error::Format`] on a schema inconsistency, a `zarrs` encode failure, or an
+/// OPFS rejection.
+pub async fn write_zarr_opfs(
+    dir: &FileSystemDirectoryHandle,
+    base_url: &str,
+    schema: &OutputSchema,
+) -> Result<u64> {
+    let store = Arc::new(OpfsStore::staging());
+    write_all_to_store(store.clone(), base_url, schema)?;
+    store
+        .commit(dir)
+        .await
+        .map_err(|e| opfs_err("commit the Zarr store to OPFS", &e))?;
+
+    // Re-open to report what actually landed, rather than what was staged.
+    let written = OpfsStore::open(dir)
+        .await
+        .map_err(|e| opfs_err("reopen the committed store", &e))?;
+    let bytes = written.stored_bytes().map_err(|e| Error::Format {
+        format: "zarr".to_string(),
+        detail: format!("size the committed store: {e}"),
+    })?;
+    written.close();
+    Ok(bytes)
 }
 
-/// Bytes of a `Uint8Array` as a `zarrs` value — used by the JS harness to seed
-/// OPFS with a store produced by the **native** writer.
-#[must_use]
-pub fn js_bytes(a: &Uint8Array) -> Bytes {
-    Bytes::from(a.to_vec())
+/// Decode every element of the `float64` array `name` from the Zarr store in
+/// the OPFS directory `dir`.
+///
+/// The read is lazy per the module docs — the array's metadata and the shard
+/// index are read first, then only the inner chunks the subset needs — but this
+/// entry point asks for the whole array, so all of them.
+///
+/// # Errors
+/// [`Error::Format`] if the store cannot be opened, the array is absent, or a
+/// chunk fails to decode.
+pub async fn read_zarr_opfs_array(dir: &FileSystemDirectoryHandle, name: &str) -> Result<Vec<f64>> {
+    let store = Arc::new(
+        OpfsStore::open(dir)
+            .await
+            .map_err(|e| opfs_err("open the OPFS store", &e))?,
+    );
+    let result = (|| {
+        let array =
+            ZarrArray::open(store.clone(), &format!("/{name}")).map_err(|e| Error::Format {
+                format: "zarr".to_string(),
+                detail: format!("open array '{name}': {e}"),
+            })?;
+        array
+            .retrieve_array_subset::<Vec<f64>>(&array.subset_all())
+            .map_err(|e| Error::Format {
+                format: "zarr".to_string(),
+                detail: format!("decode array '{name}': {e}"),
+            })
+    })();
+    store.close();
+    result
 }

@@ -2,6 +2,11 @@
 # which drives Node by default and a browser when a WebDriver is configured
 # (CHROMEDRIVER / GECKODRIVER / SAFARIDRIVER) plus `--headless`.
 #
+# `tests/zarr_wasm32.rs` is deliberately Node-runnable: the codec chain has
+# nothing to do with the DOM, so the cross-target proof needs no browser at all.
+# The OPFS half does (sync access handles are a Worker-only browser API) and is
+# exercised end-to-end from earthscilab's Playwright tier, in three engines.
+#
 # The C toolchain for zstd-sys is NOT set here because its path is
 # machine-specific; see the top of Cargo.toml:
 #   CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang

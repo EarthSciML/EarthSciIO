@@ -10,6 +10,10 @@
 //! Per the RFC tolerance policy this is a **decoded-value** round-trip, not a
 //! byte-identity check.
 
+// Native-only: this tier drives the cache, the transports and the format
+// readers, none of which exist on wasm32 (see the crate's module docs).
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

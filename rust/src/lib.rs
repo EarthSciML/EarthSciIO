@@ -29,61 +29,126 @@
 //!
 //! # Example — fetch (or reuse) a blob
 //!
+//! (The `cfg` guard is what lets these compile as doctests on the wasm32
+//! target, where the cache does not exist — see "Two targets" below.)
+//!
 //! ```no_run
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # fn main() -> Result<(), earthsciio::Error> {
 //! use earthsciio::{Cache, FetchRequest};
 //!
 //! let cache = Cache::from_env()?;                 // $EARTHSCIDATADIR + EARTHSCI_OFFLINE
 //! let blob = cache.fetch(&FetchRequest::new("https://data.earthsci.dev/era5/2018/11/20181108.nc")
 //!     .loader("era5"))?;
 //! println!("cached at {} ({} bytes)", blob.path.display(), blob.manifest.bytes);
-//! # Ok::<(), earthsciio::Error>(())
+//! # Ok(()) }
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn main() {}
 //! ```
 //!
 //! # Example — offline, cache-only (hermetic)
 //!
 //! ```no_run
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # fn main() -> Result<(), earthsciio::Error> {
 //! use earthsciio::{Cache, FetchRequest};
 //!
 //! let cache = Cache::builder().data_dir("conformance/corpus/cache").offline(true).build()?;
 //! let blob = cache.fetch(&FetchRequest::new("https://data.earthsci.dev/era5/2018/11/20181108.nc"))?;
 //! // A miss raises Error::CacheMiss naming the url + key — never a silent empty.
-//! # Ok::<(), earthsciio::Error>(())
+//! # Ok(()) }
+//! # #[cfg(target_arch = "wasm32")]
+//! # fn main() {}
 //! ```
+//!
+//! # Two targets, one writer
+//!
+//! Everything above describes the **native** crate. The crate also builds for
+//! `wasm32-unknown-unknown`, where it is deliberately a much smaller thing: the
+//! **output half only** — the codec profiles, the Zarr v3 sharded writer, and
+//! (feature `opfs`) a store backed by the browser's Origin Private File System.
+//!
+//! That exists so earthscilab's browser tier writes a run's output with *this*
+//! writer rather than a fourth implementation in JavaScript
+//! (`docs/output-handling.md` §4.2/§4.6): one writer, two hosts.
+//!
+//! The cache, the transports, the store registry, the `Provider` cadence path
+//! and every format **reader** are native-only, because each is built on
+//! something a browser tab does not have — blocking sockets, `flock`, a temp
+//! file on the blob filesystem, a memmap. They are `cfg`-ed out rather than
+//! stubbed: a wasm build that calls for them fails to compile, which is a much
+//! better outcome than one that links and then returns an empty dataset.
+//! `Cargo.toml`'s target tables carry the same split at the dependency level.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+// `opfs`'s dependencies are declared in the wasm32 target table, so on a native
+// build the feature would silently activate a module whose imports do not
+// resolve. Say so instead.
+#[cfg(all(feature = "opfs", not(target_arch = "wasm32")))]
+compile_error!(
+    "feature `opfs` is wasm32-only (it is a browser filesystem); \
+     build it with --target wasm32-unknown-unknown"
+);
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod auth;
+#[cfg(not(target_arch = "wasm32"))]
 mod cache;
 mod clock;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod datadir;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod era5;
 mod error;
 pub mod format;
+#[cfg(not(target_arch = "wasm32"))]
 mod key;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod manifest;
+#[cfg(not(target_arch = "wasm32"))]
 mod offline;
+#[cfg(not(target_arch = "wasm32"))]
 mod provider;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod store;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod validate;
 
-pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
-pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 pub use error::{Error, Result};
+
+// The output half — available on every target.
 pub use format::{
-    write_zarr_v3, ArrayData, AxisSelect, BloscProfile, CodecProfile, Coord, DType, Ff10Reader,
-    FormatRegistry, GeoTiffReader, NativeDataset, NativeField, NetcdfReader, OutputSchema, Reader,
-    Selection, WriteCoord, WriteVar, ZarrReader, ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC,
-    ZSTD_WASM,
+    write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
+    ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };
-#[cfg(feature = "object-store")]
+#[cfg(all(target_arch = "wasm32", feature = "opfs"))]
+pub use format::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
+#[cfg(not(target_arch = "wasm32"))]
+pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
+#[cfg(not(target_arch = "wasm32"))]
+pub use format::{
+    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader,
+    NativeDataset, NativeField, NetcdfReader, Reader, Selection, ZarrReader,
+};
+#[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
     read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
     write_zarr_object_store, write_zarr_object_store_with_options,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
+#[cfg(not(target_arch = "wasm32"))]
 pub use manifest::{Manifest, MANIFEST_SCHEMA};
+#[cfg(not(target_arch = "wasm32"))]
 pub use offline::{is_offline, OFFLINE_ENV};
+#[cfg(not(target_arch = "wasm32"))]
 pub use provider::{DataLoader, LoaderTemporal, Provider, Window};
+#[cfg(not(target_arch = "wasm32"))]
 pub use validate::{CacheDecision, Temporal};

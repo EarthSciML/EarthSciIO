@@ -6,6 +6,10 @@
 //! how many times bytes were actually fetched, and sleeps mid-fetch to widen the
 //! race window so the lock is genuinely contended.
 
+// Native-only: this tier drives the cache, the transports and the format
+// readers, none of which exist on wasm32 (see the crate's module docs).
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

@@ -16,10 +16,35 @@ categories = ["caching", "science", "filesystem"]
 # mode, ETag/checksum/TTL validation, and the concurrency contract (advisory
 # flock + atomic rename). Format readers (native arrays) are component (b).
 
+# ============================================================================
+# TARGET SPLIT — read this before adding a dependency.
+#
+# The crate builds for BOTH the host and `wasm32-unknown-unknown`, because the
+# browser tier of earthscilab writes its run output with THIS writer rather than
+# a JavaScript re-implementation (docs/output-handling.md §4.2/§4.6). wasm32
+# gets the OUTPUT half only — the codec chain, the Zarr v3 writer and the OPFS
+# store — and none of the cache/transport/reader machinery, every piece of which
+# is native by construction:
+#
+#   reqwest/blocking  a blocking HTTP client needs threads and sockets
+#   fs2               advisory flock is a POSIX/Windows syscall
+#   tempfile          `tmp/<uuid>.part` staging on a real filesystem
+#   netcdf-reader     memmaps the blob
+#   tiff / csv / zip  readers of a cached blob, i.e. of a file path
+#   zarrs `blosc`     blosc-src's vendored C does not cross-compile
+#   zarrs `filesystem` there is no std::fs behind a browser tab
+#
+# So a dependency belongs in the shared `[dependencies]` table only if it builds
+# and *means something* on both. Everything else goes in one of the two target
+# tables below. `src/lib.rs` mirrors this split at the module level.
+# ============================================================================
+
 [dependencies]
 sha2 = "0.10"                                          # cache key + content integrity (sha256)
 serde = { version = "1", features = ["derive"] }       # manifest (de)serialization
 serde_json = "1"                                        # manifest JSON (matches the Python writer)
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = "0.4"                                             # advisory file lock (flock) — spec §6
 tempfile = "3"                                          # tmp/<uuid>.part staging on the cache filesystem
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }  # RFC 3339 fetched_at + TTL math
@@ -78,6 +103,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 #   v3 sharded blosc-zstd+crc32c layout needs; `filesystem` backs the local
 #   writer + the round-trip test; v2 read (the pinned ISRM corpus store) is
 #   built in (zarrs converts v2 blosc metadata to a v3 codec chain on open).
+#
+# On wasm32 the feature set is narrowed — see the wasm32 target table below.
 zarrs = "0.23"
 
 # --- optional: direct (non-cache) object-storage Zarr via Apache Arrow
@@ -136,12 +163,112 @@ url = { version = "2", optional = true }
 # fork revision pinned here before, so the release is a straight substitute.
 netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
 
+# ============================================================================
+# wasm32 — the OUTPUT half of the crate, and nothing else.
+#
+# *** BUILDING FOR wasm32 — TWO NON-OBVIOUS REQUIREMENTS ***
+#
+#   CC_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/clang \
+#   AR_wasm32_unknown_unknown=$(brew --prefix llvm)/bin/llvm-ar \
+#   cargo build --target wasm32-unknown-unknown --no-default-features --features opfs
+#
+# 1. A **wasm-capable clang**. `zstd-sys` compiles the vendored zstd C sources
+#    with `cc`, and Apple's Xcode clang has no WebAssembly backend at all:
+#      error: unable to create target: 'No available targets are compatible
+#             with triple "wasm32-unknown-unknown"'
+#    Homebrew's `llvm` (or any upstream LLVM / wasi-sdk) does. This is a
+#    toolchain requirement, not a source change — zstd-sys ships a `wasm-shim/`
+#    of libc headers precisely so no wasm sysroot is needed. CI implication: a
+#    machine building this target needs LLVM on PATH, not just Xcode CLT.
+#
+# 2. **`zstd/no_asm`**. zstd-sys unconditionally feeds
+#    `zstd/lib/decompress/huf_decompress_amd64.S` to the assembler unless the
+#    `no_asm` feature is on (it only auto-disables for Windows), and x86-64
+#    assembly does not assemble for wasm32. `zstd` is pinned as a direct
+#    dependency below solely to turn that feature on for zarrs' copy through
+#    cargo feature unification.
+#
+# Nothing else blocks: no source patches to zarrs, zstd or their dependencies.
+# ============================================================================
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The RFC's `wasm` codec profile and NOTHING else: `sharding_indexed` +
+# `crc32c` (both pure Rust) wrapping a plain v3 `zstd` chunk codec. Explicitly
+# NOT `blosc` (blosc-src's C sources do not cross-compile), NOT `filesystem`
+# (there is no std::fs behind a tab), NOT `async` (the OPFS store is sync).
+zarrs = { version = "0.23", default-features = false, features = [
+    "sharding",
+    "crc32c",
+    "zstd",
+    "ndarray",
+    "transpose",
+] }
+# Direct dependency ONLY to enable `no_asm` for zarrs' zstd — see note 2 above.
+zstd = { version = "0.13", default-features = false, features = ["no_asm"] }
+# `time`'s wasm-bindgen feature is what makes `OffsetDateTime::now_utc()` read
+# JS `Date` instead of `SystemTime`, which is unimplemented on this target: the
+# output manifest's `created_at` would otherwise panic the whole write.
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros", "wasm-bindgen"] }
+
+# OPFS store (feature `opfs`). Optional so a wasm32 build that only wants the
+# codec chain — e.g. writing into an in-memory store and handing the bytes to
+# JS — does not link web-sys at all.
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+version = "0.3"
+optional = true
+features = [
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemHandle",
+    "FileSystemHandleKind",
+    "FileSystemReadWriteOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemSyncAccessHandle",
+]
+
+# The cross-language conformance drivers are native programs — they walk the
+# corpus off disk and drive a `Provider`. Declared with `required-features` so a
+# `--no-default-features` build (which is how wasm32 is built) simply does not
+# have these targets, rather than failing to compile a `main` that cannot exist.
+[[example]]
+name = "conformance_dump"
+path = "examples/conformance_dump.rs"
+required-features = ["conformance"]
+
+[[example]]
+name = "conformance_write"
+path = "examples/conformance_write.rs"
+required-features = ["conformance"]
+
 [features]
+default = ["conformance"]
+
+# The `examples/conformance_*` drivers (see the `[[example]]` tables above).
+# Enables no code in the library itself.
+conformance = []
+
 # Direct object_store-backed Zarr read/write, provider-agnostic: file://,
 # memory://, s3:// (incl. every S3-compatible endpoint), gs://, az:// and
 # http(s)://. Enables zarrs' async storage traits so the async object_store can
 # drive the sync API.
 object-store = ["dep:object_store", "dep:zarrs_object_store", "dep:tokio", "dep:url", "zarrs/async"]
 
+# The Origin Private File System as a `zarrs` store (`src/format/zarr_opfs.rs`),
+# so the browser tier writes its run output with THIS writer. **wasm32 only** —
+# its dependencies live in the wasm32 target table, so enabling it on a native
+# build is a hard error rather than a silently empty module (see `lib.rs`).
+opfs = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
+
 [dev-dependencies]
 # Concurrency + mock-HTTP tests use only std (threads, TcpListener) — no extra deps.
+
+# The wasm32 acceptance tests (`tests/zarr_wasm32.rs`, `tests/zarr_opfs.rs`) run
+# under `wasm-bindgen-test-runner` — Node for the codec half, a real browser for
+# the OPFS half, since OPFS does not exist in Node.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

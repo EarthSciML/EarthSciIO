@@ -17,33 +17,59 @@
 //! [`crate::Provider`]** — exactly the extensibility invariant the three
 //! registries exist to guarantee.
 
+//! # What survives on wasm32
+//!
+//! Every **reader** here opens a cached blob, i.e. a path on a real filesystem,
+//! so the whole reader half — and the [`Reader`] trait and [`FormatRegistry`]
+//! with it, both of which name a [`Cache`](crate::Cache) — is native-only. The
+//! **writer** ([`zarr_write`]) is not: it is pure codec work over a `zarrs`
+//! store, and on wasm32 that store is [`OpfsStore`]. See `crate`'s module docs.
+
+#[cfg(not(target_arch = "wasm32"))]
 mod ff10;
+#[cfg(not(target_arch = "wasm32"))]
 mod geotiff;
+#[cfg(not(target_arch = "wasm32"))]
 mod netcdf;
+#[cfg(not(target_arch = "wasm32"))]
 mod zarr;
-#[cfg(feature = "object-store")]
+#[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 mod zarr_object_store;
+#[cfg(all(target_arch = "wasm32", feature = "opfs"))]
+mod zarr_opfs;
+#[cfg(not(target_arch = "wasm32"))]
 mod zarr_store;
 mod zarr_write;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use ff10::Ff10Reader;
+#[cfg(not(target_arch = "wasm32"))]
 pub use geotiff::GeoTiffReader;
+#[cfg(not(target_arch = "wasm32"))]
 pub use netcdf::NetcdfReader;
+#[cfg(not(target_arch = "wasm32"))]
 pub use zarr::ZarrReader;
+#[cfg(not(target_arch = "wasm32"))]
+pub use zarr_write::write_zarr_v3;
 pub use zarr_write::{
-    write_zarr_v3, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar, ZstdProfile,
-    BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
+    write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
+    ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };
-#[cfg(feature = "object-store")]
+#[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use zarr_object_store::{
     read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
     write_zarr_object_store, write_zarr_object_store_with_options,
 };
+#[cfg(all(target_arch = "wasm32", feature = "opfs"))]
+pub use zarr_opfs::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::cache::Cache;
 use crate::error::Result;
 
@@ -265,6 +291,9 @@ impl AxisSelect {
 
 /// A format reader (`spec/registries.md` §2): opens a cached blob and returns
 /// CF-decoded native arrays. Keyed by format name in the [`FormatRegistry`].
+///
+/// Native-only: a reader's input is a path into the content-addressed cache.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Reader: Send + Sync {
     /// Format names this reader handles (e.g. `["netcdf"]`).
     fn formats(&self) -> &'static [&'static str];
@@ -338,11 +367,13 @@ pub trait Reader: Send + Sync {
 /// Format-name → reader lookup (`spec/registries.md` §2). Adding a reader is a
 /// registration, never a [`crate::Provider`] edit — the Provider resolves the
 /// reader by the loader's declared format name at runtime.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default, Clone)]
 pub struct FormatRegistry {
     by_name: HashMap<String, Arc<dyn Reader>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FormatRegistry {
     /// An empty registry.
     pub fn new() -> Self {
@@ -384,7 +415,7 @@ impl FormatRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

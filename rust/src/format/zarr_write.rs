@@ -31,12 +31,22 @@
 //! `memory://`) is handled by the scheme-dispatched `object_store`-backed opener
 //! (feature `object-store`).
 
+//! **Target note.** This module builds on `wasm32-unknown-unknown` too — it is
+//! the one half of the crate that does (see `crate`'s module docs), because the
+//! browser tier writes its run output with this writer rather than a fourth
+//! implementation in JavaScript. Only [`write_zarr_v3`] is native-only, since a
+//! local directory is what it writes into; [`write_all_to_store`] is the
+//! store-generic entry every target shares, and on wasm32 the store is
+//! [`OpfsStore`](super::OpfsStore).
+
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 use zarrs::array::{Array, ArrayMetadata};
+#[cfg(not(target_arch = "wasm32"))]
 use zarrs::filesystem::FilesystemStore;
 
 use crate::error::{Error, Result};
@@ -171,6 +181,7 @@ fn err(detail: impl Into<String>) -> Error {
 /// # Errors
 /// Returns [`Error::Format`] on schema inconsistency (e.g. a shard shape not a
 /// multiple of the inner chunk), or [`Error::Io`] / a `zarrs` error on write.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
     let _ = profile(&schema.profile)?; // fail fast on a bad profile before any I/O
     std::fs::create_dir_all(base).map_err(|e| Error::io(Some(base.to_path_buf()), e))?;
@@ -182,15 +193,23 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
 }
 
 /// Write group + coordinate/variable arrays + output manifest into any `zarrs`
-/// read/write store: the local [`FilesystemStore`] (via [`write_zarr_v3`]) or —
-/// under the `object-store` feature — an object-store-backed store for `s3://`,
-/// `http(s)://`, or `file://` roots. `base_url` is recorded verbatim in the
-/// output manifest's `base_url` field.
-pub(crate) fn write_all_to_store<S>(
-    store: Arc<S>,
-    base_url: &str,
-    schema: &OutputSchema,
-) -> Result<()>
+/// read/write store.
+///
+/// **This is the writer.** Every target-specific entry point is a thin wrapper
+/// that chooses the store and then calls this: [`write_zarr_v3`] (a local
+/// directory), `write_zarr_object_store` (`s3://`, `http(s)://`, `file://`, …,
+/// feature `object-store`), and `write_zarr_opfs` (the browser's Origin Private
+/// File System, feature `opfs`). That is what makes "one writer, several hosts"
+/// true by construction rather than by inspection — a store written from a
+/// browser tab and one written by a server differ only in where the bytes land.
+///
+/// `base_url` is recorded verbatim in the output manifest's `base_url` field.
+///
+/// # Errors
+/// [`Error::Format`] on a schema inconsistency (a shard shape that is not a
+/// multiple of the inner chunk, a variable whose data length disagrees with its
+/// dims) or a `zarrs` encode/store failure.
+pub fn write_all_to_store<S>(store: Arc<S>, base_url: &str, schema: &OutputSchema) -> Result<()>
 where
     S: zarrs::storage::ReadableWritableStorageTraits + 'static,
 {

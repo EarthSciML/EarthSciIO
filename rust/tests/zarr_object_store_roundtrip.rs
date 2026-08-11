@@ -6,7 +6,7 @@
 //! read/write logic are actually executed end-to-end. S3 uses the identical code
 //! with a different `parse_url` backend.
 
-#![cfg(feature = "object-store")]
+#![cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 
 use std::collections::BTreeMap;
 
