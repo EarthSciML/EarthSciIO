@@ -19,17 +19,24 @@
 //! unit conversion**); no FIPS/SCC normalization; no EGU/pollutant filter — those
 //! transforms move downstream into the `.esm`.
 //!
-//! # Reader-kwarg asymmetry
+//! # Reader options
 //!
-//! The [`Reader::read_native`] trait takes no kwargs and the Rust
-//! `DataLoader`/`Provider` carry no `reader_kwargs`, so `member`/`kind` live in
+//! The [`Reader::read_native`] trait takes no kwargs, so `member`/`kind` live in
 //! the reader **instance** (configured at construction, like the GeoTIFF reader's
 //! band handling). The default-registered [`Ff10Reader::new`] (`member = None`)
 //! decodes a bare `.csv` — the committed conformance fixture + cross-language
-//! crosscheck path. For a zipped input, a caller injects a configured reader
-//! (via [`Ff10Reader::member`], [`Ff10Reader::members`],
-//! [`Ff10Reader::member_glob`], [`Ff10Reader::skip_header_row`]) through the
-//! existing `Provider::with_formats` seam.
+//! crosscheck path.
+//!
+//! A zipped input is configured **by the loader**:
+//! [`DataLoader::reader_options`](crate::DataLoader::reader_options) —
+//! `{"member_glob": "*egu*", "skip_header_row": true}` — reaches this reader
+//! through [`Reader::configured`], which is the Rust spelling of the
+//! Python/Julia `reader_kwargs`. So an `.esm` document that declares the glob
+//! and the header row is decoded correctly by any caller, rather than only by
+//! one that hand-injects a configured reader through `Provider::with_formats`
+//! (still supported, and still what the builder methods
+//! [`Ff10Reader::member`], [`Ff10Reader::members`], [`Ff10Reader::member_glob`],
+//! [`Ff10Reader::skip_header_row`] are for).
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::Read;
@@ -176,6 +183,70 @@ impl Ff10Reader {
         self.kind = Ff10Kind::Point;
         self
     }
+
+    /// Build a configured reader from a loader's declared `reader_options` —
+    /// the DECLARED form of the builder calls above, so an `.esm` data loader
+    /// (not a caller with a hand-built registry) says which zip members hold
+    /// its table and whether they carry a header line. Recognised keys:
+    ///
+    /// | key | type | meaning |
+    /// |---|---|---|
+    /// | `member` | string | [`Ff10Reader::member`] |
+    /// | `members` | array of string | [`Ff10Reader::members`] |
+    /// | `member_glob` | string | [`Ff10Reader::member_glob`] |
+    /// | `skip_header_row` | bool | [`Ff10Reader::skip_header_row`] |
+    /// | `kind` | `"point"` | the FF10 schema variant |
+    ///
+    /// Any other key — or a recognised key of the wrong type — is an error.
+    fn from_options(options: &serde_json::Map<String, serde_json::Value>) -> Result<Self> {
+        let mut r = Ff10Reader::new();
+        for (k, v) in options {
+            match k.as_str() {
+                "member" => {
+                    r = r.member(str_opt(k, v)?);
+                }
+                "members" => {
+                    let arr = v.as_array().ok_or_else(|| {
+                        fmt_err(&format!("reader option {k:?} must be an array of strings"))
+                    })?;
+                    let names: Result<Vec<String>> =
+                        arr.iter().map(|m| str_opt(k, m).map(str::to_string)).collect();
+                    r = r.members(names?);
+                }
+                "member_glob" => {
+                    r = r.member_glob(str_opt(k, v)?);
+                }
+                "skip_header_row" => {
+                    let b = v.as_bool().ok_or_else(|| {
+                        fmt_err(&format!("reader option {k:?} must be a boolean"))
+                    })?;
+                    r = r.skip_header_row(b);
+                }
+                "kind" => match str_opt(k, v)? {
+                    "point" => r = r.kind_point(),
+                    other => {
+                        return Err(fmt_err(&format!(
+                            "reader option \"kind\": unknown FF10 schema variant {other:?} \
+                             (only \"point\" ships today)"
+                        )));
+                    }
+                },
+                other => {
+                    return Err(fmt_err(&format!(
+                        "unknown reader option {other:?}; ff10 takes member, members, \
+                         member_glob, skip_header_row, kind"
+                    )));
+                }
+            }
+        }
+        Ok(r)
+    }
+}
+
+/// A `reader_options` value that must be a string.
+fn str_opt<'a>(key: &str, v: &'a serde_json::Value) -> Result<&'a str> {
+    v.as_str()
+        .ok_or_else(|| fmt_err(&format!("reader option {key:?} must be a string")))
 }
 
 impl Reader for Ff10Reader {
@@ -185,6 +256,16 @@ impl Reader for Ff10Reader {
 
     fn extensions(&self) -> &'static [&'static str] {
         &["ff10", "csv"]
+    }
+
+    fn configured(
+        &self,
+        options: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Option<std::sync::Arc<dyn Reader>>> {
+        if options.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(std::sync::Arc::new(Ff10Reader::from_options(options)?)))
     }
 
     fn read_native(
@@ -827,6 +908,62 @@ mod tests {
         assert!(!m("egu[a-c].csv", "egud.csv"));
         assert!(m("lit[", "lit[")); // unclosed class is a literal
         assert!(!m("*EGU*", "point/egucems.csv")); // case-sensitive
+    }
+
+    /// The DECLARED spelling of `member_glob` + `skip_header_row`: a loader's
+    /// `reader_options` produce the same reader as the builder calls, so an
+    /// `.esm` that declares them decodes the zip without a caller-injected
+    /// registry.
+    #[test]
+    fn reader_options_configure_the_same_reader_as_the_builder() {
+        let dir = tempfile::tempdir().unwrap();
+        let zpath = egu_zip(dir.path());
+        let built = Ff10Reader::new()
+            .member_glob("*egu*")
+            .skip_header_row(true)
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap();
+
+        let opts: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"member_glob": "*egu*", "skip_header_row": true, "kind": "point"}"#,
+        )
+        .unwrap();
+        let declared = Ff10Reader::new()
+            .configured(&opts)
+            .unwrap()
+            .expect("non-empty options yield a configured reader")
+            .read_native(&zpath, &[], &Selection::All)
+            .unwrap();
+
+        assert_eq!(strs(&declared, "FACILITY_ID"), strs(&built, "FACILITY_ID"));
+        assert_eq!(f64s(&declared, "ANN_VALUE"), f64s(&built, "ANN_VALUE"));
+
+        // An empty option set leaves the registered reader alone.
+        assert!(
+            Ff10Reader::new()
+                .configured(&serde_json::Map::new())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// A mis-typed or wrongly-typed option is an ERROR, never a silently
+    /// ignored key — the whole point of routing options through the reader.
+    #[test]
+    fn unknown_or_ill_typed_reader_options_are_rejected() {
+        let bad = |json: &str| -> String {
+            let opts: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(json).unwrap();
+            match Ff10Reader::new().configured(&opts) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("option set {json} must be rejected"),
+            }
+        };
+        // The typo the shim's `member_filter` spelling would have been.
+        assert!(bad(r#"{"member_filter": "*egu*"}"#).contains("unknown reader option"));
+        assert!(bad(r#"{"skip_header_row": "yes"}"#).contains("must be a boolean"));
+        assert!(bad(r#"{"member_glob": 7}"#).contains("must be a string"));
+        assert!(bad(r#"{"kind": "nonpoint"}"#).contains("unknown FF10 schema variant"));
     }
 
     #[test]
