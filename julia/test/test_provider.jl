@@ -226,4 +226,39 @@
         bad = const_provider(cache, era5; format = "netcdf", variables = ["nope"])
         @test_throws ArgumentError materialize(bad)
     end
+
+    # spec/registries.md §2.1 / ESM_COMPLIANCE_VALIDATION_MATRIX FORMAT-08-A-006:
+    # a decode option the bound reader does not recognise is an ERROR AT
+    # CONSTRUCTION, never a silently-ignored key. The failure this prevents is
+    # not loud: a mis-typed `member_filter` selects nothing and the table reads
+    # back short, arbitrarily far from its cause.
+    @testset "unrecognised reader_kwargs are refused at construction (§2.1)" begin
+        # every registered reader declares its own decode options...
+        @test :member_glob in reader_option_keys(FF10Reader())
+        @test :skip_header_row in reader_option_keys(FF10Reader())
+        @test Set(reader_option_keys(ZarrReader())) == Set([:variables, :select])
+        @test isempty(reader_option_keys(NetCDFReader()))
+
+        # ...and an option outside that set fails the Provider, naming it.
+        e = try
+            const_provider(cache, era5; format = "ff10",
+                           reader_kwargs = (; member_filter = "*egu*"))
+            nothing
+        catch err
+            err
+        end
+        @test e isa ArgumentError
+        @test occursin("member_filter", e.msg)
+        @test occursin("member_glob", e.msg)       # says what it DOES take
+
+        # the correctly-spelled option constructs fine (the check is not a blanket ban)
+        @test const_provider(cache, era5; format = "ff10",
+                             reader_kwargs = (; member_glob = "*egu*")) isa Provider
+
+        # a store-backed reader is checked through `read_store`, not `read_native`
+        @test_throws ArgumentError const_provider(cache, era5; format = "zarr",
+                                                  reader_kwargs = (; selct = nothing))
+        @test const_provider(cache, era5; format = "zarr",
+                             reader_kwargs = (; select = nothing)) isa Provider
+    end
 end

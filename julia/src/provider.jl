@@ -105,14 +105,36 @@ function Provider(cache::Cache, url; format::AbstractString,
     records_per_sample != 2 || time_dim !== nothing ||
         throw(ArgumentError(
             "records_per_sample=2 needs a time_dim to bracket along"))
+    kw = Dict{Symbol,Any}(pairs(reader_kwargs))
+    _check_reader_kwargs(FORMAT_REGISTRY[format], String(format), kw)
     url_for = url isa AbstractString ? (let u = String(url); _ -> u; end) : url
     return Provider(cache, String(format), cadence, tvec, url_for,
                     time_dim === nothing ? nothing : String(time_dim),
                     variables === nothing ? nothing : String.(collect(variables)),
-                    Dict{Symbol,Any}(pairs(reader_kwargs)),
+                    kw,
                     source_loader === nothing ? nothing : String(source_loader),
                     auth_realm === nothing ? nothing : String(auth_realm),
                     records_per_sample === nothing ? nothing : Int(records_per_sample))
+end
+
+# The loader's declared decode options, checked against the bound reader AT
+# CONSTRUCTION (spec/registries.md §2.1). An unrecognised option is an ERROR
+# here, never an ignored key, so a mis-typed `member_filter` cannot quietly
+# select nothing and surface much later as wrong numbers. The accepted set is
+# the reader's own keyword declaration (`reader_option_keys`), so this can never
+# disagree with what `read_native` / `read_store` will actually honour.
+function _check_reader_kwargs(reader, format::String, kw::AbstractDict{Symbol,<:Any})
+    isempty(kw) && return nothing
+    accepted = reader_option_keys(reader)
+    accepted === nothing && return nothing        # a reader that slurps everything
+    unknown = sort!(String[String(k) for k in keys(kw) if !(k in accepted)])
+    isempty(unknown) && return nothing
+    throw(ArgumentError(
+        "the '$format' reader does not recognise reader option(s) " *
+        "$(join(unknown, ", ")); it takes $(join(sort!(String.(accepted)), ", ")). " *
+        "An unrecognised option is an error rather than an ignored key " *
+        "(spec/registries.md §2.1) — a mis-typed option would otherwise decode " *
+        "something else, silently"))
 end
 
 """Thin constructor for a time-invariant ([`CONST`]) provider."""
