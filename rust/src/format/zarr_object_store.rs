@@ -91,12 +91,26 @@ use zarrs::storage::storage_adapter::async_to_sync::{
 };
 use zarrs_object_store::AsyncObjectStore;
 
+use super::zarr_store::SanitizedV2;
 use super::{AxisSelect, NativeDataset, OutputSchema, Selection};
 use crate::error::{Error, Result};
 
 /// Environment prefixes harvested by [`store_options_from_env`], one per cloud
 /// backend, matching what each `object_store` builder's own `from_env` reads.
 const ENV_PREFIXES: [&str; 3] = ["AWS_", "GOOGLE_", "AZURE_"];
+
+/// Option keys that mean "this caller has a way to authenticate to S3". If ANY
+/// of these is present, [`apply_s3_defaults`] leaves signing alone.
+const S3_CREDENTIAL_KEYS: [&str; 8] = [
+    "aws_skip_signature",
+    "skip_signature",
+    "aws_access_key_id",
+    "access_key_id",
+    "aws_secret_access_key",
+    "secret_access_key",
+    "aws_session_token",
+    "aws_container_credentials_relative_uri",
+];
 
 fn os_err(detail: impl Into<String>) -> Error {
     Error::Format {
@@ -122,6 +136,41 @@ pub fn store_options_from_env() -> Vec<(String, String)> {
         .filter(|(k, _)| ENV_PREFIXES.iter().any(|p| k.starts_with(p)))
         .map(|(k, v)| (k.to_ascii_lowercase(), v))
         .collect()
+}
+
+/// Give an `s3://` URL the SAME meaning it has on the cache-backed path:
+/// **anonymous, regional, no credentials**.
+///
+/// This crate's own `s3://` transport (`transport::s3`) is documented as "a
+/// public bucket needs no AWS SDK, no SigV4, no credentials", and resolves the
+/// region as `$EARTHSCI_S3_REGION` → `$AWS_REGION` → `us-east-2`. `object_store`
+/// makes the opposite default choice: it signs, and it has no region fallback.
+/// Left alone, the same `s3://inmap-model/isrm_v1.2.1.zarr/` URL would read fine
+/// through the cache and fail on a credential lookup without it — a silent
+/// divergence between two paths that are supposed to differ only in whether
+/// bytes touch the disk.
+///
+/// So: for `s3://`/`s3a://`, when the caller has supplied **no** way to
+/// authenticate ([`S3_CREDENTIAL_KEYS`]), signing is switched off; and a missing
+/// region is filled from the same chain the cached transport uses. Anything the
+/// caller stated is left exactly as given — including `aws_skip_signature=false`,
+/// which is how a caller asks for signed access explicitly.
+fn apply_s3_defaults(url_str: &str, options: &mut Vec<(String, String)>) {
+    if !(url_str.starts_with("s3://") || url_str.starts_with("s3a://")) {
+        return;
+    }
+    fn has(options: &[(String, String)], k: &str) -> bool {
+        options.iter().any(|(key, _)| key == k)
+    }
+    if !S3_CREDENTIAL_KEYS.iter().any(|k| has(options, k)) {
+        options.push(("aws_skip_signature".to_string(), "true".to_string()));
+    }
+    if !has(options, "region") && !has(options, "aws_region") {
+        options.push((
+            "aws_region".to_string(),
+            crate::transport::resolve_region(None),
+        ));
+    }
 }
 
 /// A `tokio` `block_on` bridge so an async `object_store` store can be used from
@@ -176,6 +225,43 @@ fn build_sync_store(
     )))
 }
 
+/// The read-side store: [`build_sync_store`] plus the two things a *read* of a
+/// foreign store needs and a write of our own does not — anonymous-S3 defaults
+/// ([`apply_s3_defaults`]) and Zarr v2 `.zarray` normalization
+/// ([`SanitizedV2`]). Together these make a direct read of a given URL behave
+/// like the cache-backed read of the same URL.
+fn build_read_store(
+    url_str: &str,
+    options: &[(String, String)],
+    handle: tokio::runtime::Handle,
+) -> Result<Arc<SanitizedV2<SyncObjectStore>>> {
+    let mut opts = options.to_vec();
+    apply_s3_defaults(url_str, &mut opts);
+    let inner = build_sync_store(url_str, &opts, handle)?;
+    Ok(Arc::new(SanitizedV2::new(inner)))
+}
+
+/// The full (dims-order) shape of array `var` in the store at `url`, read from
+/// ONLY that array's metadata object — never a chunk.
+///
+/// The direct-read twin of [`super::Reader::array_shape`]: the same
+/// honour/refuse probe a caller makes before pushing a projection down, with no
+/// cache and so no bytes written to disk.
+///
+/// # Errors
+/// Returns [`Error::Format`] if the URL has no `object_store` backend or the
+/// array's metadata cannot be opened.
+pub fn array_shape_object_store(
+    url: &str,
+    var: &str,
+    options: &[(String, String)],
+) -> Result<Vec<usize>> {
+    let rt = runtime()?;
+    let store = build_read_store(url, options, rt.handle().clone())?;
+    let array = super::zarr::open_array(store, var)?;
+    Ok(array.shape().iter().map(|&s| s as usize).collect())
+}
+
 /// Read `variables` from a Zarr store at `url` directly through `object_store`,
 /// applying the orthogonal `select` lazily.
 ///
@@ -214,11 +300,14 @@ pub fn read_zarr_object_store_with_options(
     }
     // The runtime must outlive the synchronous decode (the adapter blocks on it).
     let rt = runtime()?;
-    let store = build_sync_store(url, options, rt.handle().clone())?;
+    let store = build_read_store(url, options, rt.handle().clone())?;
     let axes: Option<&[AxisSelect]> = match select {
         Selection::Orthogonal(a) => Some(a.as_slice()),
         _ => None,
     };
+    // Selection pushdown is NOT re-implemented here: `read_arrays` is the same
+    // function the cache-backed reader calls, so `Selection::Orthogonal` fetches
+    // exactly the intersecting chunk objects on this path too.
     super::zarr::read_arrays(store, variables, axes)
 }
 
@@ -401,6 +490,51 @@ mod tests {
                 .contains(&format!("host: 127.0.0.1:{port}")),
             "request should be addressed to the override host"
         );
+    }
+
+    /// An `s3://` URL means the same thing here as it does on the cache-backed
+    /// path: anonymous, regional, no credentials. That is what makes
+    /// `s3://inmap-model/...` — a public bucket read by a runner that
+    /// deliberately holds no `s3:GetObject` — work through both paths with no
+    /// configuration at all.
+    #[test]
+    fn an_s3_read_defaults_to_unsigned_and_regional() {
+        let mut opts = Vec::new();
+        apply_s3_defaults("s3://inmap-model/isrm_v1.2.1.zarr/", &mut opts);
+        assert_eq!(
+            opts.iter().find(|(k, _)| k == "aws_skip_signature"),
+            Some(&("aws_skip_signature".to_string(), "true".to_string())),
+            "an unauthenticated s3:// read must not try to sign"
+        );
+        assert!(
+            opts.iter().any(|(k, v)| k == "aws_region" && !v.is_empty()),
+            "object_store has no region fallback; the cached transport's chain supplies one"
+        );
+    }
+
+    /// Whatever the caller stated is left alone — including asking for signed
+    /// access explicitly, and including a non-S3 scheme, which is untouched.
+    #[test]
+    fn stated_credentials_and_other_schemes_are_left_alone() {
+        for stated in [
+            ("aws_access_key_id", "AKIAEXAMPLE"),
+            ("aws_skip_signature", "false"),
+        ] {
+            let mut opts = vec![(stated.0.to_string(), stated.1.to_string())];
+            apply_s3_defaults("s3://private-bucket/store.zarr", &mut opts);
+            assert_eq!(
+                opts.iter()
+                    .filter(|(k, _)| k == "aws_skip_signature")
+                    .count(),
+                usize::from(stated.0 == "aws_skip_signature"),
+                "stating {} must not add a signing default",
+                stated.0
+            );
+        }
+
+        let mut opts = Vec::new();
+        apply_s3_defaults("https://example.org/store.zarr", &mut opts);
+        assert!(opts.is_empty(), "non-s3 schemes get no S3 defaults");
     }
 
     /// `store_options_from_env` picks up exactly the cloud-config prefixes and

@@ -133,6 +133,70 @@ impl Reader for ZarrReader {
         };
         read_arrays(storage, variables, axes)
     }
+
+    /// True only when the crate is built with the `object-store` feature — that
+    /// is what supplies a storage backend which is not the cache. Reported
+    /// honestly rather than optimistically, so a `Direct` loader in a build
+    /// without the feature fails at the Provider with a message naming the
+    /// feature, instead of erroring deep inside a read.
+    fn supports_direct_read(&self) -> bool {
+        cfg!(feature = "object-store")
+    }
+
+    #[cfg(feature = "object-store")]
+    fn read_store_direct(
+        &self,
+        base_url: &str,
+        variables: &[String],
+        select: &Selection,
+        options: &[(String, String)],
+    ) -> Result<NativeDataset> {
+        if variables.is_empty() {
+            return Err(zarr_err(
+                "the zarr reader requires an explicit list of variables (arrays); \
+                 the store cannot be enumerated without a consolidated metadata index",
+            ));
+        }
+        super::zarr_object_store::read_zarr_object_store_with_options(
+            base_url,
+            variables,
+            select,
+            &merge_store_options(options),
+        )
+    }
+
+    #[cfg(feature = "object-store")]
+    fn array_shape_direct(
+        &self,
+        base_url: &str,
+        var: &str,
+        options: &[(String, String)],
+    ) -> Result<Option<Vec<usize>>> {
+        super::zarr_object_store::array_shape_object_store(
+            base_url,
+            var,
+            &merge_store_options(options),
+        )
+        .map(Some)
+    }
+}
+
+/// Backend options for a direct read: the process environment first, then the
+/// caller's explicit options, which **win** on a repeated key.
+///
+/// Both sources matter. The environment is how a deployment configures a whole
+/// process (an AWS region, an S3-compatible endpoint) without touching any
+/// document; the explicit list is how one loader overrides that — the case a
+/// process-global variable cannot express when two loaders read two different
+/// stores.
+#[cfg(feature = "object-store")]
+fn merge_store_options(explicit: &[(String, String)]) -> Vec<(String, String)> {
+    let mut merged = super::zarr_object_store::store_options_from_env();
+    for (k, v) in explicit {
+        merged.retain(|(mk, _)| mk != k);
+        merged.push((k.clone(), v.clone()));
+    }
+    merged
 }
 
 /// Decode `variables` from an already-constructed `zarrs` storage (any backend:
@@ -230,7 +294,7 @@ where
 
 /// Open the `zarrs` array `name` under the store root. The array path is
 /// `/<name>` (group-root-relative); this fetches only the metadata object.
-fn open_array<S>(storage: Arc<S>, name: &str) -> Result<Array<S>>
+pub(crate) fn open_array<S>(storage: Arc<S>, name: &str) -> Result<Array<S>>
 where
     S: zarrs::storage::ReadableStorageTraits + 'static,
 {

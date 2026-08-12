@@ -57,8 +57,8 @@ pub use zarr_write::{
 };
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use zarr_object_store::{
-    read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
-    write_zarr_object_store, write_zarr_object_store_with_options,
+    array_shape_object_store, read_zarr_object_store, read_zarr_object_store_with_options,
+    store_options_from_env, write_zarr_object_store, write_zarr_object_store_with_options,
 };
 #[cfg(all(target_arch = "wasm32", feature = "opfs"))]
 pub use zarr_opfs::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
@@ -387,6 +387,54 @@ pub trait Reader: Send + Sync {
             format: self.formats().first().copied().unwrap_or("native").to_string(),
             detail: format!("reader takes no reader_options, but the loader declares {keys:?}"),
         })
+    }
+    /// Whether this reader can read its store **without the cache** — straight
+    /// from object storage, writing nothing to disk. Default `false`.
+    ///
+    /// A reader that answers `true` must honour
+    /// [`read_store_direct`](Reader::read_store_direct); the [`crate::Provider`]
+    /// consults this before routing a
+    /// [`StoreAccess::Direct`](crate::StoreAccess::Direct) loader, so an
+    /// unsupported combination is a named error rather than a silent fallback to
+    /// the cache (which would restore exactly the disk cost the caller asked to
+    /// avoid, invisibly).
+    fn supports_direct_read(&self) -> bool {
+        false
+    }
+
+    /// [`read_store`](Reader::read_store) with **no cache**: fetch each object
+    /// the selection needs straight from the store and decode it in memory.
+    ///
+    /// `options` are backend config keys (`object_store`'s own — `endpoint`,
+    /// `region`, credentials, …); an empty slice means "environment defaults".
+    /// Selection pushdown is unchanged — a direct read that lost it would fetch
+    /// vastly more than the cached read it replaces.
+    ///
+    /// Only called by the Provider when
+    /// [`supports_direct_read`](Reader::supports_direct_read) is `true`
+    /// (default: an error).
+    fn read_store_direct(
+        &self,
+        _base_url: &str,
+        _variables: &[String],
+        _select: &Selection,
+        _options: &[(String, String)],
+    ) -> Result<NativeDataset> {
+        Err(crate::Error::Format {
+            format: "native".to_string(),
+            detail: "reader does not support direct (uncached) store reads".to_string(),
+        })
+    }
+
+    /// [`array_shape`](Reader::array_shape) with no cache — the direct-read twin
+    /// of the pushdown probe. `None` when the reader has no direct path.
+    fn array_shape_direct(
+        &self,
+        _base_url: &str,
+        _var: &str,
+        _options: &[(String, String)],
+    ) -> Result<Option<Vec<usize>>> {
+        Ok(None)
     }
 }
 

@@ -107,6 +107,84 @@ impl LoaderTemporal {
     }
 }
 
+/// Environment variable setting the process-wide default for [`StoreAccess`]:
+/// `direct` or `cached` (case-insensitive). See [`StoreAccess::from_env`].
+pub const STORE_ACCESS_ENV: &str = "EARTHSCIIO_STORE_ACCESS";
+
+/// How a **store-backed** loader (zarr) gets at its objects.
+///
+/// # Why this is a choice and not a fix
+///
+/// The content-addressed cache is what makes a *repeated* read cheap: a second
+/// run, a second variable out of the same store, a DISCRETE loader stepping back
+/// over a file it already has. That is most loaders, which is why
+/// [`Cached`](StoreAccess::Cached) is the default and stays the default.
+///
+/// It earns nothing on a **cold, single-pass, in-region** read, and there it is
+/// pure cost: the whole fetched slab is written to disk, read back once, and
+/// discarded with the task. The InMAP ISRM source-receptor read is the case in
+/// point — ~15–25 GB of gated chunks from a public bucket in the same region as
+/// the compute, every chunk touched exactly once. Caching it buys nothing, costs
+/// a full write-then-read on the critical path, and on AWS Fargate (20 GiB
+/// ephemeral storage by default) may simply not fit.
+///
+/// # Who decides
+///
+/// The **caller** does, because the caller is the only one who knows the access
+/// pattern. The cache cannot infer it: "will anyone read this object again?" is
+/// a fact about the future, and the two cases are indistinguishable at the
+/// moment of the first read. Size is not a proxy either — a small store read a
+/// thousand times wants the cache more than a huge one read once.
+///
+/// The alternatives were considered and rejected:
+///
+/// * **A URL scheme** (`s3+direct://`) — the URL is also the *cache identity*
+///   and the document's declared source of truth. A scheme says where bytes
+///   live; overloading it to say how we buffer them makes two different URLs
+///   name the same object.
+/// * **An environment variable alone** — process-global, so a run with one
+///   single-pass 20 GB store and one small repeatedly-read store cannot express
+///   both. It is still supported ([`from_env`](StoreAccess::from_env)) as a
+///   *deployment* override, because a runner that receives documents it did not
+///   author has no other way to ask; it is a default, not the decision.
+///
+/// Precedence is therefore: an explicit [`DataLoader::store_access`] wins; then
+/// [`STORE_ACCESS_ENV`]; then [`Cached`](StoreAccess::Cached).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StoreAccess {
+    /// Every store object is fetched through the content-addressed [`Cache`]:
+    /// staged to a temp file, committed to disk, then read back. Integrity
+    /// checking, offline replay, mirror failover and cross-process locking all
+    /// come with it. **The default** — a warm-cache workflow must never become
+    /// mysteriously slow because something changed underneath it.
+    #[default]
+    Cached,
+    /// Store objects are read straight from object storage and decoded in
+    /// memory. **Nothing is written to disk.** Selection pushdown is unchanged:
+    /// only the chunk objects the selection intersects are fetched.
+    ///
+    /// The trade is real — no integrity record, no offline replay, no reuse
+    /// across runs, and a re-read costs a second download. Choose it when the
+    /// read is cold, single-pass, and near the data.
+    Direct,
+}
+
+impl StoreAccess {
+    /// The process-wide default from [`STORE_ACCESS_ENV`] (`direct` / `cached`),
+    /// or [`StoreAccess::Cached`] when unset or unrecognised.
+    ///
+    /// An unrecognised value falls back to the safe default rather than
+    /// erroring: a typo'd deployment variable should not take a run down, and
+    /// the consequence of ignoring it is a slower run, never a wrong one.
+    #[must_use]
+    pub fn from_env() -> Self {
+        match std::env::var(STORE_ACCESS_ENV) {
+            Ok(v) if v.trim().eq_ignore_ascii_case("direct") => StoreAccess::Direct,
+            _ => StoreAccess::Cached,
+        }
+    }
+}
+
 /// The minimal parsed `DataLoader` the Provider needs: where the bytes are, how
 /// to decode them, which variables to read, and the temporal cadence (absent ⇒
 /// CONST). This is the I/O-relevant projection of the ESM `DataLoader` contract —
@@ -144,6 +222,17 @@ pub struct DataLoader {
     /// motivated it. An option the bound reader does not recognise is an error
     /// at construction, never a silently-ignored key.
     pub reader_options: serde_json::Map<String, serde_json::Value>,
+    /// Whether a **store-backed** read goes through the cache. `None` ⇒ not
+    /// stated, so [`StoreAccess::from_env`] decides (which defaults to
+    /// [`StoreAccess::Cached`]). Ignored by whole-file readers, which have no
+    /// direct path. See [`StoreAccess`] for who decides and why.
+    pub store_access: Option<StoreAccess>,
+    /// Backend config for a [`StoreAccess::Direct`] read — `object_store`'s own
+    /// option keys (`endpoint`, `region`, `aws_skip_signature`, credentials, …).
+    /// Empty ⇒ environment defaults. These override the environment per loader,
+    /// which is what a process-global variable cannot express when two loaders
+    /// read two different stores.
+    pub store_options: Vec<(String, String)>,
 }
 
 impl DataLoader {
@@ -164,6 +253,8 @@ impl DataLoader {
             auth_realm: None,
             select: Selection::All,
             reader_options: serde_json::Map::new(),
+            store_access: None,
+            store_options: Vec::new(),
         }
     }
 
@@ -178,6 +269,32 @@ impl DataLoader {
     /// [`Provider`] is built, so an unrecognised option fails there.
     pub fn reader_options(mut self, options: serde_json::Map<String, serde_json::Value>) -> Self {
         self.reader_options = options;
+        self
+    }
+
+    /// State whether this loader's store objects go through the cache,
+    /// overriding [`STORE_ACCESS_ENV`]. See [`StoreAccess`].
+    ///
+    /// [`StoreAccess::Direct`] on a loader whose reader has no direct path is a
+    /// named error at [`Provider::new`], never a silent fall back to the cache.
+    pub fn store_access(mut self, access: StoreAccess) -> Self {
+        self.store_access = Some(access);
+        self
+    }
+
+    /// Backend config for a [`StoreAccess::Direct`] read (`object_store` option
+    /// keys). Overrides the environment for this loader only — an S3-compatible
+    /// endpoint, a region, or `aws_skip_signature` for an unsigned public read.
+    pub fn store_options<I, K, V>(mut self, options: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.store_options = options
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
         self
     }
 
@@ -236,6 +353,10 @@ pub struct Provider {
     /// lives in the next file, so the bracket may hold two adjacent files at a
     /// file-period seam. Most-recently-used at the tail.
     files: Vec<(OffsetDateTime, NativeDataset)>,
+    /// The store-access decision, resolved ONCE at construction (loader → env →
+    /// [`StoreAccess::Cached`]) so it cannot change mid-run and so the
+    /// environment is read once rather than per object.
+    store_access: StoreAccess,
 }
 
 impl Provider {
@@ -265,11 +386,31 @@ impl Provider {
             Some(configured) => configured,
             None => reader,
         };
+        // Resolve the cached/direct decision once, and refuse an impossible one
+        // HERE rather than at the first read. Falling back to the cache would
+        // silently restore the disk cost the caller explicitly asked to avoid —
+        // which on a 20 GiB ephemeral disk is a failure, not a slow success.
+        let store_access = loader.store_access.unwrap_or_else(StoreAccess::from_env);
+        if store_access == StoreAccess::Direct
+            && reader.store_backed()
+            && !reader.supports_direct_read()
+        {
+            return Err(Error::Format {
+                format: loader.format.clone(),
+                detail: format!(
+                    "loader '{}' asked for uncached (direct) store reads, but the '{}' \
+                     reader has no direct path in this build — rebuild earthsciio with \
+                     the `object-store` feature, or use StoreAccess::Cached",
+                    loader.name, loader.format
+                ),
+            });
+        }
         Ok(Self {
             loader,
             cache,
             window,
             reader,
+            store_access,
             buffers: HashMap::new(),
             coords: HashMap::new(),
             current_dataset: None,
@@ -311,7 +452,20 @@ impl Provider {
             Some(t) => t.start,
         };
         let url = self.resolve_url(anchor)?;
-        self.reader.array_shape(self.cache.clone(), &url, var)
+        match self.store_access {
+            StoreAccess::Direct => {
+                self.reader
+                    .array_shape_direct(&url, var, &self.loader.store_options)
+            }
+            StoreAccess::Cached => self.reader.array_shape(self.cache.clone(), &url, var),
+        }
+    }
+
+    /// How this provider reaches a store-backed loader's objects, after the
+    /// loader → environment → default resolution. See [`StoreAccess`].
+    #[must_use]
+    pub fn store_access(&self) -> StoreAccess {
+        self.store_access
     }
 
     /// Materialize the loader's native arrays into the buffer.
@@ -585,12 +739,20 @@ impl Provider {
         // so the reader fetches individual objects on demand. Additive + default-
         // off: whole-file readers inherit `store_backed() == false` and read whole.
         if self.reader.store_backed() {
-            return self.reader.read_store(
-                self.cache.clone(),
-                &url,
-                &self.loader.variables,
-                select,
-            );
+            return match self.store_access {
+                // Straight from object storage, nothing written to disk. The
+                // `select` travels unchanged, so pushdown is identical.
+                StoreAccess::Direct => self.reader.read_store_direct(
+                    &url,
+                    &self.loader.variables,
+                    select,
+                    &self.loader.store_options,
+                ),
+                StoreAccess::Cached => {
+                    self.reader
+                        .read_store(self.cache.clone(), &url, &self.loader.variables, select)
+                }
+            };
         }
         let blob = self.fetch_blob(&url)?;
         self.reader

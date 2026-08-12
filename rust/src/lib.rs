@@ -139,8 +139,8 @@ pub use format::{
 };
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
-    read_zarr_object_store, read_zarr_object_store_with_options, store_options_from_env,
-    write_zarr_object_store, write_zarr_object_store_with_options,
+    array_shape_object_store, read_zarr_object_store, read_zarr_object_store_with_options,
+    store_options_from_env, write_zarr_object_store, write_zarr_object_store_with_options,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
@@ -149,6 +149,6 @@ pub use manifest::{Manifest, MANIFEST_SCHEMA};
 #[cfg(not(target_arch = "wasm32"))]
 pub use offline::{is_offline, OFFLINE_ENV};
 #[cfg(not(target_arch = "wasm32"))]
-pub use provider::{DataLoader, LoaderTemporal, Provider, Window};
+pub use provider::{DataLoader, LoaderTemporal, Provider, StoreAccess, Window, STORE_ACCESS_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use validate::{CacheDecision, Temporal};
