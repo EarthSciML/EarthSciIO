@@ -134,6 +134,35 @@ function read_store end
 # read on its side. Whole-file readers inherit the `false` default.
 supports_selection(::Any) = false
 
+"""
+    reader_option_keys(reader) -> Union{Nothing,Vector{Symbol}}
+
+The decode options `reader` accepts — `spec/registries.md` §2.1's
+`reader_kwargs`, the Julia spelling of an `.esm` loader's `reader_options`.
+[`Provider`] checks a declared option set against this AT CONSTRUCTION, because
+an option the reader does not recognise MUST be an error rather than a silently
+ignored key: a mis-typed `member_filter` that quietly selects nothing is
+discovered arbitrarily far from its cause, as wrong numbers. (Rust spells the
+same rule `Reader::configured`.)
+
+The list is READ OFF the reader's own `read_native` / `read_store` method — its
+keyword declaration is the single source of truth, so it cannot drift from the
+code that consumes it. `nothing` means "this reader slurps every keyword"
+(only [`StubReader`], which errors on any call), and disables the check.
+"""
+function reader_option_keys(reader)
+    m = try
+        store_backed(reader) ?
+            which(read_store, Tuple{typeof(reader),Cache,String}) :
+            which(read_native, Tuple{typeof(reader),String})
+    catch
+        return nothing            # no applicable method: let the call report it
+    end
+    decl = Base.kwarg_decl(m)
+    any(endswith(String(k), "...") for k in decl) && return nothing
+    return decl
+end
+
 """A registered-but-unimplemented reader (e.g. the `zarr` stub). Calling it is a
 clear error pointing at the bead that will implement it."""
 struct StubReader

@@ -60,8 +60,11 @@ function _tiff_bands(img)
     end
 end
 
+# `variables` and `band_names` ARE the geotiff reader's decode options; naming
+# them explicitly (rather than slurping the rest) is what lets `Provider` refuse
+# an unrecognised `reader_options` key at construction — spec/registries.md §2.1.
 function read_native(::GeoTIFFReader, path::AbstractString;
-                     variables = nothing, band_names = nothing, _...)
+                     variables = nothing, band_names = nothing)
     img = TiffImages.load(String(path))
     return _assemble_geotiff(_tiff_bands(img), _tiff_tags(img);
                              variables = variables, band_names = band_names)

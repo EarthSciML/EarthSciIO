@@ -315,7 +315,7 @@ end
 # --- the store-backed entry point -------------------------------------------
 
 """
-    read_store(::ZarrReader, cache, base_url; variables, select=nothing, _...)
+    read_store(::ZarrReader, cache, base_url; variables, select=nothing)
 
 Read `variables` (array names) from the Zarr store at `base_url` under an
 orthogonal `select`. Reads BOTH Zarr **v2** (`.zarray`/`.zattrs`, plain chunk
@@ -323,9 +323,14 @@ objects) and Zarr **v3** (`zarr.json`, the sharding codec) — the layout is
 detected per array by probing for `zarr.json` first, then `.zarray`. `variables`
 is REQUIRED (the store cannot be enumerated). `select` (`Dict("axes"=>[...])`) is
 applied to each array whose rank matches the axis count; other-rank arrays read
-whole."""
+whole.
+
+These two ARE the reader's decode options: it takes no others, and it names them
+explicitly (rather than slurping the rest) so a loader's unrecognised
+`reader_options` key is refused by [`Provider`] at construction instead of being
+silently ignored — spec/registries.md §2.1."""
 function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
-                    variables = nothing, select = nothing, _...)
+                    variables = nothing, select = nothing)
     (variables === nothing || isempty(variables)) && error(
         "the zarr reader requires an explicit list of variables (arrays); the " *
         "store cannot be enumerated without consolidated metadata")
