@@ -362,6 +362,32 @@ pub trait Reader: Send + Sync {
     ) -> Result<Option<Vec<usize>>> {
         Ok(None)
     }
+
+    /// A copy of this reader configured by the loader's declared
+    /// [`DataLoader::reader_options`](crate::DataLoader::reader_options) — the
+    /// Rust spelling of the Python/Julia `reader_kwargs`, and the seam that
+    /// lets a DOCUMENT (rather than a caller with a hand-built registry) say
+    /// how a format is decoded: the FF10 zip member glob, the asserted header
+    /// row, a GeoTIFF band naming, and so on.
+    ///
+    /// `Ok(None)` (the default for an empty option set) means "use me as
+    /// registered". The default implementation **rejects** a non-empty option
+    /// set rather than ignoring it: a mis-typed option that silently does
+    /// nothing is the failure mode this seam exists to prevent.
+    fn configured(
+        &self,
+        options: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Option<Arc<dyn Reader>>> {
+        if options.is_empty() {
+            return Ok(None);
+        }
+        let mut keys: Vec<&str> = options.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        Err(crate::Error::Format {
+            format: self.formats().first().copied().unwrap_or("native").to_string(),
+            detail: format!("reader takes no reader_options, but the loader declares {keys:?}"),
+        })
+    }
 }
 
 /// Format-name → reader lookup (`spec/registries.md` §2). Adding a reader is a

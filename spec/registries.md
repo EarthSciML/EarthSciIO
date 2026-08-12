@@ -85,9 +85,30 @@ interface Reader:
     read_native(handle: Handle,
                 variables: [string],              # file_variable names to read
                 select: Selection) -> { string: NativeField }   # + coords
+    configured(options: {string: any}) -> Reader?  # loader-declared decode options
 
 NativeField = { dtype, dims: [string], shape: [int], data, fill_value? }
 ```
+
+### 2.1 Reader options (`reader_kwargs`)
+
+A loader carries **format-specific decode options** alongside its format name:
+Python/Julia spell them `reader_kwargs` on the `DataLoader` and splat them into
+`read_native`; Rust spells them `DataLoader.reader_options` and resolves them
+once, at Provider construction, through `Reader::configured` (its trait method
+signature takes no kwargs, so a *configured reader instance* is the Rust idiom).
+Either way the meaning is one thing:
+
+> **How a format is decoded is a property of the DECLARATION, not of the
+> caller.** An `.esm` data loader that says `{"member_glob": "*egu*",
+> "skip_header_row": true}` decodes correctly through any binding, without a
+> caller hand-building a registry of pre-configured readers.
+
+An option a reader does not recognise **MUST** be an error at construction, not
+a silently-ignored key — an ignored `member_filter` typo reads back as an empty
+selection or a mis-parsed table, arbitrarily far from its cause. Reader options
+never enter the cache key (the blob is the whole file; member selection and
+header handling are decode-side).
 
 | name | ext | status | notes |
 |---|---|---|---|

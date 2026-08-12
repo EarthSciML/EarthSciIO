@@ -185,6 +185,79 @@ fn decodes_every_corpus_case_to_match_expected() {
     );
 }
 
+/// The same zip case, decoded through a **`Provider` built from a loader that
+/// DECLARES its decode options** — no caller-configured reader, no custom
+/// registry. This is the path an `.esm` data loader takes (EarthSciAST's
+/// `providers_from_document` builds exactly this `DataLoader`), and it must
+/// land on the corpus expectation the hand-configured reader above produces.
+#[test]
+fn declared_reader_options_decode_the_zip_case_through_the_provider() {
+    let corpus = corpus_dir();
+    let case: Value = serde_json::from_slice(
+        &fs::read(corpus.join("cases/ff10-zip-egu-glob.json")).unwrap(),
+    )
+    .unwrap();
+    let cache = Arc::new(
+        Cache::builder()
+            .data_dir(corpus.join("cache"))
+            .offline(true)
+            .verify_on_read(true)
+            .build()
+            .expect("offline cache over the corpus"),
+    );
+
+    // The case's own decode block, verbatim, as the loader's reader_options.
+    let dec = case["decode"].as_object().unwrap();
+    let mut options = serde_json::Map::new();
+    for k in ["kind", "member_glob", "skip_header_row"] {
+        if !dec[k].is_null() {
+            options.insert(k.to_string(), dec[k].clone());
+        }
+    }
+    assert_eq!(options.len(), 3, "the zip case pins kind + glob + header row");
+
+    let loader = earthsciio::DataLoader::new(
+        case["loader"].as_str().unwrap(),
+        "ff10",
+        case["resolved_url"].as_str().unwrap(),
+    )
+    .variables(["POLID".to_string(), "ANN_VALUE".to_string()])
+    .reader_options(options);
+    let mut provider = earthsciio::Provider::new(loader, cache, None).expect("provider");
+    let fields = provider.materialize().expect("declared-options decode");
+
+    let exp = &case["expected"]["variables"];
+    compare_field(
+        "ff10-zip-egu-glob(declared)",
+        "POLID",
+        &fields["POLID"],
+        &exp["POLID"],
+    );
+    compare_field(
+        "ff10-zip-egu-glob(declared)",
+        "ANN_VALUE",
+        &fields["ANN_VALUE"],
+        &exp["ANN_VALUE"],
+    );
+
+    // Without the declared options the same loader hits the header line as a
+    // data row — i.e. the options are load-bearing, not decoration.
+    let bare = earthsciio::DataLoader::new("nei2016", "ff10", case["resolved_url"].as_str().unwrap());
+    let mut bare = earthsciio::Provider::new(
+        bare,
+        Arc::new(
+            Cache::builder()
+                .data_dir(corpus.join("cache"))
+                .offline(true)
+                .build()
+                .unwrap(),
+        ),
+        None,
+    )
+    .expect("provider");
+    assert!(bare.materialize().is_err(), "no options ⇒ no member selection");
+}
+
 fn compare_field(id: &str, name: &str, got: &NativeField, exp: &Value) {
     assert_eq!(
         dtype_str(got.dtype),

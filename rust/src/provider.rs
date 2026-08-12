@@ -133,6 +133,17 @@ pub struct DataLoader {
     /// Default [`Selection::All`]; ignored by whole-file readers (the Provider
     /// still owns temporal record slicing).
     pub select: Selection,
+    /// Format-specific decode options, resolved against the registered reader
+    /// by [`Reader::configured`] when the Provider is built — the Rust spelling
+    /// of the Python/Julia `reader_kwargs`.
+    ///
+    /// This is how a *declaration* (an `.esm` data loader) says how its format
+    /// is decoded, instead of a caller hand-injecting a configured reader
+    /// through [`Provider::with_formats`]: `{"member_glob": "*egu*",
+    /// "skip_header_row": true}` on an `ff10` loader is the FF10 zip case that
+    /// motivated it. An option the bound reader does not recognise is an error
+    /// at construction, never a silently-ignored key.
+    pub reader_options: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DataLoader {
@@ -152,12 +163,21 @@ impl DataLoader {
             mirrors: Vec::new(),
             auth_realm: None,
             select: Selection::All,
+            reader_options: serde_json::Map::new(),
         }
     }
 
     /// Set the spatial/orthogonal selection for a store-backed reader (zarr).
     pub fn select(mut self, select: Selection) -> Self {
         self.select = select;
+        self
+    }
+
+    /// Declare the format-specific decode options (see
+    /// [`DataLoader::reader_options`]). Resolved against the reader when the
+    /// [`Provider`] is built, so an unrecognised option fails there.
+    pub fn reader_options(mut self, options: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.reader_options = options;
         self
     }
 
@@ -239,6 +259,12 @@ impl Provider {
             .ok_or_else(|| Error::UnknownFormat {
                 name: loader.format.clone(),
             })?;
+        // The loader's declared decode options configure the registered reader
+        // (an unrecognised option errors here, not mid-decode).
+        let reader = match reader.configured(&loader.reader_options)? {
+            Some(configured) => configured,
+            None => reader,
+        };
         Ok(Self {
             loader,
             cache,
