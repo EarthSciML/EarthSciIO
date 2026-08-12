@@ -34,7 +34,7 @@ use crate::cache::{Cache, FetchRequest};
 /// Drop a `"dimension_separator": null` field from a Zarr **v2** `.zarray` JSON
 /// document (a zarr-python/numcodecs quirk `zarrs` rejects). Returns the input
 /// unchanged if it is not the JSON object with that null field.
-fn sanitize_v2_array_meta(data: Vec<u8>) -> Vec<u8> {
+pub(crate) fn sanitize_v2_array_meta(data: Vec<u8>) -> Vec<u8> {
     let Ok(serde_json::Value::Object(mut map)) =
         serde_json::from_slice::<serde_json::Value>(&data)
     else {
@@ -45,6 +45,92 @@ fn sanitize_v2_array_meta(data: Vec<u8>) -> Vec<u8> {
     }
     map.remove("dimension_separator");
     serde_json::to_vec(&serde_json::Value::Object(map)).unwrap_or(data)
+}
+
+/// Apply [`sanitize_v2_array_meta`] to any storage backend that is not the
+/// [`CacheStorage`] (which sanitizes inline, on the buffer it already holds).
+///
+/// The quirk is a property of the **store's bytes**, not of the transport that
+/// delivered them, so every backend has to handle it or the same v2 store is
+/// readable through one path and unopenable through another. `CacheStorage` grew
+/// the fix first because the cache was the only backend; this wrapper carries it
+/// to the `object_store` path (see [`super::zarr_object_store`]) so a
+/// cache-bypassing read is never *less* capable than a cached one.
+///
+/// Only `.zarray` keys are touched, and they are fetched whole: a Zarr metadata
+/// object is small and is always read in full, so rewriting it cannot interact
+/// badly with a byte-range read of a *chunk*, which passes straight through.
+#[cfg(feature = "object-store")]
+pub(crate) struct SanitizedV2<S>(Arc<S>);
+
+#[cfg(feature = "object-store")]
+impl<S> SanitizedV2<S> {
+    /// Wrap `inner` so its `.zarray` objects are normalized on the way out.
+    pub(crate) fn new(inner: Arc<S>) -> Self {
+        Self(inner)
+    }
+
+    /// Whether `key` names a Zarr v2 array-metadata object.
+    fn is_v2_array_meta(key: &StoreKey) -> bool {
+        key.as_str().ends_with(".zarray")
+    }
+}
+
+#[cfg(feature = "object-store")]
+impl<S: ReadableStorageTraits> SanitizedV2<S> {
+    /// The sanitized whole object for a `.zarray` key.
+    fn sanitized_whole(&self, key: &StoreKey) -> Result<Option<Bytes>, StorageError> {
+        let Some(raw) = self.0.get(key)? else {
+            return Ok(None);
+        };
+        Ok(Some(Bytes::from(sanitize_v2_array_meta(raw.to_vec()))))
+    }
+}
+
+#[cfg(feature = "object-store")]
+impl<S: ReadableStorageTraits> ReadableStorageTraits for SanitizedV2<S> {
+    fn get_partial_many<'a>(
+        &'a self,
+        key: &StoreKey,
+        byte_ranges: ByteRangeIterator<'a>,
+    ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+        if !Self::is_v2_array_meta(key) {
+            return self.0.get_partial_many(key, byte_ranges);
+        }
+        let Some(whole) = self.sanitized_whole(key)? else {
+            return Ok(None);
+        };
+        // Ranges are resolved against the SANITIZED buffer, which is what
+        // `size_key` also reports, so the two stay consistent.
+        let size = whole.len() as u64;
+        let mut out: Vec<Result<Bytes, StorageError>> = Vec::new();
+        for br in byte_ranges {
+            let start = br.start(size) as usize;
+            let end = start + br.length(size) as usize;
+            if end > whole.len() {
+                out.push(Err(StorageError::Other(format!(
+                    "zarr byte range {start}..{end} out of bounds for object of {} bytes",
+                    whole.len()
+                ))));
+            } else {
+                out.push(Ok(whole.slice(start..end)));
+            }
+        }
+        Ok(Some(Box::new(out.into_iter())))
+    }
+
+    fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+        if !Self::is_v2_array_meta(key) {
+            return self.0.size_key(key);
+        }
+        Ok(self.sanitized_whole(key)?.map(|b| b.len() as u64))
+    }
+
+    fn supports_get_partial(&self) -> bool {
+        // Chunk reads pass straight through, so the inner store's answer is the
+        // honest one: an object_store backend really does serve HTTP range GETs.
+        self.0.supports_get_partial()
+    }
 }
 
 /// A read-only `zarrs` storage backed by the content-addressed [`Cache`].
