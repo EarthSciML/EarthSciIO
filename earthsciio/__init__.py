@@ -29,6 +29,7 @@ from .errors import (
     IntegrityError,
     OfflineError,
     TransportError,
+    UnknownReaderOption,
     Unsupported,
 )
 from .registry import (
@@ -62,7 +63,13 @@ from .readers import (
     NetCDFReader,
     register_format_readers,
 )
-from .provider import DataLoader, LoaderTemporal, Provider, Window
+from .provider import (
+    DataLoader,
+    LoaderTemporal,
+    Provider,
+    Window,
+    reader_option_names,
+)
 from .backends.cds import (
     CdsTransport,
     cds_api_key,
@@ -89,6 +96,7 @@ __all__ = [
     "EarthSciIOError",
     "BackendNotRegistered",
     "Unsupported",
+    "UnknownReaderOption",
     # errors — cache core
     "CacheMiss",
     "IntegrityError",
@@ -132,6 +140,7 @@ __all__ = [
     "DataLoader",
     "LoaderTemporal",
     "Window",
+    "reader_option_names",
     # config
     "CACHE_FORMAT_VERSION",
     "resolve_cache_root",

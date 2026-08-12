@@ -29,6 +29,7 @@ __all__ = [
     "EarthSciIOError",
     "BackendNotRegistered",
     "Unsupported",
+    "UnknownReaderOption",
     # cache/transport-core runtime errors (esio-9nb.2)
     "CacheMiss",
     "IntegrityError",
@@ -104,6 +105,40 @@ class Unsupported(EarthSciIOError, NotImplementedError):
             f"{registry} backend {backend!r} is a registered stub: {op} is not "
             f"implemented yet. The real implementation is tracked by the future "
             f"{tracking!r} epic (see {doc})."
+        )
+
+
+class UnknownReaderOption(EarthSciIOError, ValueError):
+    """A loader declares a ``reader_kwargs`` key its bound reader does not know.
+
+    ``spec/registries.md`` §2.1 makes this an error **at Provider construction**
+    rather than a silently-ignored key: a mis-typed ``member_filter`` that does
+    nothing reads back as an empty selection or a mis-parsed table, arbitrarily
+    far from its cause. The Rust binding raises the same condition from
+    ``Reader::configured``; this is its Python spelling.
+
+    The message names the format, the unrecognised keys and the ones the reader
+    does accept, because the overwhelmingly common cause is a near-miss spelling.
+    """
+
+    def __init__(
+        self,
+        fmt: str,
+        unknown: Iterable[str],
+        accepted: Optional[Iterable[str]] = None,
+    ) -> None:
+        self.format = fmt
+        self.unknown: List[str] = sorted(unknown)
+        self.accepted: List[str] = sorted(accepted) if accepted is not None else []
+        known = (
+            f"it accepts {self.accepted}"
+            if self.accepted
+            else "it accepts no reader options at all"
+        )
+        super().__init__(
+            f"format {fmt!r} reader does not recognise reader_kwargs "
+            f"{self.unknown}; {known}. An unrecognised decode option is an "
+            f"error, never an ignored key (spec/registries.md §2.1)."
         )
 
 
