@@ -37,13 +37,15 @@ across all three tracks (conformance ``esio-9nb.9``).
 from __future__ import annotations
 
 import datetime as _dt
+import inspect
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
 from .cache import Cache, CacheEntry
+from .errors import UnknownReaderOption
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
 
@@ -166,6 +168,63 @@ class DataLoader:
         return u
 
 
+#: Decode-entry-point arguments that are NOT reader options: the blob/store
+#: handle and the variable list, which every caller supplies from the loader.
+_NOT_AN_OPTION = frozenset({"self", "handle", "cache", "base_url", "variables"})
+
+
+def reader_option_names(reader: Any) -> Set[str]:
+    """The decode-option names ``reader`` recognises (``spec/registries.md`` §2.1).
+
+    A Python reader **declares** its options as the keyword parameters of its
+    decode entry point — ``read_store`` for a store-backed reader, else
+    ``read_native`` — so that signature is the single source of truth and an
+    option list cannot drift from the code that consumes it. (This is where the
+    Python idiom parts company with Rust's ``Reader::configured``, which needs an
+    explicit per-reader list because a trait method has no introspectable kwargs;
+    the accepted SET is the same either way, which is what conformance compares.)
+
+    The ``**_`` catch-all every reader carries is deliberately NOT read as
+    "accepts anything": swallowing an unknown key is precisely the failure mode
+    §2.1 forbids. A reader whose signature cannot be introspected at all (a C
+    extension, a ``functools.partial``) reports every declared option as
+    accepted rather than inventing a rejection it cannot justify.
+    """
+    fn = getattr(
+        reader,
+        "read_store" if getattr(reader, "store_backed", False) else "read_native",
+        None,
+    )
+    if fn is None:
+        return set()
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # unintrospectable — cannot police it
+        return set()
+    return {
+        name
+        for name, p in params.items()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and name not in _NOT_AN_OPTION
+    }
+
+
+def check_reader_options(reader: Any, loader: "DataLoader") -> None:
+    """Reject a ``reader_kwargs`` key the bound ``reader`` does not recognise.
+
+    Called once, when the :class:`Provider` is built, so a mis-typed decode
+    option fails there rather than quietly selecting nothing (the Rust binding
+    performs the same check in ``Reader::configured``; ``spec/registries.md``
+    §2.1 requires it of every binding).
+    """
+    options = loader.reader_kwargs or {}
+    if not options:
+        return
+    accepted = reader_option_names(reader)
+    unknown = [k for k in options if k not in accepted]
+    if unknown:
+        raise UnknownReaderOption(loader.format, unknown, accepted)
+
+
 class Provider:
     """A loader-bound provider of native-grid arrays, refreshed at the loader's
     cadence. See the module docstring for the CONST/DISCRETE contract.
@@ -203,6 +262,10 @@ class Provider:
         # Resolve (and construct) the reader by name now, so an unknown format
         # fails at construction, not mid-solve.
         self._reader = registry.create(loader.format)
+        # ... and resolve the loader's DECLARED decode options against it, for
+        # the same reason: an unrecognised reader_kwarg is an error here, never
+        # a key the decode silently ignores (spec/registries.md §2.1).
+        check_reader_options(self._reader, loader)
         # Current state — a file-read cache so stepping within one file decodes
         # it once, and the buffer the solver reads between cadence boundaries.
         self._current: Optional[NativeDataset] = None

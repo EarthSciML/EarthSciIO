@@ -25,6 +25,9 @@ from earthsciio import (
     DataLoader,
     LoaderTemporal,
     Provider,
+    UnknownReaderOption,
+    format_registry,
+    reader_option_names,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -327,6 +330,48 @@ def test_csv_provider_with_variable_selection(cache):
 def test_unknown_format_raises_at_construction(cache):
     with pytest.raises(BackendNotRegistered):
         Provider(DataLoader("x", "nonesuch", ERA5_URL), cache)
+
+
+# --------------------------------------------------------------------------- #
+# Reader options (spec/registries.md §2.1): a loader DECLARES how its format
+# decodes, and an option the bound reader does not know is an ERROR at
+# construction — the same rule the Rust `Reader::configured` enforces, so a
+# document that decodes correctly in one binding decodes correctly in all.
+# --------------------------------------------------------------------------- #
+
+
+def test_unrecognised_reader_option_raises_at_construction(cache):
+    """A mis-typed decode option must not be swallowed by the reader's ``**_``
+    catch-all: an ignored option reads back much later as an empty selection or
+    a mis-parsed table, arbitrarily far from its cause."""
+    loader = DataLoader(
+        "openaq",
+        "csv",
+        OPENAQ_URL,
+        reader_kwargs={"numeric_colums": ["value"]},  # sic — one letter off
+    )
+    with pytest.raises(UnknownReaderOption) as e:
+        Provider(loader, cache)
+    assert "numeric_colums" in str(e.value)
+    assert "numeric_columns" in str(e.value)  # names what it DOES accept
+
+
+def test_recognised_reader_options_are_the_reader_signature(cache):
+    """The accepted set is the decode entry point's own keyword parameters, so
+    it cannot drift from the code that consumes them."""
+    accepted = reader_option_names(format_registry.create("csv"))
+    assert {"numeric_columns", "delimiter", "header_row", "select"} <= accepted
+    assert "handle" not in accepted and "variables" not in accepted
+    # An empty option set never errors, whatever the reader accepts.
+    Provider(DataLoader("openaq", "csv", OPENAQ_URL), cache)
+
+
+def test_a_store_backed_reader_declares_its_options_on_read_store():
+    """A store-backed reader's decode entry point is ``read_store``, so that is
+    the signature the check reads (the zarr reader takes only ``select``)."""
+    accepted = reader_option_names(format_registry.create("zarr"))
+    assert "select" in accepted
+    assert "cache" not in accepted and "base_url" not in accepted
 
 
 def test_loader_temporal_rejects_nonpositive_cadence():
