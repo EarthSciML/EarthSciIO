@@ -112,23 +112,33 @@ const ENV_PREFIXES: [&str; 3] = ["AWS_", "GOOGLE_", "AZURE_"];
 /// deployed this process. `=false` is how a caller asks for signed access.
 const S3_SIGNING_KEYS: [&str; 2] = ["aws_skip_signature", "skip_signature"];
 
-/// Option keys that mean "there is a way to authenticate to S3" — key material
-/// and the ambient-role pointers a container platform sets. `object_store`
-/// accepts a prefixed and an unprefixed spelling of most of them, and a list
-/// that names only one of the pair is a list with a hole in it.
+/// Option keys that mean "there is a way to authenticate to S3" — key material,
+/// the ambient-role pointers a container platform sets, and the assume-role
+/// inputs. Every spelling `object_store`'s own `AmazonS3ConfigKey::from_str`
+/// accepts, because it takes a prefixed *and* an unprefixed form of nearly all of
+/// them and a list naming only one of a pair is a list with a hole in it: the
+/// unnamed spelling configures a credential that this module then fails to
+/// notice, so a read the caller asked to sign goes out anonymous.
 ///
 /// Presence is not by itself consent: see [`read_store_options`] for who has to
 /// have said it before signing stays on.
-const S3_CREDENTIAL_KEYS: [&str; 9] = [
+const S3_CREDENTIAL_KEYS: [&str; 16] = [
     "aws_access_key_id",
     "access_key_id",
     "aws_secret_access_key",
     "secret_access_key",
     "aws_session_token",
     "session_token",
+    "aws_token",
+    "token",
     "aws_container_credentials_relative_uri",
     "container_credentials_relative_uri",
     "aws_container_credentials_full_uri",
+    "container_credentials_full_uri",
+    "aws_web_identity_token_file",
+    "web_identity_token_file",
+    "aws_role_arn",
+    "role_arn",
 ];
 
 /// Static key material, the half of [`S3_CREDENTIAL_KEYS`] an operator types
@@ -179,9 +189,7 @@ fn is_s3_url(url_str: &str) -> bool {
 
 /// Does `options` carry any of `keys`?
 fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
-    options
-        .iter()
-        .any(|(key, _)| keys.contains(&key.as_str()))
+    options.iter().any(|(key, _)| keys.contains(&key.as_str()))
 }
 
 /// Backend options for a **read** of `url`: the process environment
@@ -195,12 +203,14 @@ fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
 /// configured credentials for this read"* from *"the platform injected a role
 /// for something else entirely"*. On a container platform it is reliably the
 /// latter. ECS/Fargate sets `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` in every
-/// task that carries a job role, and a runner holds `AWS_ACCESS_KEY_ID` because
-/// it *writes its output* somewhere — neither says anything about the public
-/// bucket the document it was handed wants to read. Treated as intent, they
-/// leave signing on, and `s3://inmap-model/…` is then signed with a role that
-/// deliberately has no `s3:GetObject`: **403**, in production only, because a
-/// laptop has none of those variables set.
+/// task that carries a job role, EKS sets `AWS_ROLE_ARN` +
+/// `AWS_WEB_IDENTITY_TOKEN_FILE` in every pod with a service-account role, and a
+/// runner holds `AWS_ACCESS_KEY_ID` because it *writes its output* somewhere —
+/// none of them says anything about the public bucket the document it was handed
+/// wants to read. Treated as intent, they leave signing on, and
+/// `s3://inmap-model/…` is then signed with a role that deliberately has no
+/// `s3:GetObject`: **403**, in production only, because a laptop has none of
+/// those variables set.
 ///
 /// So intent has to be *stated*, and exactly three things state it:
 ///
@@ -213,7 +223,11 @@ fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
 /// * Static keys in the environment **next to an endpoint override**
 ///   ([`S3_ENDPOINT_KEYS`]): the R2 / MinIO / Backblaze B2 / Ceph deployment.
 ///   An endpoint is never injected either, so credentials beside one belong to
-///   the same deliberate configuration.
+///   the same deliberate configuration. This exception cannot reopen the case
+///   above, because a *process-wide* endpoint override already sends every
+///   `s3://` read to that one deployment — a public bucket somewhere else is
+///   unreachable through it whatever the signing decision is, so there is no
+///   configuration in which this rule is what breaks the read.
 ///
 /// Anything else reads anonymously — the meaning `s3://` already has on the
 /// cache-backed path, which is the point of the whole exercise. Credential
@@ -225,6 +239,31 @@ fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
 /// process that reads a public store and writes its output to a private one has
 /// to sign the write, so the two cannot share one process-wide switch. That is
 /// also why `AWS_SKIP_SIGNATURE=true` is not the deployment fix it looks like.
+///
+/// # What this changed, for anyone it changed it for
+///
+/// `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in the environment used to be
+/// enough to sign a **read**, and no longer is. If a deployment was relying on
+/// that to reach its own private bucket through this path, the two ways to say
+/// so are `AWS_SKIP_SIGNATURE=false` in the same environment — one variable,
+/// no code — or `aws_skip_signature=false` on the loader
+/// ([`crate::DataLoader::store_options`]) when only some of its loaders are
+/// private. Both keep authenticating with exactly the credentials the
+/// environment already provides; only the *decision* moved.
+///
+/// A read of a private bucket that says neither now fails as `403`/`AccessDenied`
+/// on the first object rather than succeeding, which is a loud failure at the
+/// first attempt and the reason this is a default worth having.
+///
+/// # One boundary, deliberately
+///
+/// This looks at the URL's **scheme**, so it covers `s3://` and `s3a://` and not
+/// the `https://…amazonaws.com` / `…r2.cloudflarestorage.com` spellings that
+/// `object_store` re-dispatches to the S3 client by *host* (see the module
+/// docs). Reproducing that host table here is exactly the hard-coded vendor
+/// knowledge this module is built to avoid, and getting it subtly out of step
+/// with `object_store`'s own would be worse than not having it: prefer `s3://`
+/// for a store that should read anonymously.
 #[must_use]
 pub fn read_store_options(url: &str, explicit: &[(String, String)]) -> Vec<(String, String)> {
     let mut merged = store_options_from_env();
@@ -357,6 +396,10 @@ fn build_read_store(
 /// honour/refuse probe a caller makes before pushing a projection down, with no
 /// cache and so no bytes written to disk.
 ///
+/// `options` are the caller's own, with the same caveat as
+/// [`read_zarr_object_store_with_options`]: pass a loader's options or
+/// [`read_store_options`]'s result, not a raw environment harvest.
+///
 /// # Errors
 /// Returns [`Error::Format`] if the URL has no `object_store` backend or the
 /// array's metadata cannot be opened.
@@ -394,6 +437,14 @@ pub fn read_zarr_object_store(
 /// [`read_zarr_object_store`] with explicit backend `options` (`object_store`
 /// config keys — `endpoint`, `region`, credentials, …) instead of the
 /// environment-derived defaults.
+///
+/// `options` are read as **the caller's own** — a credential among them means
+/// "sign this read". So do not hand it `store_options_from_env()`: that hands
+/// the environment the caller's authority and is precisely how a public bucket
+/// ends up signed with a role a container platform injected for something else.
+/// [`read_store_options`] is the function that merges the two while keeping them
+/// distinguishable, and it is what [`read_zarr_object_store`] and the
+/// [`crate::Provider`] direct path both use.
 ///
 /// # Errors
 /// Returns [`Error::Format`] if the URL has no `object_store` backend, the store
@@ -770,6 +821,63 @@ mod tests {
         );
     }
 
+    /// The same shape on the other container platform, because the reasoning was
+    /// never about ECS: EKS injects `AWS_ROLE_ARN` +
+    /// `AWS_WEB_IDENTITY_TOKEN_FILE` into every pod with a service-account role.
+    /// Pinned so that "which variables a platform injects" can grow without the
+    /// rule having to be rediscovered — an ambient role is an ambient role.
+    #[test]
+    fn an_injected_web_identity_role_does_not_sign_a_public_read_either() {
+        let _env = EnvScope::new(&[
+            (
+                "AWS_ROLE_ARN",
+                "arn:aws:iam::000000000000:role/not-a-real-role",
+            ),
+            (
+                "AWS_WEB_IDENTITY_TOKEN_FILE",
+                "/var/run/secrets/eks.amazonaws.com/serviceaccount/token",
+            ),
+        ]);
+        let opts = resolved_read_options(PUBLIC_STORE, &[]);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("true"),
+            "a service-account role the platform injected is not a stated intent"
+        );
+    }
+
+    /// The credential list must name every spelling `object_store` parses. A
+    /// missing one is silent and backwards: the caller states a credential, this
+    /// module does not recognise it, and the read they asked to sign goes out
+    /// anonymous — a 403 they cannot explain from the options they passed.
+    ///
+    /// Asserted against `object_store`'s own parser rather than a copy of its
+    /// table, so the day it gains an alias this fails instead of drifting.
+    #[test]
+    fn every_credential_and_endpoint_spelling_is_one_object_store_parses() {
+        use std::str::FromStr;
+        for key in S3_CREDENTIAL_KEYS
+            .iter()
+            .chain(S3_ENDPOINT_KEYS.iter())
+            .chain(S3_SIGNING_KEYS.iter())
+            .chain(S3_STATIC_KEY_KEYS.iter())
+        {
+            assert!(
+                object_store::aws::AmazonS3ConfigKey::from_str(key).is_ok(),
+                "'{key}' is not an option key object_store understands, so \
+                 naming it here can only ever be a no-op"
+            );
+        }
+        // And the converse for the one that matters most: a caller who states
+        // the unprefixed spelling is stating intent just as much.
+        for stated in ["container_credentials_full_uri", "token", "role_arn"] {
+            assert!(
+                S3_CREDENTIAL_KEYS.contains(&stated),
+                "'{stated}' is a credential object_store accepts and this list must see it"
+            );
+        }
+    }
+
     /// The same door, on the other runner tier: a process holding
     /// `AWS_ACCESS_KEY_ID` because it WRITES its output dataset somewhere. Those
     /// keys say nothing about the public store the document reads, and reading
@@ -848,7 +956,10 @@ mod tests {
     fn an_env_configured_s3_compatible_endpoint_still_signs() {
         {
             let _env = EnvScope::new(&[
-                ("AWS_ENDPOINT_URL", "https://account.r2.cloudflarestorage.com"),
+                (
+                    "AWS_ENDPOINT_URL",
+                    "https://account.r2.cloudflarestorage.com",
+                ),
                 ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLENOTREAL"),
                 ("AWS_SECRET_ACCESS_KEY", "not-a-real-secret-for-tests"),
             ]);
@@ -886,7 +997,10 @@ mod tests {
             "the write path signs with the process's own credentials"
         );
         assert_eq!(
-            value(&resolved_read_options(PUBLIC_STORE, &[]), "aws_skip_signature"),
+            value(
+                &resolved_read_options(PUBLIC_STORE, &[]),
+                "aws_skip_signature"
+            ),
             Some("true"),
             "the read of a public store in the same process does not"
         );
