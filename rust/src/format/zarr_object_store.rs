@@ -72,6 +72,13 @@
 //! `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
 //! `AWS_REGION` configure an S3-compatible target with no code change at all.
 //!
+//! A **read** resolves its options through [`read_store_options`] instead, which
+//! is that harvest plus one judgement the harvest cannot make on its own: an
+//! `AWS_*` variable the platform injected is not the caller saying this read
+//! should be signed. See its docs — that distinction is the difference between
+//! reading a public bucket and getting a 403 from a role that was never meant
+//! for the read.
+//!
 //! (Before this seam existed the module called `parse_url`, which builds an
 //! `AmazonS3Builder::new()` — a builder that reads **no** environment at all and
 //! has no way to express an endpoint, so `s3://` only ever worked against real
@@ -99,17 +106,44 @@ use crate::error::{Error, Result};
 /// backend, matching what each `object_store` builder's own `from_env` reads.
 const ENV_PREFIXES: [&str; 3] = ["AWS_", "GOOGLE_", "AZURE_"];
 
-/// Option keys that mean "this caller has a way to authenticate to S3". If ANY
-/// of these is present, [`apply_s3_defaults`] leaves signing alone.
-const S3_CREDENTIAL_KEYS: [&str; 8] = [
-    "aws_skip_signature",
-    "skip_signature",
+/// Option keys that are a *statement about signing* rather than a credential.
+/// Honoured verbatim wherever they come from, environment included: no platform
+/// injects `AWS_SKIP_SIGNATURE`, so it can only have been written by whoever
+/// deployed this process. `=false` is how a caller asks for signed access.
+const S3_SIGNING_KEYS: [&str; 2] = ["aws_skip_signature", "skip_signature"];
+
+/// Option keys that mean "there is a way to authenticate to S3" — key material
+/// and the ambient-role pointers a container platform sets. `object_store`
+/// accepts a prefixed and an unprefixed spelling of most of them, and a list
+/// that names only one of the pair is a list with a hole in it.
+///
+/// Presence is not by itself consent: see [`read_store_options`] for who has to
+/// have said it before signing stays on.
+const S3_CREDENTIAL_KEYS: [&str; 9] = [
     "aws_access_key_id",
     "access_key_id",
     "aws_secret_access_key",
     "secret_access_key",
     "aws_session_token",
+    "session_token",
     "aws_container_credentials_relative_uri",
+    "container_credentials_relative_uri",
+    "aws_container_credentials_full_uri",
+];
+
+/// Static key material, the half of [`S3_CREDENTIAL_KEYS`] an operator types
+/// out rather than a platform injecting it.
+const S3_STATIC_KEY_KEYS: [&str; 2] = ["aws_access_key_id", "access_key_id"];
+
+/// Endpoint-override keys, in every spelling `object_store` parses. An endpoint
+/// is never injected by a platform: it is always somebody pointing `s3://` at a
+/// specific S3-compatible deployment.
+const S3_ENDPOINT_KEYS: [&str; 5] = [
+    "endpoint",
+    "endpoint_url",
+    "aws_endpoint",
+    "aws_endpoint_url",
+    "aws_endpoint_url_s3",
 ];
 
 fn os_err(detail: impl Into<String>) -> Error {
@@ -138,6 +172,78 @@ pub fn store_options_from_env() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Is this URL dispatched to the S3 client by scheme?
+fn is_s3_url(url_str: &str) -> bool {
+    url_str.starts_with("s3://") || url_str.starts_with("s3a://")
+}
+
+/// Does `options` carry any of `keys`?
+fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
+    options
+        .iter()
+        .any(|(key, _)| keys.contains(&key.as_str()))
+}
+
+/// Backend options for a **read** of `url`: the process environment
+/// ([`store_options_from_env`]) with the caller's `explicit` options on top,
+/// plus the anonymous-S3 default when nothing in either has stated that this
+/// read should be signed.
+///
+/// # Why the environment does not get to decide signing
+///
+/// [`store_options_from_env`] harvests variables; it cannot tell *"the operator
+/// configured credentials for this read"* from *"the platform injected a role
+/// for something else entirely"*. On a container platform it is reliably the
+/// latter. ECS/Fargate sets `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` in every
+/// task that carries a job role, and a runner holds `AWS_ACCESS_KEY_ID` because
+/// it *writes its output* somewhere — neither says anything about the public
+/// bucket the document it was handed wants to read. Treated as intent, they
+/// leave signing on, and `s3://inmap-model/…` is then signed with a role that
+/// deliberately has no `s3:GetObject`: **403**, in production only, because a
+/// laptop has none of those variables set.
+///
+/// So intent has to be *stated*, and exactly three things state it:
+///
+/// * `aws_skip_signature`, either polarity, from **any** source
+///   ([`S3_SIGNING_KEYS`]). Nothing injects it, so `=false` is an unambiguous
+///   "sign, I mean it" and `=true` an unambiguous "do not".
+/// * A credential option the **caller passed** — [`crate::DataLoader::store_options`],
+///   or the `options` argument of a `*_with_options` entry point. That is a
+///   document or a program describing this read, not an ambient variable.
+/// * Static keys in the environment **next to an endpoint override**
+///   ([`S3_ENDPOINT_KEYS`]): the R2 / MinIO / Backblaze B2 / Ceph deployment.
+///   An endpoint is never injected either, so credentials beside one belong to
+///   the same deliberate configuration.
+///
+/// Anything else reads anonymously — the meaning `s3://` already has on the
+/// cache-backed path, which is the point of the whole exercise. Credential
+/// options are still passed through, so a caller who states
+/// `aws_skip_signature=false` authenticates with whatever the environment
+/// provides, ambient role included.
+///
+/// This is a **read** default and the write entry points do not apply it: a
+/// process that reads a public store and writes its output to a private one has
+/// to sign the write, so the two cannot share one process-wide switch. That is
+/// also why `AWS_SKIP_SIGNATURE=true` is not the deployment fix it looks like.
+#[must_use]
+pub fn read_store_options(url: &str, explicit: &[(String, String)]) -> Vec<(String, String)> {
+    let mut merged = store_options_from_env();
+    for (k, v) in explicit {
+        merged.retain(|(mk, _)| mk != k);
+        merged.push((k.clone(), v.clone()));
+    }
+    if !is_s3_url(url) || has_any(&merged, &S3_SIGNING_KEYS) {
+        return merged;
+    }
+    let stated_by_the_caller = has_any(explicit, &S3_CREDENTIAL_KEYS);
+    let configured_s3_compatible_endpoint =
+        has_any(&merged, &S3_ENDPOINT_KEYS) && has_any(&merged, &S3_STATIC_KEY_KEYS);
+    if !stated_by_the_caller && !configured_s3_compatible_endpoint {
+        merged.push(("aws_skip_signature".to_string(), "true".to_string()));
+    }
+    merged
+}
+
 /// Give an `s3://` URL the SAME meaning it has on the cache-backed path:
 /// **anonymous, regional, no credentials**.
 ///
@@ -150,22 +256,25 @@ pub fn store_options_from_env() -> Vec<(String, String)> {
 /// divergence between two paths that are supposed to differ only in whether
 /// bytes touch the disk.
 ///
-/// So: for `s3://`/`s3a://`, when the caller has supplied **no** way to
-/// authenticate ([`S3_CREDENTIAL_KEYS`]), signing is switched off; and a missing
-/// region is filled from the same chain the cached transport uses. Anything the
-/// caller stated is left exactly as given — including `aws_skip_signature=false`,
-/// which is how a caller asks for signed access explicitly.
+/// So: for `s3://`/`s3a://`, when `options` state no way to authenticate
+/// ([`S3_SIGNING_KEYS`], [`S3_CREDENTIAL_KEYS`]), signing is switched off; and a
+/// missing region is filled from the same chain the cached transport uses.
+/// Anything stated is left exactly as given — including
+/// `aws_skip_signature=false`, which is how a caller asks for signed access
+/// explicitly.
+///
+/// `options` here are read as **the caller's own**, which is what the
+/// `*_with_options` entry points document them to be. Options that came from the
+/// environment have already been through [`read_store_options`], whose decision
+/// arrives as an explicit `aws_skip_signature` and is left alone below.
 fn apply_s3_defaults(url_str: &str, options: &mut Vec<(String, String)>) {
-    if !(url_str.starts_with("s3://") || url_str.starts_with("s3a://")) {
+    if !is_s3_url(url_str) {
         return;
     }
-    fn has(options: &[(String, String)], k: &str) -> bool {
-        options.iter().any(|(key, _)| key == k)
-    }
-    if !S3_CREDENTIAL_KEYS.iter().any(|k| has(options, k)) {
+    if !has_any(options, &S3_SIGNING_KEYS) && !has_any(options, &S3_CREDENTIAL_KEYS) {
         options.push(("aws_skip_signature".to_string(), "true".to_string()));
     }
-    if !has(options, "region") && !has(options, "aws_region") {
+    if !has_any(options, &["region", "aws_region"]) {
         options.push((
             "aws_region".to_string(),
             crate::transport::resolve_region(None),
@@ -265,7 +374,9 @@ pub fn array_shape_object_store(
 /// Read `variables` from a Zarr store at `url` directly through `object_store`,
 /// applying the orthogonal `select` lazily.
 ///
-/// Backend options default to [`store_options_from_env`]; use
+/// Backend options default to [`read_store_options`] — the environment harvest
+/// plus the anonymous-S3 default, so a public bucket reads with no
+/// configuration whatever the platform injected. Use
 /// [`read_zarr_object_store_with_options`] to pass them explicitly. See the
 /// module docs for the active schemes.
 ///
@@ -277,7 +388,7 @@ pub fn read_zarr_object_store(
     variables: &[String],
     select: &Selection,
 ) -> Result<NativeDataset> {
-    read_zarr_object_store_with_options(url, variables, select, &store_options_from_env())
+    read_zarr_object_store_with_options(url, variables, select, &read_store_options(url, &[]))
 }
 
 /// [`read_zarr_object_store`] with explicit backend `options` (`object_store`
@@ -542,15 +653,297 @@ mod tests {
     #[test]
     fn env_options_are_prefix_scoped_and_lowercased() {
         // A synthetic, non-secret value; asserted on the key, not the value.
-        std::env::set_var("AWS_ENDPOINT_URL", "http://127.0.0.1:9000");
-        std::env::set_var("EARTHSCIIO_NOT_A_STORE_OPTION", "ignored");
+        let _env = EnvScope::new(&[
+            ("AWS_ENDPOINT_URL", "http://127.0.0.1:9000"),
+            ("EARTHSCIIO_NOT_A_STORE_OPTION", "ignored"),
+        ]);
         let opts = store_options_from_env();
         assert!(opts.iter().any(|(k, _)| k == "aws_endpoint_url"));
         assert!(
             !opts.iter().any(|(k, _)| k.contains("earthsciio")),
             "only AWS_/GOOGLE_/AZURE_ variables are harvested"
         );
-        std::env::remove_var("AWS_ENDPOINT_URL");
-        std::env::remove_var("EARTHSCIIO_NOT_A_STORE_OPTION");
+    }
+
+    // -----------------------------------------------------------------------
+    // Who gets to say a read is signed.
+    //
+    // The environment states a great deal that has nothing to do with the store
+    // a document names: a container platform injects a role for the task, and a
+    // runner carries write credentials for its own output bucket. Harvested and
+    // read as intent, either one signs a request for somebody else's PUBLIC
+    // bucket with an identity that has no business reading it, and S3 answers
+    // 403 — in the deployment only, never on the laptop where the variables do
+    // not exist. These pin which of the two it is.
+    // -----------------------------------------------------------------------
+
+    /// Serializes the tests that mutate the process environment, so one test's
+    /// `AWS_*` variable cannot appear in another test's harvest.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A known environment for the duration of a scope, restored on the way out
+    /// whether the test passes or panics. Holds [`ENV_LOCK`] while it lives.
+    ///
+    /// It **removes every harvested variable first**, because these tests are
+    /// about what the ambient environment does to a read: one left over from the
+    /// developer's shell (`AWS_PROFILE`, a real `AWS_ACCESS_KEY_ID`) would
+    /// otherwise decide the outcome, which is the very failure mode under test.
+    struct EnvScope {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        restore: Vec<(String, String)>,
+        clear: Vec<String>,
+    }
+
+    impl EnvScope {
+        fn new(vars: &[(&str, &str)]) -> Self {
+            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let restore: Vec<(String, String)> = std::env::vars()
+                .filter(|(k, _)| ENV_PREFIXES.iter().any(|p| k.starts_with(p)))
+                .collect();
+            for (k, _) in &restore {
+                std::env::remove_var(k);
+            }
+            for (k, v) in vars {
+                std::env::set_var(k, v);
+            }
+            Self {
+                _guard: guard,
+                restore,
+                clear: vars.iter().map(|(k, _)| (*k).to_string()).collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvScope {
+        fn drop(&mut self) {
+            for k in &self.clear {
+                std::env::remove_var(k);
+            }
+            for (k, v) in &self.restore {
+                std::env::set_var(k, v);
+            }
+        }
+    }
+
+    fn value<'a>(options: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        options
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The options a direct read is actually dispatched with: the environment,
+    /// the caller's own on top, and the defaults [`build_read_store`] applies.
+    /// Asserted at this level rather than on either half, because the question
+    /// is only ever what reaches `object_store`.
+    fn resolved_read_options(url: &str, explicit: &[(String, String)]) -> Vec<(String, String)> {
+        let mut options = read_store_options(url, explicit);
+        apply_s3_defaults(url, &mut options);
+        options
+    }
+
+    const PUBLIC_STORE: &str = "s3://inmap-model/isrm_v1.2.1.zarr/";
+
+    /// A synthetic ECS task-role pointer. The value is never dereferenced by
+    /// any test here — its mere presence is what used to change the decision.
+    const ECS_ROLE_URI: &str = "/v2/credentials/00000000-0000-0000-0000-000000000000";
+
+    /// **The bug.** ECS/Fargate injects `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`
+    /// into every task that carries a `jobRoleArn`. Counted as the caller having
+    /// "a way to authenticate", it leaves signing on, and the public
+    /// `inmap-model` bucket is then requested with a role that deliberately holds
+    /// no `s3:GetObject`. The platform setting a variable for the task's *output*
+    /// is not the document stating anything about its *input*.
+    #[test]
+    fn an_injected_container_role_does_not_sign_a_public_read() {
+        let _env = EnvScope::new(&[("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", ECS_ROLE_URI)]);
+        let opts = resolved_read_options(PUBLIC_STORE, &[]);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("true"),
+            "a role the platform injected must not sign a public read"
+        );
+        assert!(
+            value(&opts, "aws_container_credentials_relative_uri").is_some(),
+            "the pointer is still passed through, so a caller who asks for \
+             signing authenticates with the ambient role"
+        );
+    }
+
+    /// The same door, on the other runner tier: a process holding
+    /// `AWS_ACCESS_KEY_ID` because it WRITES its output dataset somewhere. Those
+    /// keys say nothing about the public store the document reads, and reading
+    /// them as intent is how a Fly-dispatched run would 403 on exactly the URL
+    /// that works from a laptop.
+    #[test]
+    fn the_processs_own_write_credentials_do_not_sign_a_public_read() {
+        let _env = EnvScope::new(&[
+            ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLENOTREAL"),
+            ("AWS_SECRET_ACCESS_KEY", "not-a-real-secret-for-tests"),
+        ]);
+        let opts = resolved_read_options(PUBLIC_STORE, &[]);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("true"),
+            "ambient write credentials must not sign a public read"
+        );
+    }
+
+    /// A caller that genuinely wants signed access still gets it, three ways:
+    /// `aws_skip_signature=false` ("sign, I mean it"), credentials stated on the
+    /// load, and `AWS_SKIP_SIGNATURE=false` in the environment — which nothing
+    /// injects, so it can only be a deployment saying so. In the first case the
+    /// ambient role is still on hand to sign WITH.
+    #[test]
+    fn a_caller_that_asks_for_signed_access_gets_it() {
+        let _env = EnvScope::new(&[("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", ECS_ROLE_URI)]);
+
+        const PRIVATE_STORE: &str = "s3://private-bucket/store.zarr";
+
+        let stated = [("aws_skip_signature".to_string(), "false".to_string())];
+        let opts = resolved_read_options(PRIVATE_STORE, &stated);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("false"),
+            "no default may overturn a stated intent"
+        );
+        assert!(
+            value(&opts, "aws_container_credentials_relative_uri").is_some(),
+            "asking for signing must leave something to sign with"
+        );
+
+        let stated = [
+            (
+                "aws_access_key_id".to_string(),
+                "AKIAEXAMPLENOTREAL".to_string(),
+            ),
+            (
+                "aws_secret_access_key".to_string(),
+                "not-a-real-secret-for-tests".to_string(),
+            ),
+        ];
+        let opts = resolved_read_options(PRIVATE_STORE, &stated);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            None,
+            "credentials the caller stated ARE the caller stating intent"
+        );
+
+        drop(_env);
+        let _env = EnvScope::new(&[("AWS_SKIP_SIGNATURE", "false")]);
+        let opts = resolved_read_options(PUBLIC_STORE, &[]);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("false"),
+            "AWS_SKIP_SIGNATURE is not injected by anything: it is a statement"
+        );
+    }
+
+    /// The R2 / MinIO / Backblaze B2 / Ceph story is unchanged. An endpoint
+    /// override is never injected by a platform either, so credentials sitting
+    /// next to one in the environment belong to the same deliberate
+    /// configuration and still sign. An endpoint with no credentials is an
+    /// anonymous S3-compatible read and still does not.
+    #[test]
+    fn an_env_configured_s3_compatible_endpoint_still_signs() {
+        {
+            let _env = EnvScope::new(&[
+                ("AWS_ENDPOINT_URL", "https://account.r2.cloudflarestorage.com"),
+                ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLENOTREAL"),
+                ("AWS_SECRET_ACCESS_KEY", "not-a-real-secret-for-tests"),
+            ]);
+            let opts = resolved_read_options("s3://my-bucket/store.zarr", &[]);
+            assert_eq!(
+                value(&opts, "aws_skip_signature"),
+                None,
+                "an operator-configured endpoint plus keys is a configured provider"
+            );
+        }
+        let _env = EnvScope::new(&[("AWS_ENDPOINT_URL", "http://127.0.0.1:9000")]);
+        let opts = resolved_read_options("s3://my-bucket/store.zarr", &[]);
+        assert_eq!(
+            value(&opts, "aws_skip_signature"),
+            Some("true"),
+            "an endpoint alone is still an anonymous read"
+        );
+    }
+
+    /// The read default is a READ default. A runner reads a public store and
+    /// writes its output to a private one **in the same process**, so the write
+    /// must still sign — which is why this is not `AWS_SKIP_SIGNATURE=true` in a
+    /// job definition. The write's option source is the raw harvest, and nothing
+    /// here may put a signing decision into it.
+    #[test]
+    fn the_read_default_is_not_applied_to_a_write() {
+        let _env = EnvScope::new(&[
+            ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLENOTREAL"),
+            ("AWS_SECRET_ACCESS_KEY", "not-a-real-secret-for-tests"),
+        ]);
+        let write_opts = store_options_from_env();
+        assert_eq!(
+            value(&write_opts, "aws_skip_signature"),
+            None,
+            "the write path signs with the process's own credentials"
+        );
+        assert_eq!(
+            value(&resolved_read_options(PUBLIC_STORE, &[]), "aws_skip_signature"),
+            Some("true"),
+            "the read of a public store in the same process does not"
+        );
+    }
+
+    /// The same thing over the wire, which is where a 403 actually happens: with
+    /// an ECS role in the environment, a direct read reaches the store carrying
+    /// **no `Authorization` header at all**. Loopback endpoint, so this is the
+    /// real `object_store` client and the real request bytes, with no network.
+    #[test]
+    fn an_injected_role_sends_an_unsigned_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 4096];
+            let n = sock.read(&mut buf).expect("read request");
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            sock.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nETag: \"x\"\r\n\
+                  Last-Modified: Thu, 01 Jan 1970 00:00:00 GMT\r\n\r\nhello",
+            )
+            .expect("write response");
+            let _ = sock.flush();
+            req
+        });
+
+        let endpoint = format!("http://127.0.0.1:{port}");
+        let _env = EnvScope::new(&[
+            ("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", ECS_ROLE_URI),
+            ("AWS_ENDPOINT_URL", &endpoint),
+            ("AWS_ALLOW_HTTP", "true"),
+        ]);
+
+        // Exactly what `build_read_store` does with a loader's (empty) options.
+        let url = "s3://inmap-model/isrm_v1.2.1.zarr/";
+        let mut opts = read_store_options(url, &[]);
+        apply_s3_defaults(url, &mut opts);
+        let (store, prefix) = resolve_backend(url, &opts).expect("s3 dispatch");
+
+        let rt = runtime().expect("runtime");
+        let body = rt
+            .block_on(async move {
+                let key = prefix.join(".zarray");
+                store.get(&key).await?.bytes().await
+            })
+            .expect("an anonymous GET, with no credential lookup on the way");
+        assert_eq!(&body[..], b"hello");
+
+        let req = server.join().expect("server thread").to_ascii_lowercase();
+        assert!(
+            !req.contains("authorization:"),
+            "a public read must go out unsigned; got:\n{req}"
+        );
+        assert!(
+            !req.contains("x-amz-security-token"),
+            "no session credential should have been fetched; got:\n{req}"
+        );
     }
 }
