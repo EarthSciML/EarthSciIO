@@ -224,11 +224,25 @@ fn direct_read_keeps_selection_pushdown() {
     assert_eq!(*values.last().unwrap(), (99 * 1_000 + 499) as f64);
 }
 
+/// Serializes every test whose answer depends on [`STORE_ACCESS_ENV`] — the one
+/// that sets it and the one that requires it unset.
+///
+/// `env_sets_the_default_but_the_loader_wins` already serialized its own
+/// assertions into a single test for exactly this reason, but a global is global:
+/// `the_default_is_still_cached` resolves the *same* variable, so with the
+/// harness's default threading it could observe `direct` mid-flight and fail on
+/// "an unstated loader must still cache". Seen for real, roughly one run in
+/// several, and it looks precisely like a default that moved.
+static STORE_ACCESS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The default must not have moved: a loader that states nothing, in an
 /// environment that states nothing, still goes through the cache. A silent
 /// switch would make somebody's warm-cache workflow mysteriously slow.
 #[test]
 fn the_default_is_still_cached() {
+    let _lock = STORE_ACCESS_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let scratch = tempfile::tempdir().unwrap();
     let url = build_store(&scratch.path().join("isrm-mini.zarr"));
     let cache_root = scratch.path().join("cache");
@@ -259,9 +273,13 @@ fn the_default_is_still_cached() {
 /// loader is silent, and an explicit loader setting beats it.
 ///
 /// Serialized into one test because `set_var` is process-global and Rust's test
-/// harness is threaded.
+/// harness is threaded — and under [`STORE_ACCESS_ENV_LOCK`], because that reason
+/// does not stop at this test's own boundary.
 #[test]
 fn env_sets_the_default_but_the_loader_wins() {
+    let _lock = STORE_ACCESS_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let base = DataLoader::new("L", "zarr", "file:///nonexistent.zarr");
 
     std::env::set_var(STORE_ACCESS_ENV, "direct");
