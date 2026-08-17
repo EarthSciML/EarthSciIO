@@ -161,7 +161,7 @@ impl Reader for ZarrReader {
             base_url,
             variables,
             select,
-            &merge_store_options(options),
+            &super::zarr_object_store::read_store_options(base_url, options),
         )
     }
 
@@ -175,28 +175,10 @@ impl Reader for ZarrReader {
         super::zarr_object_store::array_shape_object_store(
             base_url,
             var,
-            &merge_store_options(options),
+            &super::zarr_object_store::read_store_options(base_url, options),
         )
         .map(Some)
     }
-}
-
-/// Backend options for a direct read: the process environment first, then the
-/// caller's explicit options, which **win** on a repeated key.
-///
-/// Both sources matter. The environment is how a deployment configures a whole
-/// process (an AWS region, an S3-compatible endpoint) without touching any
-/// document; the explicit list is how one loader overrides that — the case a
-/// process-global variable cannot express when two loaders read two different
-/// stores.
-#[cfg(feature = "object-store")]
-fn merge_store_options(explicit: &[(String, String)]) -> Vec<(String, String)> {
-    let mut merged = super::zarr_object_store::store_options_from_env();
-    for (k, v) in explicit {
-        merged.retain(|(mk, _)| mk != k);
-        merged.push((k.clone(), v.clone()));
-    }
-    merged
 }
 
 /// Decode `variables` from an already-constructed `zarrs` storage (any backend:

@@ -17,8 +17,14 @@
 //!
 //! `file://` keeps this hermetic. It is the same `object_store` dispatch S3 uses
 //! — only the backend behind `parse_url_opts` differs — so the code path under
-//! test is the production one. The online twin against the real InMAP ISRM
-//! bucket is `isrm_direct_read_writes_nothing_to_disk`, `#[ignore]`d.
+//! test is the production one.
+//!
+//! Two `#[ignore]`d online twins read the real InMAP ISRM bucket: one measures
+//! the disk footprint (`isrm_direct_read_writes_nothing_to_disk`), and one pins
+//! the fourth property, which `file://` cannot see because it has no notion of
+//! signing — that a **public** read stays anonymous when the platform has
+//! injected a credential pointer for something else
+//! (`isrm_direct_read_is_unsigned_under_an_injected_container_role`).
 
 #![cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 
@@ -218,11 +224,25 @@ fn direct_read_keeps_selection_pushdown() {
     assert_eq!(*values.last().unwrap(), (99 * 1_000 + 499) as f64);
 }
 
+/// Serializes every test whose answer depends on [`STORE_ACCESS_ENV`] — the one
+/// that sets it and the one that requires it unset.
+///
+/// `env_sets_the_default_but_the_loader_wins` already serialized its own
+/// assertions into a single test for exactly this reason, but a global is global:
+/// `the_default_is_still_cached` resolves the *same* variable, so with the
+/// harness's default threading it could observe `direct` mid-flight and fail on
+/// "an unstated loader must still cache". Seen for real, roughly one run in
+/// several, and it looks precisely like a default that moved.
+static STORE_ACCESS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The default must not have moved: a loader that states nothing, in an
 /// environment that states nothing, still goes through the cache. A silent
 /// switch would make somebody's warm-cache workflow mysteriously slow.
 #[test]
 fn the_default_is_still_cached() {
+    let _lock = STORE_ACCESS_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let scratch = tempfile::tempdir().unwrap();
     let url = build_store(&scratch.path().join("isrm-mini.zarr"));
     let cache_root = scratch.path().join("cache");
@@ -253,9 +273,13 @@ fn the_default_is_still_cached() {
 /// loader is silent, and an explicit loader setting beats it.
 ///
 /// Serialized into one test because `set_var` is process-global and Rust's test
-/// harness is threaded.
+/// harness is threaded — and under [`STORE_ACCESS_ENV_LOCK`], because that reason
+/// does not stop at this test's own boundary.
 #[test]
 fn env_sets_the_default_but_the_loader_wins() {
+    let _lock = STORE_ACCESS_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let base = DataLoader::new("L", "zarr", "file:///nonexistent.zarr");
 
     std::env::set_var(STORE_ACCESS_ENV, "direct");
@@ -361,24 +385,20 @@ fn array_shape_probe_works_directly_and_writes_nothing() {
 // The online twin: the REAL InMAP ISRM store.
 // ---------------------------------------------------------------------------
 
-/// One chunk of the real `s3://inmap-model/isrm_v1.2.1.zarr` store, read both
-/// ways: the actual chunk shape (`[1, 100, 52411]` f4, blosc-lz4, Zarr v2,
-/// unconsolidated) and the actual public unsigned-S3 access this must support.
-///
-/// `#[ignore]`d — it needs the network. Deliberately ONE chunk (~3.5 MB on the
-/// wire): the full gated fetch is 15–25 GB and is measured on AWS, not here.
-///
-/// ```text
-/// cargo test --features object-store --test zarr_direct_read -- --ignored --nocapture
-/// ```
-#[test]
-#[ignore = "reads the public inmap-model S3 bucket over the network"]
-fn isrm_direct_read_writes_nothing_to_disk() {
-    const URL: &str = "s3://inmap-model/isrm_v1.2.1.zarr/";
-    const SR: &str = "SOA";
+/// The real store: `[1, 100, 52411]` f4, blosc-lz4, Zarr v2, unconsolidated.
+const ISRM_URL: &str = "s3://inmap-model/isrm_v1.2.1.zarr/";
+const ISRM_SR: &str = "SOA";
 
-    // Layer 0, the first chunk of source cells, every receptor: one chunk object.
-    let select = Selection::Orthogonal(vec![
+/// Serializes the online tests. Both resolve their backend options out of the
+/// process environment and one of them *sets* a variable, so overlapping them
+/// would make each one's result depend on the other one's timing.
+static ONLINE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Layer 0, the first block of source cells, every receptor: exactly ONE chunk
+/// object (~3.5 MB on the wire), and the real ISRM access pattern — a support
+/// set of sources against all receptors.
+fn isrm_one_chunk() -> Selection {
+    Selection::Orthogonal(vec![
         AxisSelect::Indices(vec![0]),
         AxisSelect::Range {
             start: 0,
@@ -386,33 +406,54 @@ fn isrm_direct_read_writes_nothing_to_disk() {
             step: 1,
         },
         AxisSelect::All,
-    ]);
+    ])
+}
 
-    let scratch = tempfile::tempdir().unwrap();
-    let run = |access: StoreAccess, dir: &str| {
-        let root = scratch.path().join(dir);
-        let cache = Arc::new(Cache::builder().data_dir(&root).build().expect("cache"));
-        // NOTE: no credentials anywhere. The runner has no s3:GetObject and the
-        // bucket is public, so the direct path must read unsigned.
-        let loader = DataLoader::new("ISRM_SR", "zarr", URL)
-            .variables([SR])
-            .select(select.clone())
-            .store_access(access);
-        let mut provider = Provider::new(loader, cache, None).expect("provider");
-        let t0 = std::time::Instant::now();
-        let fields = provider
-            .materialize()
-            .expect("materialize the real ISRM SR");
-        let elapsed = t0.elapsed();
-        let sum = match &fields[SR].data {
-            ArrayData::F64(v) => v.iter().sum::<f64>(),
-            other => panic!("expected F64, got {other:?}"),
-        };
-        (sum, bytes_on_disk(&root), elapsed)
+/// Read that one chunk from the live bucket; report `(sum, bytes-to-disk, wall)`.
+/// The middle number is the headline.
+///
+/// NOTE: no credentials anywhere, and none needed. The runner deliberately has
+/// no `s3:GetObject` and the bucket is public, so the direct path has to read
+/// unsigned — whatever the process environment happens to be carrying.
+fn read_one_isrm_chunk(access: StoreAccess, root: &Path) -> (f64, u64, std::time::Duration) {
+    let cache = Arc::new(Cache::builder().data_dir(root).build().expect("cache"));
+    let loader = DataLoader::new("ISRM_SR", "zarr", ISRM_URL)
+        .variables([ISRM_SR])
+        .select(isrm_one_chunk())
+        .store_access(access);
+    let mut provider = Provider::new(loader, cache, None).expect("provider");
+    let t0 = std::time::Instant::now();
+    let fields = provider
+        .materialize()
+        .expect("materialize the real ISRM SR");
+    let elapsed = t0.elapsed();
+    let sum = match &fields[ISRM_SR].data {
+        ArrayData::F64(v) => v.iter().sum::<f64>(),
+        other => panic!("expected F64, got {other:?}"),
     };
+    (sum, bytes_on_disk(root), elapsed)
+}
 
-    let (cached_sum, cached_bytes, cached_time) = run(StoreAccess::Cached, "cache-cached");
-    let (direct_sum, direct_bytes, direct_time) = run(StoreAccess::Direct, "cache-direct");
+/// One chunk of the real `s3://inmap-model/isrm_v1.2.1.zarr` store, read both
+/// ways: the actual chunk shape and the actual public unsigned-S3 access this
+/// must support.
+///
+/// `#[ignore]`d — it needs the network. Deliberately ONE chunk: the full gated
+/// fetch is ~14.4 GB and is measured on AWS, not here.
+///
+/// ```text
+/// cargo test --features object-store --test zarr_direct_read -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "reads the public inmap-model S3 bucket over the network"]
+fn isrm_direct_read_writes_nothing_to_disk() {
+    let _lock = ONLINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let scratch = tempfile::tempdir().unwrap();
+
+    let (cached_sum, cached_bytes, cached_time) =
+        read_one_isrm_chunk(StoreAccess::Cached, &scratch.path().join("cache-cached"));
+    let (direct_sum, direct_bytes, direct_time) =
+        read_one_isrm_chunk(StoreAccess::Direct, &scratch.path().join("cache-direct"));
 
     eprintln!("ISRM SOA[0, 0:100, :]  ({} f64 out)", 100 * 52_411);
     eprintln!("  cached: {cached_bytes:>10} bytes to disk, {cached_time:?}");
@@ -427,4 +468,61 @@ fn isrm_direct_read_writes_nothing_to_disk() {
         "the cached read commits the chunk"
     );
     assert_eq!(direct_bytes, 0, "the direct read writes nothing");
+}
+
+/// **The 403, against the live bucket** — the same one-chunk read, in the
+/// environment the runner actually runs in.
+///
+/// ECS/Fargate injects `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` into every task
+/// carrying a `jobRoleArn`. It is there for the run's *output write* and says
+/// nothing about the public store the document it was handed reads. Harvested
+/// into the backend options and read as the caller having a way to authenticate,
+/// it leaves signing on — and `object_store` then signs a request for
+/// `inmap-model` with a role that deliberately holds no `s3:GetObject`.
+///
+/// This is the test that distinguishes the fix from the bug, and it fails in the
+/// right way against unfixed code. Measured here, on the branch that fixed it:
+///
+/// ```text
+/// unfixed:  materialize ... panicked: Generic S3 error: Error performing GET
+///           http://169.254.170.2/v2/credentials/... after 10 retries
+/// fixed:    direct: 0 bytes to disk, 7.29s
+/// ```
+///
+/// The laptop failure mode is that unreachable link-local address; on a real
+/// task it answers, the request is signed, and S3 returns 403. Either way the
+/// read does not happen, and either way this test is red.
+///
+/// The value set below is synthetic and is never dereferenced by a passing run.
+/// If the fix regresses, the *attempt* to dereference it is the failure.
+#[test]
+#[ignore = "reads the public inmap-model S3 bucket over the network"]
+fn isrm_direct_read_is_unsigned_under_an_injected_container_role() {
+    let _lock = ONLINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    const KEY: &str = "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI";
+    let previous = std::env::var(KEY).ok();
+    std::env::set_var(KEY, "/v2/credentials/00000000-0000-0000-0000-000000000000");
+
+    // Caught so the variable is restored even on the failing path: leaking an
+    // ECS credential pointer into the rest of the run would make the next test's
+    // result depend on this one's.
+    let scratch = tempfile::tempdir().unwrap();
+    let measured = std::panic::catch_unwind(|| {
+        read_one_isrm_chunk(StoreAccess::Direct, &scratch.path().join("cache-direct"))
+    });
+    match previous {
+        Some(v) => std::env::set_var(KEY, v),
+        None => std::env::remove_var(KEY),
+    }
+
+    let (sum, bytes, elapsed) = measured
+        .expect("a public read must not be signed with a role the platform injected for the write");
+    eprintln!("ISRM SOA[0, 0:100, :] with an ECS task-role pointer in the environment");
+    eprintln!("  direct: {bytes:>10} bytes to disk, {elapsed:?}");
+    assert_eq!(bytes, 0, "the direct read still writes nothing");
+    assert!(
+        sum.is_finite() && sum != 0.0,
+        "and it decoded real SR values rather than an empty or fill-valued slab"
+    );
 }

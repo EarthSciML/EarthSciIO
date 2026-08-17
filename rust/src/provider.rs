@@ -232,6 +232,13 @@ pub struct DataLoader {
     /// Empty ⇒ environment defaults. These override the environment per loader,
     /// which is what a process-global variable cannot express when two loaders
     /// read two different stores.
+    ///
+    /// They are also the only place a *read* can say it should be **signed**:
+    /// an `s3://` read defaults to anonymous no matter what credentials the
+    /// process environment is carrying, because a platform-injected role is not
+    /// this document asking for anything. So a public bucket needs nothing here,
+    /// and a private one needs credentials or `aws_skip_signature=false`. See
+    /// `format::zarr_object_store::read_store_options`.
     pub store_options: Vec<(String, String)>,
 }
 
@@ -284,7 +291,9 @@ impl DataLoader {
 
     /// Backend config for a [`StoreAccess::Direct`] read (`object_store` option
     /// keys). Overrides the environment for this loader only — an S3-compatible
-    /// endpoint, a region, or `aws_skip_signature` for an unsigned public read.
+    /// endpoint, a region, or credentials / `aws_skip_signature=false` to ask for
+    /// a **signed** read. An unsigned public read needs nothing here: see
+    /// [`DataLoader::store_options`](struct.DataLoader.html#structfield.store_options).
     pub fn store_options<I, K, V>(mut self, options: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,

@@ -57,8 +57,9 @@ pub use zarr_write::{
 };
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use zarr_object_store::{
-    array_shape_object_store, read_zarr_object_store, read_zarr_object_store_with_options,
-    store_options_from_env, write_zarr_object_store, write_zarr_object_store_with_options,
+    array_shape_object_store, read_store_options, read_zarr_object_store,
+    read_zarr_object_store_with_options, store_options_from_env, write_zarr_object_store,
+    write_zarr_object_store_with_options,
 };
 #[cfg(all(target_arch = "wasm32", feature = "opfs"))]
 pub use zarr_opfs::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
