@@ -163,6 +163,17 @@ fn write_then_read_roundtrip_within_tolerance() {
     assert_eq!(manifest["last_t"], 3.0);
     assert_eq!(manifest["codec"]["cname"], "zstd");
     assert_eq!(manifest["vars"][0]["name"], "conc");
+
+    // The array's attributes are repeated in the manifest, because a hosted
+    // reader gets the manifest and nothing else — one HTTP request per array
+    // against an `s3://` URL is not a thing a browser can do. Without this a CF
+    // `grid_mapping` is written to the store and unreachable by the only reader
+    // that needs it.
+    assert_eq!(manifest["vars"][0]["attrs"]["units"], "ug/m3");
+    assert_eq!(manifest["vars"][0]["attrs"]["coordinates"], "x y");
+    // `_ARRAY_DIMENSIONS` is the node writer's own bookkeeping, not something the
+    // caller stated, so it stays out of the caller-facing manifest.
+    assert!(manifest["vars"][0]["attrs"].get("_ARRAY_DIMENSIONS").is_none());
 }
 
 // --- the `wasm` codec profile ---------------------------------------------- //

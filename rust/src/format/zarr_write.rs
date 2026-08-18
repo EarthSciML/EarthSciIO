@@ -485,7 +485,27 @@ where
     let vars: Vec<Value> = schema
         .vars
         .iter()
-        .map(|v| json!({"name": v.name, "dims": v.dims, "dtype": "float64"}))
+        .map(|v| {
+            let mut entry = json!({"name": v.name, "dims": v.dims, "dtype": "float64"});
+            // The array's own `attributes`, repeated here because for a HOSTED
+            // store this manifest is the only thing a reader gets. Every array's
+            // attributes are already written to its `zarr.json`, but reaching
+            // them costs one request per array against a URL a browser often
+            // cannot open at all (`s3://`) — so a CF `grid_mapping` written onto
+            // a coordinate array would be invisible to precisely the consumer
+            // that needs it to put the data on a map. The manifest is already
+            // the store's self-description; this makes it complete.
+            //
+            // Omitted when empty, so a store that states nothing serializes
+            // byte-for-byte what it did before this field existed. That is what
+            // keeps the `earthsciio/output-manifest/v1` label honest: readers
+            // pin that string exactly, and an OPTIONAL addition is compatible
+            // where a new version string would not be.
+            if !v.attrs.is_empty() {
+                entry["attrs"] = Value::Object(v.attrs.clone());
+            }
+            entry
+        })
         .collect();
     let dims: Vec<Value> = schema
         .dims
