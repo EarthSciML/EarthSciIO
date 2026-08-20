@@ -1,11 +1,11 @@
 [package]
 name = "earthsciio"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.74"
-license = "MIT"
+license = "AGPL-3.0-only"
 description = "EarthSciIO Rust core: URL download + shared content-addressed cache (transport/store registries, offline mode)."
-repository = "https://github.com/earthsci/earthsciio"
+repository = "https://github.com/EarthSciML/EarthSciIO"
 readme = "README.md"
 keywords = ["earth-science", "cache", "data-loader", "netcdf", "offline"]
 categories = ["caching", "science", "filesystem"]
