@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 1949,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "5391710985c1d3d942b0dc847ed3a04dba1344d6e6cdc0b2487453a0773ac394",
+  "source_loader": "emis_polygons",
+  "url": "https://data.earthsci.dev/fixtures/emis_polygons.zip"
+}

@@ -32,6 +32,8 @@ mod geotiff;
 #[cfg(not(target_arch = "wasm32"))]
 mod netcdf;
 #[cfg(not(target_arch = "wasm32"))]
+mod shapefile;
+#[cfg(not(target_arch = "wasm32"))]
 mod zarr;
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 mod zarr_object_store;
@@ -47,6 +49,8 @@ pub use ff10::Ff10Reader;
 pub use geotiff::GeoTiffReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use netcdf::NetcdfReader;
+#[cfg(not(target_arch = "wasm32"))]
+pub use shapefile::ShapefileReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use zarr::ZarrReader;
 #[cfg(not(target_arch = "wasm32"))]
@@ -467,6 +471,12 @@ impl FormatRegistry {
         // A member-configured reader for the zipped tutorial input is injected via
         // `Provider::with_formats` (no Provider/trait edit; see ff10.rs docs).
         r.register(Arc::new(Ff10Reader::new()));
+        // shapefile (ESRI feature table): one row per PART, `geometry`
+        // [index, vertex, xy] padded by repeating the final vertex, the record's
+        // stored bbox and the `.dbf` columns. The DEFAULT reader takes the single
+        // `.shp` of a zip (or a bare `.shp`); `member`/`numeric_columns` reach it
+        // from a document through `Reader::configured`.
+        r.register(Arc::new(ShapefileReader::new()));
         r.register(Arc::new(ZarrReader::new()));
         r
     }

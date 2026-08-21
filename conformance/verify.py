@@ -288,7 +288,109 @@ def read_zarr(corpus, case):
     return out, {}
 
 
-READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10, "zarr": read_zarr}
+def read_shapefile(path, expected, decode=None):
+    """Shapefile decode oracle: the reader contract stated independently.
+
+    Extracts the case's `.shp` member (+ `.shx`/`.dbf`/`.prj` sidecars) from the
+    zip blob, decodes with pyshp, and applies the pinned rules: a `.dbf` row is
+    deleted iff its flag byte is ``*`` (pyshp calls any non-space flag deleted,
+    so the flags are read here and normalized); each record's PARTS become their
+    own rows with the attributes replicated; rings are right-padded to the
+    longest by REPEATING the final vertex; the record's STORED bbox is
+    replicated to its parts; `N`/`F` -> float64 (blank -> NaN), `L` -> bool, the
+    rest -> str, with ``numeric_columns`` forcing a text column to float64.
+    """
+    import io
+    import shapefile as pyshp
+    import zipfile
+
+    decode = decode or {}
+    member = decode.get("member")
+    numeric = set(decode.get("numeric_columns") or [])
+    blobs = {}
+    with zipfile.ZipFile(path) as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        target = member or sorted(n for n in names if n.lower().endswith(".shp"))[0]
+        stem = target[: -len(".shp")].lower()
+        for n in names:
+            key = "shp" if n == target else (
+                n.lower()[len(stem) + 1:] if n.lower().startswith(stem + ".") else None)
+            if key in ("shp", "dbf", "shx", "prj"):
+                blobs[key] = zf.read(n)
+
+    raw = bytearray(blobs["dbf"])
+    hdr = int.from_bytes(raw[8:10], "little")
+    rlen = int.from_bytes(raw[10:12], "little")
+    nrec = int.from_bytes(raw[4:8], "little")
+    deleted = []
+    for i in range(nrec):
+        off = hdr + i * rlen
+        deleted.append(raw[off] == 0x2A)
+        if not deleted[-1]:
+            raw[off] = 0x20
+
+    kw = {"shp": io.BytesIO(blobs["shp"]), "dbf": io.BytesIO(bytes(raw))}
+    if "shx" in blobs:
+        kw["shx"] = io.BytesIO(blobs["shx"])
+    with pyshp.Reader(**kw) as rdr:
+        shapes = list(rdr.iterShapes())
+        columns = [f[0] for f in rdr.fields if f[0] != "DeletionFlag"]
+        rows = [list(r) for r in rdr.iterRecords()]
+        stype = int(rdr.shapeType)
+
+    rings, meta, attrs = [], [], []
+    live = 0
+    for si, shp in enumerate(shapes):
+        if deleted[si]:
+            continue
+        pts = list(shp.points)
+        offs = [int(o) for o in (shp.parts or [])] or [0]
+        bounds = offs + [len(pts)]
+        parts = [pts[bounds[k]:bounds[k + 1]] for k in range(len(offs))]
+        bb = list(shp.bbox)
+        for pi, ring in enumerate(parts):
+            rings.append(ring)
+            meta.append((si, pi, len(parts), bb))
+            attrs.append(rows[live])
+        live += 1
+
+    nvert = max(len(r) for r in rings)
+    geom = np.empty((len(rings), nvert, 2), dtype="f8")
+    for i, ring in enumerate(rings):
+        padded = list(ring) + [ring[-1]] * (nvert - len(ring))
+        geom[i] = np.asarray(padded, dtype="f8")
+
+    out = {
+        "geometry": geom,
+        "shape_type": [{5: "Polygon", 3: "PolyLine", 1: "Point"}.get(stype, str(stype))],
+        "n_vertices": np.array([len(r) for r in rings], dtype="i8"),
+        "shape_index": np.array([m[0] for m in meta], dtype="i8"),
+        "part_index": np.array([m[1] for m in meta], dtype="i8"),
+        "n_parts": np.array([m[2] for m in meta], dtype="i8"),
+        "xmin": np.array([m[3][0] for m in meta], dtype="f8"),
+        "ymin": np.array([m[3][1] for m in meta], dtype="f8"),
+        "xmax": np.array([m[3][2] for m in meta], dtype="f8"),
+        "ymax": np.array([m[3][3] for m in meta], dtype="f8"),
+    }
+    if "prj" in blobs:
+        out["crs_wkt"] = [blobs["prj"].decode("utf-8").strip()]
+    for j, name in enumerate(columns):
+        vals = [a[j] for a in attrs]
+        spec = expected["variables"].get(name)
+        dt = spec["dtype"] if spec else "string"
+        if name in numeric or dt == "float64":
+            out[name] = np.array(
+                [math.nan if v is None or str(v).strip() == "" else float(v) for v in vals],
+                dtype="f8")
+        elif dt == "bool":
+            out[name] = np.array([bool(v) for v in vals], dtype=bool)
+        else:
+            out[name] = [str(v).strip() for v in vals]
+    return out, {}
+
+
+READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10,
+           "zarr": read_zarr, "shapefile": read_shapefile}
 
 
 def _verify_zarr_objects(case) -> list:
@@ -359,6 +461,10 @@ def verify_case(case_path: pathlib.Path) -> list:
         # ff10 needs the case's decode block (zip member selection + header skip).
         got, coords = read_ff10(CORPUS / case["blob_path"], case["expected"],
                                 case.get("decode"))
+    elif case["format"] == "shapefile":
+        # shapefile needs the case's decode block (zip member + numeric_columns).
+        got, coords = read_shapefile(CORPUS / case["blob_path"], case["expected"],
+                                     case.get("decode"))
     else:
         got, coords = reader(CORPUS / case["blob_path"], case["expected"])
     for name, spec in case["expected"]["variables"].items():

@@ -20,7 +20,7 @@ Tolerance (``spec/conformance.md`` §4, identical to ``conformance/verify.py``):
 
   * CF-decoded / unit-affected floats: ``|a-b| <= atol + rtol*|b|`` with
     ``atol = 1e-6``, ``rtol = 1e-9`` (libraries differ at the ULP level);
-  * raw integer reads and strings: compared **exactly**;
+  * raw integer reads, booleans and strings: compared **exactly**;
   * a masked / ``_FillValue`` cell is ``null`` in a dump and compares equal only
     to ``null`` (the NaN/fill mask must match element-for-element).
 
@@ -81,7 +81,7 @@ def _values_equal(got: List[Any], exp: List[Any], dtype: str) -> Optional[str]:
     if len(got) != len(exp):
         return f"length {len(got)} != {len(exp)}"
     string = dtype == "string"
-    integral = dtype in ("int32", "int64")
+    integral = dtype in ("int32", "int64", "bool")
     for i, (g, e) in enumerate(zip(got, exp)):
         gnull, enull = g is None, e is None
         if gnull != enull:

@@ -35,6 +35,7 @@ data tooling beyond the format reader.
 | `openaq-points-slice` | openaq | points | csv | file | local | a 2nd reader behind the `format` registry; numeric→float64, text→string |
 | `ff10-point-slice` | nei2016 | points | ff10 | file | local | FF10 point long-format: `#` header skipped, fixed 77-col schema, RFC-4180 quoted `FACILITY_NAME`, numeric→float64 (blank→NaN), ids/codes→string; 3 rows share one stack (no pivot). member=null decodes the extracted CSV member |
 | `ff10-zip-egu-glob` | nei2016 | points | ff10 | file | local | EPA-2016fd-shaped **zip** of FF10 members (two `*egu*` + one excluded + a glob-matching **directory placeholder** entry, ignored), each member with a non-comment `country_cd,…` header line. Pins `member_glob` selection (exclusion, **sorted member-name concatenation**) + `skip_header_row` (one asserted header line dropped per member). The blob is the whole zip; member selection is reader config, never part of the cache key |
+| `shapefile-polygon-zip` | emis_polygons | points | shapefile | file | local | ESRI **shapefile** zipped with its `.shx`/`.dbf`/`.prj` sidecars. Pins the whole reader contract in one layer: **one row per PART** (a mainland + an island decode to two rows with the `.dbf` attributes replicated), the esm-spec §8.6.1 **repeat-final-vertex** padding, the `*`-only deletion rule (a NUL flag byte is NOT a deletion), the record's **stored** bbox replicated to its parts, and the dtype rules (`C`→string, `N`→float64 with blank→NaN, `L`→bool, a `C` code column forced float64 by `numeric_columns`) |
 | `isrm-zarr-tile` | isrm | grid | zarr | s3 | local | **store-backed** Zarr v2: lazy orthogonal chunk selection (fetch only the intersecting chunk objects), blosc/lz4+shuffle decode, partial edge chunk, `fill_value` 0.0 NOT→NaN, no coords. `objects[]` per-object key/integrity. |
 
 GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
@@ -101,6 +102,57 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
   option asserts a header row and never silently drops a data row. (The EPA
   2016fd members carry this `country_cd,region_cd,…` line as a non-comment row
   of 77 fields, which would otherwise die at the numeric parse of `ann_value`.)
+- **Shapefile file set** — a shapefile is a **file set** (`.shp` + `.shx` +
+  `.dbf` + `.prj`) but the content-addressed cache holds ONE blob, so the
+  fetchable form is a `.zip`. The reader's `member` names the `.shp` inside it
+  (sidecars are the same stem with `.dbf`/`.shx`/`.prj`, matched
+  case-insensitively on the extension); with `member` absent the archive must
+  contain **exactly one** `.shp` — zero or several is an error naming the
+  candidates. A **bare `.shp`** blob decodes too, geometry only. `member` is
+  reader config and **never part of the cache key**.
+- **Shapefile row identity: one row per PART** — a record may carry several
+  parts (a polygon's outer ring plus its holes, a county's mainland plus its
+  islands). The geometry ops that consume a ring
+  (`polygon_intersection_area`, `intersect_polygon`) take ONE ring, so **each
+  part becomes one row** of the `index` axis, with the record's `.dbf`
+  attributes **replicated** across its parts and `shape_index` / `part_index` /
+  `n_parts` naming where the row came from. A Point or MultiPoint record has no
+  parts and is one row (a MultiPoint's points stay together); a Null shape is
+  one row of `NaN`s. A single-part layer decodes 1:1.
+- **Shapefile vertex padding** — `geometry` is `float64[index, vertex, xy]`,
+  right-padded to the longest part by **repeating the final vertex** — the
+  rectangular-storage convention `esm-spec` §8.6.1 pins, which a geometry kernel
+  evaluates as the deduplicated ring, so a padded ring has the ring's own area.
+  Padding is never `NaN` (only a Null shape's row is). Vertices are the STORED
+  ones: an explicitly closed ring keeps its closing vertex (dropping it is the
+  kernel's job, §8.6.1) and winding is untouched — no orientation fix, no
+  outer/hole classification. `nvert_max` pads to exactly that many slots
+  instead, so a DOCUMENT declares the vertex-axis length rather than inheriting
+  whatever the file happens to hold; a part longer than it is an error naming
+  the row, never a silent truncation.
+- **Shapefile bounding box** — `xmin`/`ymin`/`xmax`/`ymax` are the parent
+  RECORD's **stored** `Box`, replicated to its parts (a Point record stores no
+  box, so its own coordinate is used). On disk, not recomputed: it is the
+  shapefile's own broad-phase envelope.
+- **dBASE deletion flag** — a `.dbf` row is deleted **iff its flag byte is `*`
+  (0x2A)**; every other byte — including the `NUL` that some writers emit —
+  means live. A deleted row drops the `.dbf` row AND its `.shp` shape together,
+  so the two stay aligned. (`dbase` (Rust) and DBFTables.jl already use this
+  rule; pyshp treats any non-space flag as deleted, so the Python reader
+  normalizes the flag bytes before decoding.)
+- **dBASE column dtypes** — `N`/`F` → **float64** (a blank cell → `NaN`; an
+  integer-typed `N` column is NOT kept integral, so the three dbf libraries
+  cannot disagree), `L` → **bool**, `D` → the string `YYYYMMDD`, `C`/`M` →
+  string. `numeric_columns` parses named `C` columns as float64 instead — the
+  `CSVReader`/`FF10Reader` spelling, for a code column (a FIPS `GEOID`) a model
+  wants as a number. A `.dbf` column whose name collides with one of the
+  reader's own fields is an error, never a silent shadowing.
+- **Shapefile CRS and shape type** — the `.prj` WKT (verbatim, when present) and
+  the layer's shape-type name are one-element `string` fields on a `meta`
+  dimension: `crs_wkt` and `shape_type`. They are FIELDS rather than field
+  attributes because the Rust `NativeField` carries no attrs and native-array
+  equality compares fields. The CRS is DECLARED, never acted on — reprojection
+  is ESD's job (Risk R3).
 
 ### Zarr decode notes (store-backed reader)
 

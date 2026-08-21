@@ -110,6 +110,7 @@ the oracle [`verify.py`](verify.py).
 | `ff10-zip-egu-glob` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 | `permuted-order-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
+| `shapefile-polygon-zip` | shapefile | ✅ | ✅ | ✅ (three-way) |
 
 The Rust track has no `csv` reader yet, so the CSV case is a logged Rust skip
 (mirrors [`rust/tests/conformance_decode.rs`](../rust/tests/conformance_decode.rs)),

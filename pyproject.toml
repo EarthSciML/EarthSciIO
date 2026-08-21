@@ -44,6 +44,10 @@ zarr = ["zarr>=3", "fsspec>=2023.1", "numcodecs>=0.13"]
 # S3 (object-store) read/write: s3fs (+ fsspec) back the streaming writer's
 # s3:// output and the S3ObjectStore. Optional so the core transport stays SDK-free.
 s3 = ["s3fs>=2023.1", "fsspec>=2023.1"]
+# Shapefile reader: pyshp is the pure-Python ESRI shapefile + dBASE decoder (no
+# GDAL, no C toolchain), the peer of the Julia `Shapefile.jl` extension and the
+# Rust `shapefile` crate. Imported lazily so a base install stays lean.
+shapefile = ["pyshp>=2.3"]
 test = ["pytest>=7", "jsonschema>=4", "referencing>=0.30"]
 
 [tool.setuptools.packages.find]

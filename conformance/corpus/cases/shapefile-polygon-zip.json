@@ -1,0 +1,327 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "shapefile-polygon-zip",
+  "loader": "emis_polygons",
+  "kind": "points",
+  "format": "shapefile",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://data.earthsci.dev/fixtures/emis_polygons.zip",
+  "cache_key": "97fc34ef836566c29f59ed2ccd308d2a27dd6c3f2f5d687da58145c6ec894628",
+  "blob_path": "cache/v1/blobs/97/97fc34ef836566c29f59ed2ccd308d2a27dd6c3f2f5d687da58145c6ec894628.zip",
+  "manifest_path": "cache/v1/meta/97fc34ef836566c29f59ed2ccd308d2a27dd6c3f2f5d687da58145c6ec894628.json",
+  "content_sha256": "5391710985c1d3d942b0dc847ed3a04dba1344d6e6cdc0b2487453a0773ac394",
+  "bytes": 1949,
+  "select": {
+    "all_records": true
+  },
+  "decode": {
+    "container": "zip",
+    "member": "layer/emis_polygons.shp",
+    "numeric_columns": [
+      "CODE"
+    ]
+  },
+  "expected": {
+    "variables": {
+      "geometry": {
+        "dtype": "float64",
+        "dims": [
+          "index",
+          "vertex",
+          "xy"
+        ],
+        "shape": [
+          5,
+          5,
+          2
+        ],
+        "fill_value": null,
+        "data": [
+          0.0,
+          0.0,
+          0.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          0.0,
+          0.0,
+          0.0,
+          4.0,
+          0.0,
+          4.0,
+          2.0,
+          6.0,
+          2.0,
+          6.0,
+          0.0,
+          4.0,
+          0.0,
+          7.0,
+          0.0,
+          7.0,
+          1.0,
+          8.0,
+          1.0,
+          7.0,
+          0.0,
+          7.0,
+          0.0,
+          0.0,
+          4.0,
+          0.0,
+          6.0,
+          2.0,
+          6.0,
+          0.0,
+          4.0,
+          0.0,
+          4.0,
+          0.0,
+          8.0,
+          0.0,
+          9.0,
+          1.0,
+          9.0,
+          1.0,
+          8.0,
+          0.0,
+          8.0
+        ]
+      },
+      "shape_type": {
+        "dtype": "string",
+        "dims": [
+          "meta"
+        ],
+        "shape": [
+          1
+        ],
+        "fill_value": null,
+        "data": [
+          "Polygon"
+        ]
+      },
+      "crs_wkt": {
+        "dtype": "string",
+        "dims": [
+          "meta"
+        ],
+        "shape": [
+          1
+        ],
+        "fill_value": null,
+        "data": [
+          "GEOGCS[\"GCS_North_American_1983\",DATUM[\"D_North_American_1983\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]"
+        ]
+      },
+      "n_vertices": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          5,
+          5,
+          4,
+          4,
+          5
+        ]
+      },
+      "shape_index": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          0,
+          1,
+          1,
+          2,
+          4
+        ]
+      },
+      "part_index": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      "n_parts": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          1,
+          2,
+          2,
+          1,
+          1
+        ]
+      },
+      "xmin": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          0.0,
+          4.0,
+          4.0,
+          0.0,
+          0.0
+        ]
+      },
+      "ymin": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          0.0,
+          0.0,
+          0.0,
+          4.0,
+          8.0
+        ]
+      },
+      "xmax": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          2.0,
+          8.0,
+          8.0,
+          2.0,
+          1.0
+        ]
+      },
+      "ymax": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          2.0,
+          2.0,
+          2.0,
+          6.0,
+          9.0
+        ]
+      },
+      "NAME": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          "Alpha",
+          "Bravo",
+          "Bravo",
+          "Charlie",
+          "Echo"
+        ]
+      },
+      "EMIS": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          1.5,
+          2.25,
+          2.25,
+          null,
+          -3.5
+        ]
+      },
+      "CODE": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          1001.0,
+          17031.0,
+          17031.0,
+          6037.0,
+          36061.0
+        ]
+      },
+      "FLAG": {
+        "dtype": "bool",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          5
+        ],
+        "fill_value": null,
+        "data": [
+          true,
+          false,
+          false,
+          true,
+          true
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. Pins the whole reader contract in one layer: ONE ROW PER PART (record 1 is a mainland + an island, so 4 live records decode to 5 rows with the .dbf attributes replicated); the esm-spec 8.6.1 padding (a 4-vertex ring in a 5-vertex stack repeats its FINAL vertex, never NaN); a `*` deletion flag dropping the row AND its shape while a NUL flag byte keeps it (pyshp treats any non-space flag as deleted \u2014 the Python reader normalizes); the stored per-record bbox replicated to parts; and the dtype rules \u2014 C -> string, N -> float64 with a blank -> NaN, L -> bool, and a C code column forced to float64 by numeric_columns. shape_type/crs_wkt are one-element `meta` string fields, not field attrs, because the Rust NativeField has none and equality compares fields."
+}

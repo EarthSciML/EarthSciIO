@@ -514,6 +514,147 @@ def build_ff10_zip() -> tuple[bytes, dict, dict]:
 
 
 # -----------------------------------------------------------------------------
+# Fixture 5 — synthetic ESRI shapefile in a zip (transport=file, format=shapefile).
+#
+# A shapefile is a FILE SET but the content-addressed cache holds ONE blob, so
+# the fetchable form is a `.zip` of `.shp`/`.shx`/`.dbf`/`.prj`. The fixture pins
+# every branch of the reader contract in one layer:
+#
+#   * ONE ROW PER PART — record 1 is a mainland + an island, so 4 live records
+#     become 5 rows and its `.dbf` attributes are REPLICATED across both.
+#   * PADDING — rings are 4 and 5 vertices, so the short ones are right-padded by
+#     REPEATING their final vertex (esm-spec §8.6.1), never by NaN.
+#   * DELETION — record 3's `.dbf` flag byte is `*`: the row AND its shape are
+#     dropped. Record 4's flag byte is NUL, which is NOT deletion, so it is kept
+#     (pyshp treats any non-space flag as deleted; the Python reader normalizes).
+#   * DTYPES — `NAME` (C) -> string, `EMIS` (N) -> float64 with a blank -> NaN,
+#     `FLAG` (L) -> bool, and `CODE` (C, a FIPS-shaped code) forced to float64 by
+#     the `numeric_columns` reader option.
+#   * The `.prj` WKT rides as the one-element `crs_wkt` field; `shape_type` names
+#     the layer's geometry.
+#
+# The `.shp`/`.dbf` bytes are written with pyshp (the same third-party decoder
+# the Python reader uses), then two bytes are patched to plant the deletion
+# flags — there is no writer API for a deleted row — and the DBF's
+# last-updated date is pinned to 1980-01-01 so the blob is byte-deterministic.
+# -----------------------------------------------------------------------------
+
+SHP_PRJ = (
+    'GEOGCS["GCS_North_American_1983",DATUM["D_North_American_1983",'
+    'SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],'
+    'UNIT["Degree",0.0174532925199433]]'
+)
+
+# (rings, NAME, EMIS, CODE, FLAG, deletion-flag byte)
+SHP_RECORDS = [
+    ([[(0.0, 0.0), (0.0, 2.0), (2.0, 2.0), (2.0, 0.0), (0.0, 0.0)]],
+     "Alpha", 1.5, "01001", True, b" "),
+    ([[(4.0, 0.0), (4.0, 2.0), (6.0, 2.0), (6.0, 0.0), (4.0, 0.0)],
+      [(7.0, 0.0), (7.0, 1.0), (8.0, 1.0), (7.0, 0.0)]],
+     "Bravo", 2.25, "17031", False, b" "),
+    ([[(0.0, 4.0), (0.0, 6.0), (2.0, 6.0), (0.0, 4.0)]],
+     "Charlie", None, "06037", True, b" "),
+    ([[(10.0, 10.0), (10.0, 11.0), (11.0, 11.0), (10.0, 10.0)]],
+     "Deleted", 999.0, "99999", False, b"*"),
+    ([[(0.0, 8.0), (0.0, 9.0), (1.0, 9.0), (1.0, 8.0), (0.0, 8.0)]],
+     "Echo", -3.5, "36061", True, b"\x00"),
+]
+
+
+def _patch_dbf(raw: bytes) -> bytes:
+    """Pin the DBF last-updated date to 1980-01-01 (byte-determinism — pyshp
+    stamps *today*) and plant the fixture's per-record deletion flags. The date
+    must stay a VALID one: Julia's DBFTables parses it into a `Date`, so a zeroed
+    month is a hard error, not an ignored field."""
+    buf = bytearray(raw)
+    buf[1:4] = bytes((80, 1, 1))
+    hdr = int.from_bytes(buf[8:10], "little")
+    rec = int.from_bytes(buf[10:12], "little")
+    for i, (_r, _n, _e, _c, _f, flag) in enumerate(SHP_RECORDS):
+        buf[hdr + i * rec] = flag[0]
+    return bytes(buf)
+
+
+def build_shapefile_zip() -> tuple[bytes, dict, dict]:
+    import shapefile as pyshp  # the `shapefile` extra; writer side only
+
+    shp_io, shx_io, dbf_io = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    with pyshp.Writer(shp=shp_io, shx=shx_io, dbf=dbf_io) as w:
+        w.field("NAME", "C", 12)
+        w.field("EMIS", "N", 12, 4)
+        w.field("CODE", "C", 5)
+        w.field("FLAG", "L", 1)
+        for rings, name, emis, code, flag, _del in SHP_RECORDS:
+            w.poly(rings)
+            w.record(name, emis, code, flag)
+    members = {
+        "layer/emis_polygons.shp": shp_io.getvalue(),
+        "layer/emis_polygons.shx": shx_io.getvalue(),
+        "layer/emis_polygons.dbf": _patch_dbf(dbf_io.getvalue()),
+        "layer/emis_polygons.prj": SHP_PRJ.encode(),
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name in sorted(members):
+            zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            zi.create_system = 3            # pinned (else platform-dependent)
+            zi.external_attr = 0o644 << 16  # pinned unix mode
+            zi.compress_type = zipfile.ZIP_STORED  # no zlib version variance
+            zf.writestr(zi, members[name])
+    data = buf.getvalue()
+
+    # Expected arrays, by construction: explode the LIVE records to parts.
+    rings, shape_ix, part_ix, nparts, boxes, rows = [], [], [], [], [], []
+    for si, (parts, name, emis, code, flag, delflag) in enumerate(SHP_RECORDS):
+        if delflag == b"*":
+            continue
+        xs = [p[0] for r in parts for p in r]
+        ys = [p[1] for r in parts for p in r]
+        for pi, ring in enumerate(parts):
+            rings.append(ring)
+            shape_ix.append(si)
+            part_ix.append(pi)
+            nparts.append(len(parts))
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+            rows.append((name, emis, code, flag))
+    n = len(rings)
+    nvert = max(len(r) for r in rings)
+    geom = []
+    for ring in rings:
+        padded = list(ring) + [ring[-1]] * (nvert - len(ring))
+        geom.extend([c for pt in padded for c in pt])
+
+    def col(dtype, data):
+        return {"dtype": dtype, "dims": ["index"], "shape": [n],
+                "fill_value": None, "data": data}
+
+    variables = {
+        "geometry": {"dtype": "float64", "dims": ["index", "vertex", "xy"],
+                     "shape": [n, nvert, 2], "fill_value": None, "data": geom},
+        "shape_type": {"dtype": "string", "dims": ["meta"], "shape": [1],
+                       "fill_value": None, "data": ["Polygon"]},
+        "crs_wkt": {"dtype": "string", "dims": ["meta"], "shape": [1],
+                    "fill_value": None, "data": [SHP_PRJ]},
+        "n_vertices": col("int64", [len(r) for r in rings]),
+        "shape_index": col("int64", shape_ix),
+        "part_index": col("int64", part_ix),
+        "n_parts": col("int64", nparts),
+        "xmin": col("float64", [b[0] for b in boxes]),
+        "ymin": col("float64", [b[1] for b in boxes]),
+        "xmax": col("float64", [b[2] for b in boxes]),
+        "ymax": col("float64", [b[3] for b in boxes]),
+        "NAME": col("string", [r[0] for r in rows]),
+        "EMIS": col("float64", [None if r[1] is None else float(r[1]) for r in rows]),
+        "CODE": col("float64", [float(r[2]) for r in rows]),
+        "FLAG": {"dtype": "bool", "dims": ["index"], "shape": [n],
+                 "fill_value": None, "data": [bool(r[3]) for r in rows]},
+    }
+    expected = {"variables": variables, "coords": {}}
+    decode = {"container": "zip", "member": "layer/emis_polygons.shp",
+              "numeric_columns": ["CODE"]}
+    return data, expected, decode
+
+# -----------------------------------------------------------------------------
 # Fixture 4 — synthetic Zarr v2 store (transport=s3, format=zarr, store=local).
 #
 # A tiny multi-chunk Zarr v2 store that pins the load-bearing capability: LAZY
@@ -894,6 +1035,29 @@ def main() -> None:
                "[24,2,9,6] order EXACTLY (a reader that sorted the indices would "
                "return [2,6,9,24] and fail). Proven byte-identical across "
                "Python/Julia/Rust — the Phase-1 3-way selection conformance gate."),
+    ))
+
+    shp_data, shp_expected, shp_decode = build_shapefile_zip()
+    summary.append(("shapefile-polygon-zip",) + emit_case(
+        "shapefile-polygon-zip",
+        loader="emis_polygons", kind="points", fmt="shapefile", transport="file",
+        store="local",
+        resolved_url="https://data.earthsci.dev/fixtures/emis_polygons.zip",
+        ext="zip", data=shp_data, expected=shp_expected, decode=shp_decode,
+        select={"all_records": True},
+        notes=("ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. "
+               "Pins the whole reader contract in one layer: ONE ROW PER PART "
+               "(record 1 is a mainland + an island, so 4 live records decode to "
+               "5 rows with the .dbf attributes replicated); the esm-spec 8.6.1 "
+               "padding (a 4-vertex ring in a 5-vertex stack repeats its FINAL "
+               "vertex, never NaN); a `*` deletion flag dropping the row AND its "
+               "shape while a NUL flag byte keeps it (pyshp treats any non-space "
+               "flag as deleted — the Python reader normalizes); the stored "
+               "per-record bbox replicated to parts; and the dtype rules — C -> "
+               "string, N -> float64 with a blank -> NaN, L -> bool, and a C code "
+               "column forced to float64 by numeric_columns. shape_type/crs_wkt "
+               "are one-element `meta` string fields, not field attrs, because "
+               "the Rust NativeField has none and equality compares fields."),
     ))
 
     index = {

@@ -34,8 +34,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Python track (+ netcdf reader stack, schema validator)
-        run: python -m pip install --upgrade pip && pip install -e ".[netcdf,test]"
+      # `shapefile` (pyshp) is needed twice over: it is the Python reader's decode
+      # backend AND what `generate.py`/`verify.py` write and re-read the shapefile
+      # fixture with, so the corpus self-check needs it too.
+      - name: Install Python track (+ netcdf/shapefile reader stacks, schema validator)
+        run: python -m pip install --upgrade pip && pip install -e ".[netcdf,shapefile,test]"
 
       # --- Julia track ----------------------------------------------------- #
       - name: Set up Julia

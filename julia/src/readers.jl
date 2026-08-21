@@ -610,3 +610,244 @@ function read_native(::FF10Reader, path::AbstractString;
     end
     return NativeDataset(vars, Dict{String,NativeField}())
 end
+
+# --- Shapefile reader (ESRI shapefile feature table) -------------------------
+
+"""Shape-type code -> name (ESRI Shapefile Technical Description, page 4). The
+name is carried in the geometry field's `attrs` so ESS can tell a polygon layer
+from a polyline one without re-sniffing the blob."""
+const SHAPE_TYPE_NAMES = Dict{Int,String}(
+    0 => "Null", 1 => "Point", 3 => "PolyLine", 5 => "Polygon", 8 => "MultiPoint",
+    11 => "PointZ", 13 => "PolyLineZ", 15 => "PolygonZ", 18 => "MultiPointZ",
+    21 => "PointM", 23 => "PolyLineM", 25 => "PolygonM", 28 => "MultiPointM",
+    31 => "MultiPatch")
+
+"""Field names the reader itself produces. A `.dbf` column of the same name is a
+collision the reader refuses rather than silently shadowing either side."""
+const SHAPEFILE_RESERVED = String[
+    "geometry", "n_vertices", "shape_index", "part_index", "n_parts",
+    "xmin", "ymin", "xmax", "ymax", "shape_type", "crs_wkt"]
+
+"""
+    _shapefile_members(path, member) -> Dict{String,Vector{UInt8}}
+
+The `.shp` + sidecar byte blobs of one shapefile, keyed by lowercase extension.
+A shapefile is a **file set** but the content-addressed cache holds ONE blob, so
+the fetchable form is a `.zip`; a bare `.shp` blob decodes too, with geometry
+only (no `.dbf` attributes, no `.prj`). `member` names the `.shp` inside a zip;
+when omitted the archive must contain exactly one."""
+function _shapefile_members(path::AbstractString, member)
+    magic = open(io -> read(io, 2), path)
+    if length(magic) < 2 || magic != UInt8['P', 'K']
+        return Dict{String,Vector{UInt8}}("shp" => read(path))
+    end
+    out = Dict{String,Vector{UInt8}}()
+    r = ZipFile.Reader(path)
+    try
+        names = String[f.name for f in r.files if !endswith(f.name, "/")]
+        shps = sort!(String[n for n in names if endswith(lowercase(n), ".shp")])
+        target = if member !== nothing
+            m = String(member)
+            m in names || throw(KeyError(
+                "zip member '$m' not in the archive; .shp members present: $shps"))
+            m
+        elseif length(shps) == 1
+            shps[1]
+        elseif isempty(shps)
+            throw(KeyError("the zip contains no .shp member"))
+        else
+            throw(KeyError("the zip contains $(length(shps)) .shp members; name one " *
+                           "with reader_options.member: $shps"))
+        end
+        stem = lowercase(target[1:(end - length(".shp"))])
+        for f in r.files
+            lf = lowercase(f.name)
+            if f.name == target
+                out["shp"] = read(f)
+            elseif startswith(lf, stem * ".")
+                ext = lf[(length(stem) + 2):end]
+                ext in ("dbf", "shx", "prj") && (out[ext] = read(f))
+            end
+        end
+    finally
+        close(r)
+    end
+    return out
+end
+
+"""
+    _assemble_shapefile(shapecode, parts, boxes, colnames, colvalues, deleted, crs_wkt;
+                        variables=nothing, numeric_columns=nothing) -> NativeDataset
+
+Build the shapefile [`NativeDataset`] from decoded geometry + attributes. The
+backend (Shapefile.jl, via `EarthSciIOShapefileExt`) supplies only `parts` (per
+shapefile record, its vertex rings in file order as `(x, y)` tuples), `boxes`
+(per record, its stored `(xmin, ymin, xmax, ymax)`), the `.dbf` columns and the
+`.prj` text; the CONTRACT — one row per PART, attribute replication, the
+`esm-spec` §8.6.1 repeat-final-vertex padding, the `N`/`F`→Float64 rule and the
+`*`-only deletion rule — lives here, shared with any future backend."""
+function _assemble_shapefile(shapecode::Integer,
+                             parts::AbstractVector,
+                             boxes::AbstractVector,
+                             colnames::AbstractVector{<:AbstractString},
+                             colvalues::AbstractVector,
+                             deleted::AbstractVector{Bool},
+                             crs_wkt;
+                             variables = nothing, numeric_columns = nothing,
+                             nvert_max = nothing)
+    clash = sort!(String[c for c in colnames if String(c) in SHAPEFILE_RESERVED])
+    isempty(clash) || throw(ArgumentError(
+        ".dbf column name(s) $clash collide with the reader's own fields $SHAPEFILE_RESERVED"))
+    nshape = length(parts)
+    (isempty(colvalues) || all(v -> length(v) == nshape, colvalues)) || throw(ArgumentError(
+        "shapefile has $nshape shapes but the .dbf column lengths disagree"))
+
+    # Explode to one row per part, dropping `*`-deleted records whole.
+    rings = Vector{Vector{Tuple{Float64,Float64}}}()
+    shape_ix, part_ix, nparts, row_of = Int[], Int[], Int[], Int[]
+    for si in 1:nshape
+        (si <= length(deleted) && deleted[si]) && continue
+        ps = parts[si]
+        for (pi, ring) in enumerate(ps)
+            push!(rings, ring); push!(shape_ix, si - 1); push!(part_ix, pi - 1)
+            push!(nparts, length(ps)); push!(row_of, si)
+        end
+    end
+
+    n = length(rings)
+    nvert = isempty(rings) ? 0 : maximum(length, rings)
+    if nvert_max !== nothing
+        if nvert > Int(nvert_max)
+            w = argmax(length.(rings))          # 1-based; the row index is 0-based
+            throw(ArgumentError(
+                "declared nvert_max=$(Int(nvert_max)) but row $(w - 1) " *
+                "(shape $(shape_ix[w]), part $(part_ix[w])) has $nvert vertices"))
+        end
+        nvert = Int(nvert_max)
+    end
+    geom = fill(NaN, n, max(nvert, 1), 2)
+    for (i, ring) in enumerate(rings)
+        for (v, pt) in enumerate(ring)
+            geom[i, v, 1] = pt[1]
+            geom[i, v, 2] = pt[2]
+        end
+        if !isempty(ring)   # right-pad by repeating the final vertex (esm-spec 8.6.1)
+            geom[i, (length(ring) + 1):end, 1] = fill(ring[end][1], max(nvert, 1) - length(ring))
+            geom[i, (length(ring) + 1):end, 2] = fill(ring[end][2], max(nvert, 1) - length(ring))
+        end
+    end
+
+    vars = Dict{String,NativeField}(
+        "geometry" => NativeField(geom, ["index", "vertex", "xy"]),
+        "shape_type" => NativeField(
+            String[get(SHAPE_TYPE_NAMES, Int(shapecode), string(Int(shapecode)))], ["meta"]),
+        "n_vertices" => NativeField(Int64[length(r) for r in rings], ["index"]),
+        "shape_index" => NativeField(Int64.(shape_ix), ["index"]),
+        "part_index" => NativeField(Int64.(part_ix), ["index"]),
+        "n_parts" => NativeField(Int64.(nparts), ["index"]))
+    crs_wkt === nothing ||
+        (vars["crs_wkt"] = NativeField(String[strip(String(crs_wkt))], ["meta"]))
+    for (k, nm) in enumerate(("xmin", "ymin", "xmax", "ymax"))
+        vars[nm] = NativeField(Float64[boxes[si][k] for si in row_of], ["index"])
+    end
+
+    numset = numeric_columns === nothing ? Set{String}() :
+             Set{String}(String(c) for c in numeric_columns)
+    unknown = sort!(String[c for c in numset if !(c in String.(colnames))])
+    isempty(unknown) || throw(KeyError("numeric_columns names no such .dbf column: $unknown"))
+    for (j, nm) in enumerate(colnames)
+        name = String(nm)
+        col = colvalues[j]
+        vals = [col[si] for si in row_of]
+        # Bool BEFORE Real: `Bool <: Real` in Julia, so a `.dbf` `L` column would
+        # otherwise decode to Float64 here and to bool in the Python/Rust tracks.
+        if !(name in numset) && all(v -> v === missing || v isa Bool, vals)
+            vars[name] = NativeField(Bool[v === missing ? false : v for v in vals], ["index"])
+        elseif name in numset || all(v -> v === missing || v isa Real, vals)
+            vars[name] = NativeField(Float64[_shp_float(v) for v in vals], ["index"])
+        else
+            vars[name] = NativeField(String[_shp_text(v) for v in vals], ["index"])
+        end
+    end
+
+    if variables !== nothing
+        want = Set{String}(String(v) for v in variables)
+        missing_names = sort!(String[v for v in want if !haskey(vars, v)])
+        isempty(missing_names) && (vars = Dict(k => v for (k, v) in vars if k in want))
+        isempty(missing_names) || throw(KeyError(
+            "requested variables not in the shapefile: $missing_names; " *
+            "present: $(sort!(collect(keys(vars))))"))
+    end
+    return NativeDataset(vars, Dict{String,NativeField}())
+end
+
+"A `.dbf` cell as Float64: blank / missing / unparseable -> `NaN`."
+function _shp_float(v)
+    v === missing && return NaN
+    v isa Bool && return Float64(v)
+    v isa Real && return Float64(v)
+    s = strip(string(v))
+    isempty(s) && return NaN
+    p = tryparse(Float64, s)
+    return p === nothing ? NaN : p
+end
+
+"A `.dbf` cell as String: missing -> `\"\"`; a `D` date -> `YYYYMMDD`."
+function _shp_text(v)
+    v === missing && return ""
+    v isa Dates.Date && return Dates.format(v, "yyyymmdd")
+    return v isa AbstractString ? String(strip(v)) : string(v)
+end
+
+"""
+    ShapefileReader()
+
+The `shapefile` format reader — an ESRI shapefile as a feature table.
+
+Decode is delegated to **Shapefile.jl**, loaded LAZILY via a weakdep extension
+(`EarthSciIOShapefileExt`, active on `using Shapefile`) — mirroring the Python
+reader's lazy `pyshp` import and the Rust `shapefile` crate. Calling
+`read_native` without `using Shapefile` throws a clear install hint.
+
+**One row per PART.** A shapefile record may carry several parts — a polygon's
+outer ring plus its holes, a county's mainland plus its islands. The op that
+consumes this geometry (`polygon_intersection_area`, `intersect_polygon`) takes
+ONE ring, so a reader that surfaced only the first part would silently drop the
+islands. Each part becomes one row of the `index` axis, with the record's `.dbf`
+attributes REPLICATED across its parts; a single-part layer decodes 1:1.
+
+Variables: `geometry` (`Float64[index, vertex, xy]`, right-PADDED to the longest
+part by REPEATING the final vertex — the `esm-spec` §8.6.1 rectangular-storage
+convention, which a binding evaluates as the deduplicated ring; a Null shape's
+row is all `NaN`), `shape_type` and — when the archive carries a `.prj` —
+`crs_wkt` (`String[meta]`, one element each: the layer's shape type and the
+projection WKT verbatim; the native CRS is DECLARED, not acted on),
+`n_vertices`/`shape_index`/`part_index`/
+`n_parts` (`Int64[index]`), `xmin`/`ymin`/`xmax`/`ymax` (`Float64[index]`, the
+parent record's STORED bounding box replicated to its parts) and one field per
+`.dbf` column (`N`/`F` -> Float64 with blank as `NaN`, `L` -> Bool, `D`/`C` ->
+String). A row whose deletion flag is `*` is dropped, and no other flag byte
+means deleted (spec/conformance.md §3).
+
+READER-ONLY (Risk R3): no reprojection, no unit conversion, no ring orientation
+fix, no polygon/hole classification, no name remap.
+
+`reader_kwargs`: `member="path/in/zip"` names the `.shp` inside a zip blob
+(sidecars are the same stem with `.dbf`/`.shx`/`.prj`); it never enters the
+cache key. `numeric_columns=[...]` parses the named `C` columns as Float64 — the
+`CSVReader`/`FF10Reader` spelling, for a text-typed code column (a FIPS `GEOID`)
+a model wants as a number. `nvert_max=N` pads `geometry` to exactly `N` vertex
+slots instead of to the longest part, so a DOCUMENT declares the vertex-axis
+length rather than inheriting a number the file happens to have (a longer part
+is an error naming it, never a silent truncation). `variables=[...]` restricts
+the returned fields."""
+struct ShapefileReader <: Reader end
+
+# The real decode lives in ext/EarthSciIOShapefileExt.jl, whose method is typed
+# `path::AbstractString` — strictly MORE specific than this untyped-`path` fallback,
+# so when `using Shapefile` is active it wins by dispatch (no method overwrite,
+# which precompilation forbids). This fallback fires only when the backend is absent.
+read_native(::ShapefileReader, path; kwargs...) = error(
+    "the shapefile reader needs the Shapefile.jl backend: add `using Shapefile` so " *
+    "the EarthSciIOShapefileExt extension supplies the decode (kept a weakdep to " *
+    "keep a base EarthSciIO install light, mirroring the Python pyshp-optional path).")

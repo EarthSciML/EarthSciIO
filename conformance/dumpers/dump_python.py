@@ -63,6 +63,8 @@ def _dtype_str(arr: np.ndarray) -> str:
     """The native-field schema dtype name for a numeric numpy array."""
     if np.issubdtype(arr.dtype, np.floating):
         return "float64"
+    if arr.dtype == np.bool_:
+        return "bool"
     if arr.dtype == np.int32:
         return "int32"
     if np.issubdtype(arr.dtype, np.integer):
@@ -85,6 +87,8 @@ def _encode_field(field: Any) -> Dict[str, Any]:
             values: List[Any] = [
                 None if (math.isnan(x)) else float(x) for x in flat.tolist()
             ]
+        elif flat.dtype == np.bool_:
+            values = [bool(x) for x in flat.tolist()]
         else:
             values = [int(x) for x in flat.tolist()]
         return {"dtype": _dtype_str(flat), "dims": dims, "shape": shape, "data": values}
@@ -142,6 +146,14 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
         if dec.get("member_glob") is not None:
             reader_kwargs["member_glob"] = str(dec["member_glob"])
         reader_kwargs["skip_header_row"] = bool(dec.get("skip_header_row") or False)
+    elif fmt == "shapefile":
+        # ESRI shapefile: the case pins the `.shp` member inside the zip blob and
+        # the text code column the model wants as a number.
+        dec = case["decode"]
+        if dec.get("member") is not None:
+            reader_kwargs["member"] = str(dec["member"])
+        if dec.get("numeric_columns"):
+            reader_kwargs["numeric_columns"] = list(dec["numeric_columns"])
     elif fmt == "zarr":
         # Store-backed: the reader is handed (cache, base_url, variables, select).
         # `variables` names the arrays (no .zmetadata to enumerate); `select` (the

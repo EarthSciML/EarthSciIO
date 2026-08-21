@@ -181,6 +181,23 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
             .collect();
         loader = loader.variables(vars).select(parse_selection(case));
     }
+    // The shapefile case pins its zip member + the code column the model wants
+    // numeric. Both reach the reader the way a DOCUMENT delivers them — the
+    // loader's `reader_options`, resolved by `Reader::configured`.
+    if fmt == "shapefile" {
+        let mut options = Map::new();
+        if let Some(dec) = case.get("decode") {
+            for k in ["member", "numeric_columns"] {
+                match dec.get(k) {
+                    Some(v) if !v.is_null() => {
+                        options.insert(k.to_string(), v.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        loader = loader.reader_options(options);
+    }
     let mut provider = Provider::with_formats(loader, Arc::new(cache), None, formats)
         .expect("provider over corpus");
     let buffers = provider.materialize().expect("materialize the corpus blob");

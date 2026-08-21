@@ -51,6 +51,7 @@ function dtype_ok(data, dt::AbstractString)
     dt == "float64" && return eltype(data) == Float64
     dt == "int32"   && return eltype(data) == Int32
     dt == "int64"   && return eltype(data) == Int64
+    dt == "bool"    && return eltype(data) == Bool
     return true
 end
 
@@ -98,6 +99,16 @@ end
                     mg === nothing || (kw[:member_glob] = String(mg))
                     shr = get(dec, "skip_header_row", false)
                     kw[:skip_header_row] = shr === nothing ? false : Bool(shr)
+                    (; kw...)
+                elseif fmt == "shapefile"
+                    # forward the `.shp` member inside the zip blob + the text
+                    # code column the case wants as a number.
+                    dec = case["decode"]
+                    kw = Dict{Symbol,Any}()
+                    m = get(dec, "member", nothing)
+                    m === nothing || (kw[:member] = String(m))
+                    nc = get(dec, "numeric_columns", nothing)
+                    nc === nothing || (kw[:numeric_columns] = String.(nc))
                     (; kw...)
                 else
                     NamedTuple()

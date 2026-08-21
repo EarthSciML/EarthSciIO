@@ -20,7 +20,7 @@ the language-neutral spec in [`../spec`](../spec) and the conformance corpus in
 |---|---|---|
 | Content-addressed cache | [cache-format.md](../spec/cache-format.md) | key = `sha256(resolved_url)`; `$EARTHSCIDATADIR` layout; atomic-rename writes + `mkpidlock` advisory lock |
 | Offline mode | [offline-mode.md](../spec/offline-mode.md) | cache-only; a miss raises `CacheMiss`; no socket opened |
-| `transport` / `format` / `store` registries | [registries.md](../spec/registries.md) | `http`/`file` transports + `local` store + `netcdf`/`csv` readers active; `s3`/`zarr` registered as stubs |
+| `transport` / `format` / `store` registries | [registries.md](../spec/registries.md) | `http`/`file` transports + `local` store + `netcdf`/`csv`/`geotiff`/`ff10`/`shapefile`/`zarr` readers active; `s3` store registered as a stub |
 | Format readers (`read_native`) | [conformance.md](../spec/conformance.md) | `NetCDFReader` (NCDatasets) + `CSVReader` → RAW native-grid arrays keyed by the on-disk `file_variable`; CF scale/offset + `_FillValue`→NaN; time axis kept raw (calendar decode is ESS's job) |
 | Cadence `Provider` | [conformance.md](../spec/conformance.md) | `materialize`/`refresh`/`refresh_times`/`prefetch` over `CONST`/`DISCRETE`; provides DATA, not a solver |
 | Manifest | [schemas/manifest.schema.json](../spec/schemas/manifest.schema.json) | per-blob validation/provenance; never stores credentials |

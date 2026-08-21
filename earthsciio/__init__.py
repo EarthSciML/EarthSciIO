@@ -60,6 +60,7 @@ from .readers import (
     CSVReader,
     FF10Reader,
     GeoTIFFReader,
+    ShapefileReader,
     NetCDFReader,
     register_format_readers,
 )
@@ -136,6 +137,7 @@ __all__ = [
     "CSVReader",
     "GeoTIFFReader",
     "FF10Reader",
+    "ShapefileReader",
     "register_format_readers",
     # provider API (esio-9nb.3)
     "Provider",

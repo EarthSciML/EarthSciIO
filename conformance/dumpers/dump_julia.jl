@@ -21,27 +21,35 @@ using EarthSciIO
 import JSON
 
 # The store-backed `zarr` case decodes blosc chunks via the `EarthSciIOBloscExt`
-# weakdep extension (`using Blosc`). Blosc is kept a weakdep (light base install,
+# weakdep extension (`using Blosc`), and the store-backed `shapefile` case via
+# `EarthSciIOShapefileExt` (`using Shapefile`). Both are weakdeps (light base install,
 # mirroring TiffImages), so it is not importable under `--project=julia`; add it
 # to a temporary environment stacked on LOAD_PATH and retry the extension load.
 # In an env that already carries Blosc (e.g. the test target) the direct import
 # succeeds and this is a no-op. Requires network only if Blosc is not yet in the
 # depot.
-if Base.get_extension(EarthSciIO, :EarthSciIOBloscExt) === nothing
+import Pkg
+
+function _load_weakdep(extname::Symbol, pkg::String)
+    Base.get_extension(EarthSciIO, extname) === nothing || return
     try
-        @eval import Blosc
+        @eval import $(Symbol(pkg))
     catch
-        import Pkg
         _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
-        _bloscenv = mktempdir()
-        Pkg.activate(_bloscenv; io = devnull)
-        Pkg.add("Blosc"; io = devnull)
+        _env = mktempdir()
+        Pkg.activate(_env; io = devnull)
+        Pkg.add(pkg; io = devnull)
         Pkg.activate(_juliaproj; io = devnull)
-        push!(LOAD_PATH, _bloscenv)
-        @eval import Blosc
+        push!(LOAD_PATH, _env)
+        @eval import $(Symbol(pkg))
     end
     Base.retry_load_extensions()
 end
+
+_load_weakdep(:EarthSciIOBloscExt, "Blosc")
+# The `shapefile` case decodes through the `EarthSciIOShapefileExt` weakdep
+# extension (`using Shapefile`) — the same bootstrap as Blosc above.
+_load_weakdep(:EarthSciIOShapefileExt, "Shapefile")
 
 # Row-major (C-order) flatten of a native array whose axes are in file (`dims`)
 # order — matches numpy `.reshape(-1)` on the Python track's arrays.
@@ -62,6 +70,9 @@ function encode_field(field)
     if et <: AbstractFloat
         dtype = "float64"
         vals = Any[isnan(x) ? nothing : Float64(x) for x in flat]
+    elseif et === Bool
+        dtype = "bool"
+        vals = Any[Bool(x) for x in flat]
     elseif et <: Integer
         dtype = et == Int32 ? "int32" : "int64"
         vals = Any[Int(x) for x in flat]
@@ -116,6 +127,16 @@ function dump_case(corpus, case)
         mg === nothing || (kw[:member_glob] = String(mg))
         shr = get(dec, "skip_header_row", false)
         kw[:skip_header_row] = shr === nothing ? false : Bool(shr)
+        const_provider(cache, url; format = fmt, reader_kwargs = (; kw...))
+    elseif fmt == "shapefile"
+        # ESRI shapefile: the case pins the `.shp` member inside the zip blob and
+        # the text code column the model wants as a number.
+        dec = case["decode"]
+        kw = Dict{Symbol,Any}()
+        m = get(dec, "member", nothing)
+        m === nothing || (kw[:member] = String(m))
+        nc = get(dec, "numeric_columns", nothing)
+        nc === nothing || (kw[:numeric_columns] = String.(nc))
         const_provider(cache, url; format = fmt, reader_kwargs = (; kw...))
     elseif fmt == "zarr"
         # Store-backed: `url` is the store base; `variables` names the arrays (no

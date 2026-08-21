@@ -52,6 +52,23 @@ fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
     configured.then_some(reader)
 }
 
+/// A case's `decode` block narrowed to the named keys, as a loader would declare
+/// them in `reader_options` — the input to [`Reader::configured`].
+fn declared_options(case: &Value, keys: &[&str]) -> serde_json::Map<String, Value> {
+    let mut options = serde_json::Map::new();
+    if let Some(dec) = case.get("decode") {
+        for k in keys {
+            match dec.get(*k) {
+                Some(v) if !v.is_null() => {
+                    options.insert((*k).to_string(), v.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    options
+}
+
 /// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
 /// zarr cases); absent ⇒ `Selection::All`.
 fn parse_selection(case: &Value) -> Selection {
@@ -143,6 +160,15 @@ fn decodes_every_corpus_case_to_match_expected() {
             let reader: Arc<dyn earthsciio::Reader> = if format == "ff10" {
                 match ff10_reader_from_decode(&case) {
                     Some(configured) => Arc::new(configured),
+                    None => reader,
+                }
+            } else if format == "shapefile" {
+                // The shapefile case pins its zip member + the code column the
+                // model wants numeric; both reach the reader the way a DOCUMENT
+                // delivers them — `Reader::configured`, not a bespoke builder.
+                let options = declared_options(&case, &["member", "numeric_columns"]);
+                match reader.configured(&options).expect("configured shapefile reader") {
+                    Some(configured) => configured,
                     None => reader,
                 }
             } else {
@@ -362,6 +388,9 @@ fn flatten_f64(v: &Value) -> Vec<Option<f64>> {
             Value::Array(a) => a.iter().for_each(|x| rec(x, out)),
             Value::Null => out.push(None),
             Value::Number(n) => out.push(Some(n.as_f64().unwrap())),
+            // A `bool` field compares numerically (false=0, true=1) — the
+            // native-field schema's fifth dtype, from a `.dbf` `L` column.
+            Value::Bool(b) => out.push(Some(if *b { 1.0 } else { 0.0 })),
             other => panic!("unexpected value in numeric data: {other}"),
         }
     }

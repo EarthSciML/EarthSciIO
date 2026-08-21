@@ -63,7 +63,8 @@ export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
 export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
-export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ZarrReader, read_native
+export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ShapefileReader,
+       ZarrReader, read_native
 export read_store, store_backed, supports_selection, array_shape, reader_option_keys
 export NativeField, NativeDataset, variable_names, coord_names
 
@@ -121,6 +122,13 @@ function _register_defaults()
     # 77-col schema, numeric->Float64 (blank->NaN), ids/codes/text->String; a zip
     # member is extracted reader-side via the `member` kwarg (ZipFile.jl).
     register!(FORMAT_REGISTRY, "ff10", FF10Reader(); status = :active)
+    # shapefile (ESRI feature table): one row per PART, `geometry`
+    # [index, vertex, xy] padded by repeating the final vertex, the record's
+    # stored bbox and the `.dbf` columns. The decode is supplied by the
+    # `EarthSciIOShapefileExt` weakdep extension (`using Shapefile`); without it,
+    # `read_native` errors with an install hint (the Python sibling lazy-imports
+    # `pyshp` the same way).
+    register!(FORMAT_REGISTRY, "shapefile", ShapefileReader(); status = :active)
     # zarr (active, store-backed): lazy orthogonal chunk selection; blosc decode
     # is supplied by the `EarthSciIOBloscExt` weakdep extension (`using Blosc`).
     register!(FORMAT_REGISTRY, "zarr", ZarrReader(); status = :active)

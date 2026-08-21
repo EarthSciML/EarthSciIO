@@ -22,7 +22,9 @@ imports them lazily so the cache/transport core stays lean.
 from __future__ import annotations
 
 import csv as _csv
+import datetime as _dt
 import fnmatch as _fnmatch
+import io as _io
 import zipfile as _zipfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -36,6 +38,7 @@ __all__ = [
     "CSVReader",
     "GeoTIFFReader",
     "FF10Reader",
+    "ShapefileReader",
     "register_format_readers",
 ]
 
@@ -736,12 +739,391 @@ class FF10Reader:
 
 
 # --------------------------------------------------------------------------- #
+# Shapefile reader (pyshp) — the ESRI shapefile feature table.
+# --------------------------------------------------------------------------- #
+
+
+#: Shape-type code -> name (ESRI Shapefile Technical Description, page 4). The
+#: name is carried in the geometry field's ``attrs`` so ESS can tell a polygon
+#: layer from a polyline one without re-sniffing the blob.
+SHAPE_TYPE_NAMES: Dict[int, str] = {
+    0: "Null", 1: "Point", 3: "PolyLine", 5: "Polygon", 8: "MultiPoint",
+    11: "PointZ", 13: "PolyLineZ", 15: "PolygonZ", 18: "MultiPointZ",
+    21: "PointM", 23: "PolyLineM", 25: "PolygonM", 28: "MultiPointM",
+    31: "MultiPatch",
+}
+
+#: Field names the reader itself produces. A `.dbf` column of the same name is a
+#: collision the reader refuses rather than silently shadowing either side.
+SHAPEFILE_RESERVED = (
+    "geometry", "n_vertices", "shape_index", "part_index", "n_parts",
+    "xmin", "ymin", "xmax", "ymax", "shape_type", "crs_wkt",
+)
+
+
+def _shp_sidecar_bytes(handle: Any, member: Optional[str]) -> Dict[str, bytes]:
+    """The `.shp` + sidecar byte blobs of one shapefile, keyed by extension.
+
+    A shapefile is a **file set** but the content-addressed cache holds ONE blob,
+    so the fetchable form is a `.zip`; a bare `.shp` blob decodes too, with
+    geometry only (no `.dbf` attributes, no `.prj`). `member` names the `.shp`
+    inside a zip; when omitted the archive must contain exactly one.
+    """
+    with open(handle, "rb") as fh:
+        magic = fh.read(4)
+    if magic[:2] != b"PK":
+        with open(handle, "rb") as fh:
+            return {"shp": fh.read()}
+    out: Dict[str, bytes] = {}
+    with _zipfile.ZipFile(handle) as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        shps = sorted(n for n in names if n.lower().endswith(".shp"))
+        if member is not None:
+            if member not in names:
+                raise KeyError(
+                    f"zip member {member!r} not in the archive; .shp members present: {shps}"
+                )
+            target = member
+        elif len(shps) == 1:
+            target = shps[0]
+        elif not shps:
+            raise KeyError("the zip contains no .shp member")
+        else:
+            raise KeyError(
+                f"the zip contains {len(shps)} .shp members; name one with "
+                f"reader_options.member: {shps}"
+            )
+        out["shp"] = zf.read(target)
+        stem = target[: -len(".shp")]
+        lower = {n.lower(): n for n in names}
+        for ext in ("dbf", "shx", "prj"):
+            hit = lower.get(f"{stem.lower()}.{ext}")
+            if hit is not None:
+                out[ext] = zf.read(hit)
+    return out
+
+
+def _dbf_deletion_flags(raw: bytes) -> Tuple[bytes, List[bool]]:
+    """Normalize the DBF deletion flags and report which rows are deleted.
+
+    A dBASE record's first byte marks deletion. GDAL — and the shapefiles the
+    world actually holds — use ``*`` (0x2A) for a deleted row and a space for a
+    live one, but writers exist (InMAP's Go writer among them) that leave the
+    byte ``NUL``. pyshp treats **any** non-space flag as deleted and drops the
+    row, while the Julia (DBFTables) and Rust (``dbase``) libraries both use the
+    ``*``-only rule. Rewriting every other flag byte to a space pins that ONE
+    cross-language rule (``spec/conformance.md`` §3): *a row is deleted iff its
+    flag byte is* ``*``. The returned mask is what realigns the `.shp` shapes
+    with the LIVE `.dbf` rows, since pyshp's record iterator skips deleted rows
+    silently. A malformed/short header is returned untouched with an empty mask
+    — the dbf library is left to raise its own error.
+    """
+    if len(raw) < 32:
+        return raw, []
+    nrec = int.from_bytes(raw[4:8], "little")
+    hdr = int.from_bytes(raw[8:10], "little")
+    rec = int.from_bytes(raw[10:12], "little")
+    if rec < 1 or hdr < 32 or hdr + nrec * rec > len(raw):
+        return raw, []
+    buf = bytearray(raw)
+    deleted: List[bool] = []
+    for i in range(nrec):
+        off = hdr + i * rec
+        deleted.append(buf[off] == 0x2A)
+        if not deleted[-1]:
+            buf[off] = 0x20
+    return bytes(buf), deleted
+
+
+def _shp_parts(shape: Any) -> List[List[Any]]:
+    """One shape's vertex rings/parts, in file order, as lists of ``(x, y)``.
+
+    A Polygon/PolyLine carries explicit part offsets; a Point or MultiPoint has
+    none and is one part (a MultiPoint's points stay together). A Null shape is
+    one EMPTY part, so a null row still occupies its slot in the record axis.
+    """
+    pts = list(getattr(shape, "points", ()) or ())
+    if int(getattr(shape, "shapeType", 0)) == 0:
+        return [[]]
+    offs = [int(p) for p in (getattr(shape, "parts", ()) or ())]
+    if not offs:
+        return [pts]
+    bounds = offs + [len(pts)]
+    return [pts[bounds[k]:bounds[k + 1]] for k in range(len(offs))]
+
+
+def _shp_bbox(shape: Any) -> Tuple[float, float, float, float]:
+    """A shape's bounding box: the record's own stored ``Box`` where the format
+    has one, else (Point) the point itself. ``NaN``s for a Null shape."""
+    try:
+        bb = shape.bbox
+    except Exception:
+        bb = None
+    if bb is None or len(bb) < 4:
+        pts = list(getattr(shape, "points", ()) or ())
+        if not pts:
+            return (np.nan, np.nan, np.nan, np.nan)
+        xs = [float(p[0]) for p in pts]
+        ys = [float(p[1]) for p in pts]
+        return (min(xs), min(ys), max(xs), max(ys))
+    return (float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3]))
+
+
+class ShapefileReader:
+    """The active ``shapefile`` reader — an ESRI shapefile as a feature table.
+
+    Decode is delegated to **pyshp** (:mod:`shapefile`), imported lazily so a
+    base install stays lean, mirroring the Julia ``Shapefile.jl`` extension and
+    the Rust ``shapefile`` crate. Nothing about the format is re-implemented
+    here; what this reader owns is the mapping onto the NATIVE-ARRAY contract.
+
+    **One row per PART.** A shapefile record may carry several parts — a
+    polygon's outer ring plus its holes, a county's mainland plus its islands, a
+    multi-part route. The op that consumes this geometry
+    (``polygon_intersection_area``, ``intersect_polygon``) takes ONE ring, so a
+    reader that surfaced only the first part would silently drop the islands.
+    Each part therefore becomes one row of the ``index`` axis, with the record's
+    `.dbf` attributes REPLICATED across its parts and ``shape_index`` /
+    ``part_index`` / ``n_parts`` naming where the row came from. A layer whose
+    records are all single-part (the common case) decodes 1:1.
+
+    Variables:
+
+    ``geometry``
+        ``float64[index, vertex, xy]`` — the vertex rings, right-PADDED to the
+        longest part by REPEATING the final vertex. That padding is the
+        rectangular-vertex-storage convention `esm-spec` §8.6.1 pins: a binding
+        evaluates such a ring as its deduplicated form, so a short ring padded
+        this way has the same area as the ring itself. A Null shape's row is all
+        ``NaN``. Vertices are kept exactly as stored — the explicit closing
+        vertex of a shapefile ring is NOT dropped (§8.6.1 makes dropping it the
+        kernel's job) and no winding is normalized.
+    ``shape_type``, ``crs_wkt``
+        ``str[meta]`` — one-element string fields: the layer's shape type, and
+        the `.prj` WKT verbatim when the archive carries one (``crs_wkt`` is
+        absent otherwise). The native CRS is DECLARED, not acted on —
+        **reprojection is ESD's job, never the reader's**. They are fields rather
+        than field ``attrs`` because the Rust ``NativeField`` has no ``attrs``,
+        and the cross-language native-array equality check compares fields.
+    ``n_vertices``
+        ``int64[index]`` — real vertices in the part, before padding.
+    ``shape_index``, ``part_index``, ``n_parts``
+        ``int64[index]`` — the 0-based record index in the `.shp`, the 0-based
+        part index inside it, and its part count.
+    ``xmin``, ``ymin``, ``xmax``, ``ymax``
+        ``float64[index]`` — the parent RECORD's stored bounding box (a Point's
+        own coordinate where the format stores no box), replicated to its parts.
+        On disk, not computed: it is the shapefile's own broad-phase envelope.
+    one field per `.dbf` column
+        ``[index]``, replicated to parts. Numeric (``N``/``F``) columns become
+        ``float64`` with a blank as ``NaN``; ``L`` becomes ``bool``; ``D`` and
+        ``C`` stay ``str``. A row whose deletion flag is ``*`` is dropped, and
+        no other flag byte means deleted (``spec/conformance.md`` §3).
+
+    READER-ONLY (Risk R3): no reprojection, no unit conversion, no ring
+    orientation fix, no polygon/hole classification, no name remap.
+
+    ``reader_kwargs``: ``member="path/in/zip"`` names the `.shp` inside a zip
+    blob (sidecars are the same stem with `.dbf`/`.shx`/`.prj`); it never enters
+    the cache key. ``numeric_columns=[...]`` parses the named ``C`` columns as
+    ``float64`` — the ``CSVReader``/``FF10Reader`` spelling, for a text-typed
+    code column (a FIPS ``GEOID``) a model wants as a number.
+    """
+
+    #: Registry name + format key(s) + extension sniff hints.
+    NAME = "shapefile"
+    FORMATS = ("shapefile",)
+    EXTENSIONS = ("shp", "zip")
+
+    def formats(self) -> List[str]:
+        return list(self.FORMATS)
+
+    def extensions(self) -> List[str]:
+        return list(self.EXTENSIONS)
+
+    def open(self, blob_path: Any) -> Any:
+        return blob_path
+
+    def read_native(
+        self,
+        handle: Any,
+        variables: Optional[Sequence[str]] = None,
+        select: Optional[Any] = None,
+        *,
+        member: Optional[str] = None,
+        numeric_columns: Optional[Sequence[str]] = None,
+        nvert_max: Optional[int] = None,
+        **_: Any,
+    ) -> NativeDataset:
+        """Decode a shapefile blob into a one-row-per-part feature table."""
+        try:
+            import shapefile as _pyshp  # lazy: only this path needs pyshp
+        except ImportError as exc:  # pragma: no cover - exercised with no backend
+            raise ImportError(
+                "the shapefile reader needs the pyshp backend: install it — "
+                "e.g. `pip install earthsciio[shapefile]`."
+            ) from exc
+
+        blobs = _shp_sidecar_bytes(handle, member)
+        kw: Dict[str, Any] = {"shp": _io.BytesIO(blobs["shp"])}
+        if "shx" in blobs:
+            kw["shx"] = _io.BytesIO(blobs["shx"])
+        deleted: List[bool] = []
+        if "dbf" in blobs:
+            normalized, deleted = _dbf_deletion_flags(blobs["dbf"])
+            kw["dbf"] = _io.BytesIO(normalized)
+
+        columns: List[str] = []
+        types: Dict[str, Any] = {}
+        records: List[List[Any]] = []
+        with _pyshp.Reader(**kw) as rdr:
+            shapes = list(rdr.iterShapes())
+            shape_type = int(rdr.shapeType)
+            if "dbf" in blobs:
+                fields = [f for f in rdr.fields if f[0] != "DeletionFlag"]
+                columns = [f[0] for f in fields]
+                types = {f[0]: f[1] for f in fields}
+                records = [list(r) for r in rdr.iterRecords()]
+        if "dbf" in blobs:
+            if len(deleted) != len(shapes):
+                raise ValueError(
+                    f"shapefile has {len(shapes)} shapes but {len(deleted)} .dbf rows"
+                )
+            live = len(shapes) - sum(deleted)
+            if len(records) != live:
+                raise ValueError(
+                    f"shapefile has {live} live shapes but {len(records)} live .dbf rows"
+                )
+        else:
+            deleted = [False] * len(shapes)
+
+        clash = sorted(set(columns) & set(SHAPEFILE_RESERVED))
+        if clash:
+            raise ValueError(
+                f".dbf column name(s) {clash} collide with the reader's own fields "
+                f"{list(SHAPEFILE_RESERVED)}"
+            )
+
+        # Explode to one row per part, dropping `*`-deleted rows whole.
+        rings: List[List[Any]] = []
+        shape_ix: List[int] = []
+        part_ix: List[int] = []
+        nparts: List[int] = []
+        boxes: List[Tuple[float, float, float, float]] = []
+        rows: List[Optional[List[Any]]] = []
+        live_ix = 0
+        for si, shp in enumerate(shapes):
+            if deleted[si]:
+                continue
+            parts = _shp_parts(shp)
+            box = _shp_bbox(shp)
+            for pi, ring in enumerate(parts):
+                rings.append(ring)
+                shape_ix.append(si)
+                part_ix.append(pi)
+                nparts.append(len(parts))
+                boxes.append(box)
+                rows.append(records[live_ix] if records else None)
+            live_ix += 1
+
+        n = len(rings)
+        nvert = max((len(r) for r in rings), default=0)
+        if nvert_max is not None:
+            if nvert > int(nvert_max):
+                worst = max(range(len(rings)), key=lambda i: len(rings[i]))
+                raise ValueError(
+                    f"declared nvert_max={int(nvert_max)} but row {worst} (shape "
+                    f"{shape_ix[worst]}, part {part_ix[worst]}) has {nvert} vertices"
+                )
+            nvert = int(nvert_max)
+        geom = np.full((n, max(nvert, 1), 2), np.nan, dtype="float64")
+        for i, ring in enumerate(rings):
+            for v, pt in enumerate(ring):
+                geom[i, v, 0] = float(pt[0])
+                geom[i, v, 1] = float(pt[1])
+            if ring:  # right-pad by repeating the final vertex (esm-spec §8.6.1)
+                geom[i, len(ring):, 0] = float(ring[-1][0])
+                geom[i, len(ring):, 1] = float(ring[-1][1])
+
+        out: Dict[str, NativeField] = {
+            "geometry": NativeField(geom, ("index", "vertex", "xy"), {}),
+            "shape_type": NativeField(
+                [SHAPE_TYPE_NAMES.get(shape_type, str(shape_type))], ("meta",), {}),
+            "n_vertices": NativeField(
+                np.array([len(r) for r in rings], dtype="int64"), ("index",), {}),
+            "shape_index": NativeField(np.array(shape_ix, dtype="int64"), ("index",), {}),
+            "part_index": NativeField(np.array(part_ix, dtype="int64"), ("index",), {}),
+            "n_parts": NativeField(np.array(nparts, dtype="int64"), ("index",), {}),
+        }
+        if "prj" in blobs:
+            out["crs_wkt"] = NativeField(
+                [blobs["prj"].decode("utf-8", "replace").strip()], ("meta",), {})
+        for k, name in enumerate(("xmin", "ymin", "xmax", "ymax")):
+            out[name] = NativeField(
+                np.array([b[k] for b in boxes], dtype="float64"), ("index",), {})
+
+        numset = {str(c) for c in numeric_columns} if numeric_columns else set()
+        unknown = sorted(numset - set(columns))
+        if unknown:
+            raise KeyError(f"numeric_columns names no such .dbf column: {unknown}")
+        for j, name in enumerate(columns):
+            vals = [None if r is None else r[j] for r in rows]
+            kind = str(types[name])
+            if name in numset or kind in ("N", "F", "O", "I", "+"):
+                out[name] = NativeField(
+                    np.array([_shp_float(v) for v in vals], dtype="float64"),
+                    ("index",), {})
+            elif kind == "L":
+                out[name] = NativeField(
+                    np.array([bool(v) for v in vals], dtype="bool"), ("index",), {})
+            else:
+                out[name] = NativeField([_shp_text(v) for v in vals], ("index",), {})
+
+        want = {str(v) for v in variables} if variables else None
+        if want is not None:
+            missing = sorted(w for w in want if w not in out)
+            if missing:
+                raise KeyError(
+                    f"requested variables not in the shapefile: {missing}; "
+                    f"present: {sorted(out)}"
+                )
+            out = {k: v for k, v in out.items() if k in want}
+        return NativeDataset(out, {})
+
+
+def _shp_float(value: Any) -> float:
+    """A `.dbf` cell as ``float64``: blank / missing / unparseable → ``NaN``."""
+    if value is None:
+        return np.nan
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return np.nan
+    try:
+        return float(text)
+    except ValueError:
+        return np.nan
+
+
+def _shp_text(value: Any) -> str:
+    """A `.dbf` cell as ``str``: missing → ``""``; a ``D`` date → ``YYYYMMDD``."""
+    if value is None:
+        return ""
+    if isinstance(value, _dt.date):
+        return f"{value.year:04d}{value.month:02d}{value.day:02d}"
+    return str(value).strip() if isinstance(value, str) else str(value)
+
+
+# --------------------------------------------------------------------------- #
 # Registration (idempotent) — called from earthsciio/__init__.py on import.
 # --------------------------------------------------------------------------- #
 
 
 def register_format_readers(registry: Optional[Registry] = None) -> None:
-    """Register the active ``netcdf`` + ``csv`` + ``geotiff`` readers.
+    """Register the active ``netcdf`` + ``csv`` + ``geotiff`` + ``ff10`` + ``shapefile`` readers.
 
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same
     factory is re-registered, so importing the package twice is safe. Orthogonal
@@ -771,6 +1153,17 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(GeoTIFFReader.EXTENSIONS),
         notes="Raster bands via GDAL/rasterio (tifffile fallback); GDAL_NODATA->NaN.",
+    )
+    reg.register(
+        ShapefileReader.NAME,
+        ShapefileReader,
+        keys=list(ShapefileReader.FORMATS),
+        status="active",
+        extensions=list(ShapefileReader.EXTENSIONS),
+        notes="ESRI shapefile via pyshp; one row per PART with .dbf attributes "
+              "replicated; `geometry` [index, vertex, xy] right-padded by repeating "
+              "the final vertex; the record's stored bbox as xmin/ymin/xmax/ymax; "
+              ".prj WKT carried as attrs.crs_wkt; `.shp` inside a zip via `member`.",
     )
     reg.register(
         FF10Reader.NAME,
