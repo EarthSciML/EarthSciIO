@@ -4,16 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "earthsciio"
-version = "0.1.0"
+version = "0.1.1"
 description = "EarthSciIO — Python data-provider core: URL download + shared content-addressed cache behind the ESS opener/fetcher seam."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "EarthSciML" }]
+keywords = ["earth-science", "data-loader", "cache", "netcdf", "zarr", "geotiff"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
 dependencies = [
     "numpy>=1.21",
     "requests>=2.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/EarthSciML/EarthSciIO"
+Repository = "https://github.com/EarthSciML/EarthSciIO.git"
+Issues = "https://github.com/EarthSciML/EarthSciIO/issues"
 
 [project.optional-dependencies]
 # Format readers that need heavier stacks are optional so the cache/transport
