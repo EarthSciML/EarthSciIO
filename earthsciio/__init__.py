@@ -64,9 +64,11 @@ from .readers import (
     register_format_readers,
 )
 from .provider import (
-    DataLoader,
-    LoaderTemporal,
+    DataLoader,  # 0.1.1 alias of DataSource; dropped in 0.2.0
+    DataSource,
+    LoaderTemporal,  # 0.1.1 alias of SourceTemporal; dropped in 0.2.0
     Provider,
+    SourceTemporal,
     Window,
     reader_option_names,
 )
@@ -137,10 +139,13 @@ __all__ = [
     "register_format_readers",
     # provider API (esio-9nb.3)
     "Provider",
-    "DataLoader",
-    "LoaderTemporal",
+    "DataSource",
+    "SourceTemporal",
     "Window",
     "reader_option_names",
+    # 0.1.1 spellings, kept source-compatible; dropped in 0.2.0
+    "DataLoader",
+    "LoaderTemporal",
     # config
     "CACHE_FORMAT_VERSION",
     "resolve_cache_root",

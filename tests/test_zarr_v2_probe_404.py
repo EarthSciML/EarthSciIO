@@ -28,7 +28,7 @@ import pytest
 numcodecs = pytest.importorskip("numcodecs")
 pytest.importorskip("zarr")
 
-from earthsciio import Cache, DataLoader, Provider
+from earthsciio import Cache, DataSource, Provider
 from earthsciio.errors import FetchError, TransportError
 
 
@@ -93,7 +93,7 @@ def _write_v2_store(root) -> str:
 def test_v2_store_without_zarr_json_is_readable(tmp_path):
     base = _write_v2_store(tmp_path / "store")
     cache = Cache(root=str(tmp_path / "cache"))
-    loader = DataLoader(name="mini", format="zarr", url=base, variables=["field"])
+    loader = DataSource(name="mini", format="zarr", url=base, variables=["field"])
 
     ds = Provider(loader, cache).materialize()
 
@@ -106,7 +106,7 @@ def test_v2_store_selection_still_pushes_down(tmp_path):
     """The absence fix must not disturb the projection pushdown."""
     base = _write_v2_store(tmp_path / "store")
     cache = Cache(root=str(tmp_path / "cache"))
-    loader = DataLoader(name="mini", format="zarr", url=base, variables=["field"])
+    loader = DataSource(name="mini", format="zarr", url=base, variables=["field"])
 
     ds = Provider(loader, cache).materialize(select={"axes": [{"indices": [1, 4, 5]}]})
 
@@ -135,7 +135,7 @@ def test_a_transient_failure_is_not_reported_as_absence(tmp_path, monkeypatch):
         zarr_backend, "_cache_store"
     ) else None
     if store is None:
-        loader = DataLoader(name="mini", format="zarr", url=base, variables=["field"])
+        loader = DataSource(name="mini", format="zarr", url=base, variables=["field"])
         with pytest.raises(FetchError):
             Provider(loader, cache).materialize()
     else:  # pragma: no cover - alternate constructor name

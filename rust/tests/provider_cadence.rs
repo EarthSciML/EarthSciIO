@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use earthsciio::{ArrayData, Cache, DataLoader, Error, LoaderTemporal, NativeField, Provider};
+use earthsciio::{ArrayData, Cache, DataSource, Error, NativeField, Provider, SourceTemporal};
 use time::macros::datetime;
 use time::{Duration, OffsetDateTime};
 
@@ -46,7 +46,7 @@ fn discrete_refresh_times_match_the_hourly_cadence() {
         datetime!(2018-11-08 00:00:00 UTC),
         datetime!(2018-11-08 02:00:00 UTC),
     );
-    let loader = DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(LoaderTemporal::new(
+    let loader = DataSource::new("era5", "netcdf", ERA5_TEMPLATE).temporal(SourceTemporal::new(
         datetime!(2018-11-08 00:00:00 UTC),
         Duration::hours(1),
         Duration::days(1),
@@ -69,7 +69,7 @@ fn discrete_refresh_selects_the_right_record_at_each_boundary() {
         datetime!(2018-11-08 00:00:00 UTC),
         datetime!(2018-11-08 02:00:00 UTC),
     );
-    let loader = DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(LoaderTemporal::new(
+    let loader = DataSource::new("era5", "netcdf", ERA5_TEMPLATE).temporal(SourceTemporal::new(
         datetime!(2018-11-08 00:00:00 UTC),
         Duration::hours(1),
         Duration::days(1),
@@ -136,7 +136,7 @@ fn discrete_prefetch_warms_the_window_offline() {
         datetime!(2018-11-08 00:00:00 UTC),
         datetime!(2018-11-08 02:00:00 UTC),
     );
-    let loader = DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(LoaderTemporal::new(
+    let loader = DataSource::new("era5", "netcdf", ERA5_TEMPLATE).temporal(SourceTemporal::new(
         datetime!(2018-11-08 00:00:00 UTC),
         Duration::hours(1),
         Duration::days(1),
@@ -157,8 +157,8 @@ fn discrete_prefetch_warms_the_window_offline() {
 // the corpus blob carries, so hour 1 is the last record in its file (its
 // successor is record 0 of the next file).
 
-fn interp_loader(end: Option<OffsetDateTime>) -> DataLoader {
-    let mut temporal = LoaderTemporal::new(
+fn interp_loader(end: Option<OffsetDateTime>) -> DataSource {
+    let mut temporal = SourceTemporal::new(
         datetime!(2018-11-08 00:00:00 UTC),
         Duration::hours(1),
         Duration::hours(2),
@@ -167,7 +167,7 @@ fn interp_loader(end: Option<OffsetDateTime>) -> DataLoader {
     if let Some(e) = end {
         temporal = temporal.end(e);
     }
-    DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(temporal)
+    DataSource::new("era5", "netcdf", ERA5_TEMPLATE).temporal(temporal)
 }
 
 #[test]
@@ -303,8 +303,8 @@ fn interp_bracket_end_clamp_degenerates() {
 #[test]
 fn interp_rejects_bad_mode() {
     // An unsupported records-per-sample count is a clean error at refresh, not a panic.
-    let loader = DataLoader::new("era5", "netcdf", ERA5_TEMPLATE).temporal(
-        LoaderTemporal::new(
+    let loader = DataSource::new("era5", "netcdf", ERA5_TEMPLATE).temporal(
+        SourceTemporal::new(
             datetime!(2018-11-08 00:00:00 UTC),
             Duration::hours(1),
             Duration::hours(1),
@@ -326,7 +326,7 @@ fn interp_rejects_bad_mode() {
 fn const_materialize_reads_whole_file_and_never_refreshes() {
     // A loader with no temporal block is CONST. Pointed at the same ERA5 blob via
     // a literal URL, materialize() returns the full (un-sliced) native arrays.
-    let loader = DataLoader::new("era5_static", "netcdf", ERA5_URL);
+    let loader = DataSource::new("era5_static", "netcdf", ERA5_URL);
     let mut provider = Provider::new(loader, corpus_cache(), None).unwrap();
 
     let buf = provider.materialize().unwrap();
@@ -354,7 +354,7 @@ fn const_materialize_reads_whole_file_and_never_refreshes() {
 
 #[test]
 fn unknown_format_is_a_clean_error() {
-    let loader = DataLoader::new("mystery", "grib", ERA5_URL); // no grib reader
+    let loader = DataSource::new("mystery", "grib", ERA5_URL); // no grib reader
                                                                // (Provider holds trait objects and isn't Debug, so match rather than unwrap_err.)
     match Provider::new(loader, corpus_cache(), None) {
         Err(Error::UnknownFormat { name }) => assert_eq!(name, "grib"),

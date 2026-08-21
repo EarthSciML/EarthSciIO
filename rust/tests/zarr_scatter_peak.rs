@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    write_zarr_v3, ArrayData, AxisSelect, Cache, DataLoader, OutputSchema, Provider, Selection,
+    write_zarr_v3, ArrayData, AxisSelect, Cache, DataSource, OutputSchema, Provider, Selection,
     WriteCoord, WriteVar,
 };
 use serde_json::{Map, Value};
@@ -149,7 +149,7 @@ fn poison(path: &Path) {
 fn read_conc(store_dir: &Path, cache_dir: &Path, sel: Selection) -> earthsciio::Result<Vec<f64>> {
     let base_url = format!("file://{}", store_dir.display());
     let cache = Arc::new(Cache::builder().data_dir(cache_dir).build().expect("cache"));
-    let loader = DataLoader::new("scatter-peak", "zarr", &base_url)
+    let loader = DataSource::new("scatter-peak", "zarr", &base_url)
         .variables(["conc"])
         .select(sel);
     let mut provider = Provider::new(loader, cache, None).expect("provider");

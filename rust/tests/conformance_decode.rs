@@ -188,7 +188,7 @@ fn decodes_every_corpus_case_to_match_expected() {
 /// The same zip case, decoded through a **`Provider` built from a loader that
 /// DECLARES its decode options** — no caller-configured reader, no custom
 /// registry. This is the path an `.esm` data loader takes (EarthSciAST's
-/// `providers_from_document` builds exactly this `DataLoader`), and it must
+/// `providers_from_document` builds exactly this `DataSource`), and it must
 /// land on the corpus expectation the hand-configured reader above produces.
 #[test]
 fn declared_reader_options_decode_the_zip_case_through_the_provider() {
@@ -216,7 +216,7 @@ fn declared_reader_options_decode_the_zip_case_through_the_provider() {
     }
     assert_eq!(options.len(), 3, "the zip case pins kind + glob + header row");
 
-    let loader = earthsciio::DataLoader::new(
+    let loader = earthsciio::DataSource::new(
         case["loader"].as_str().unwrap(),
         "ff10",
         case["resolved_url"].as_str().unwrap(),
@@ -242,7 +242,7 @@ fn declared_reader_options_decode_the_zip_case_through_the_provider() {
 
     // Without the declared options the same loader hits the header line as a
     // data row — i.e. the options are load-bearing, not decoration.
-    let bare = earthsciio::DataLoader::new("nei2016", "ff10", case["resolved_url"].as_str().unwrap());
+    let bare = earthsciio::DataSource::new("nei2016", "ff10", case["resolved_url"].as_str().unwrap());
     let mut bare = earthsciio::Provider::new(
         bare,
         Arc::new(

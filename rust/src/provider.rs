@@ -48,7 +48,7 @@ pub type Window = (OffsetDateTime, OffsetDateTime);
 /// the granularity of one file (e.g. 1 day) — it drives URL resolution. A file
 /// holds `file_period / frequency` records along `time_dim`.
 #[derive(Debug, Clone)]
-pub struct LoaderTemporal {
+pub struct SourceTemporal {
     /// The loader's epoch — cadence anchors are aligned to this instant.
     pub start: OffsetDateTime,
     /// Exclusive end of available data, if known (open-ended otherwise).
@@ -72,7 +72,7 @@ pub struct LoaderTemporal {
     pub records_per_sample: Option<u32>,
 }
 
-impl LoaderTemporal {
+impl SourceTemporal {
     /// A temporal block with `frequency` cadence and `file_period` files,
     /// anchored at `start`, open-ended, slicing on the `time` dimension.
     pub fn new(start: OffsetDateTime, frequency: Duration, file_period: Duration) -> Self {
@@ -148,7 +148,7 @@ pub const STORE_ACCESS_ENV: &str = "EARTHSCIIO_STORE_ACCESS";
 ///   *deployment* override, because a runner that receives documents it did not
 ///   author has no other way to ask; it is a default, not the decision.
 ///
-/// Precedence is therefore: an explicit [`DataLoader::store_access`] wins; then
+/// Precedence is therefore: an explicit [`DataSource::store_access`] wins; then
 /// [`STORE_ACCESS_ENV`]; then [`Cached`](StoreAccess::Cached).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StoreAccess {
@@ -185,12 +185,12 @@ impl StoreAccess {
     }
 }
 
-/// The minimal parsed `DataLoader` the Provider needs: where the bytes are, how
+/// The minimal parsed `DataSource` the Provider needs: where the bytes are, how
 /// to decode them, which variables to read, and the temporal cadence (absent ⇒
-/// CONST). This is the I/O-relevant projection of the ESM `DataLoader` contract —
+/// CONST). This is the I/O-relevant projection of the ESM `DataSource` contract —
 /// the full contract (units, remap, grid family) lives upstream in ESS.
 #[derive(Debug, Clone)]
-pub struct DataLoader {
+pub struct DataSource {
     /// Loader name (provenance, recorded in the cache manifest).
     pub name: String,
     /// Format-registry key selecting the reader (e.g. `"netcdf"`).
@@ -198,7 +198,7 @@ pub struct DataLoader {
     /// On-disk `file_variable` names to read; empty ⇒ all data variables.
     pub variables: Vec<String>,
     /// Cadence (absent ⇒ CONST/static).
-    pub temporal: Option<LoaderTemporal>,
+    pub temporal: Option<SourceTemporal>,
     /// URL template in `time` format-description syntax (e.g.
     /// `".../era5/[year]/[month]/[year][month][day].nc"`). A template with no
     /// `[` placeholders is a literal URL (the CONST case).
@@ -242,9 +242,9 @@ pub struct DataLoader {
     pub store_options: Vec<(String, String)>,
 }
 
-impl DataLoader {
+impl DataSource {
     /// A loader named `name`, decoded by `format`, resolving `url_template`.
-    /// CONST by default — add [`temporal`](DataLoader::temporal) for cadence.
+    /// CONST by default — add [`temporal`](DataSource::temporal) for cadence.
     pub fn new(
         name: impl Into<String>,
         format: impl Into<String>,
@@ -272,7 +272,7 @@ impl DataLoader {
     }
 
     /// Declare the format-specific decode options (see
-    /// [`DataLoader::reader_options`]). Resolved against the reader when the
+    /// [`DataSource::reader_options`]). Resolved against the reader when the
     /// [`Provider`] is built, so an unrecognised option fails there.
     pub fn reader_options(mut self, options: serde_json::Map<String, serde_json::Value>) -> Self {
         self.reader_options = options;
@@ -293,7 +293,7 @@ impl DataLoader {
     /// keys). Overrides the environment for this loader only — an S3-compatible
     /// endpoint, a region, or credentials / `aws_skip_signature=false` to ask for
     /// a **signed** read. An unsigned public read needs nothing here: see
-    /// [`DataLoader::store_options`](struct.DataLoader.html#structfield.store_options).
+    /// [`DataSource::store_options`](struct.DataSource.html#structfield.store_options).
     pub fn store_options<I, K, V>(mut self, options: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -318,7 +318,7 @@ impl DataLoader {
     }
 
     /// Make the loader DISCRETE with the given cadence.
-    pub fn temporal(mut self, temporal: LoaderTemporal) -> Self {
+    pub fn temporal(mut self, temporal: SourceTemporal) -> Self {
         self.temporal = Some(temporal);
         self
     }
@@ -343,7 +343,7 @@ impl DataLoader {
 /// A loader-bound provider of native-grid arrays, refreshed at the loader's
 /// cadence. See the module-level documentation for the CONST/DISCRETE contract.
 pub struct Provider {
-    loader: DataLoader,
+    loader: DataSource,
     cache: Arc<Cache>,
     window: Option<Window>,
     reader: Arc<dyn Reader>,
@@ -372,14 +372,14 @@ impl Provider {
     /// Bind a provider to `loader`, resolving its format reader from the built-in
     /// [`FormatRegistry`]. Errors with [`Error::UnknownFormat`] if no reader is
     /// registered for the loader's format.
-    pub fn new(loader: DataLoader, cache: Arc<Cache>, window: Option<Window>) -> Result<Self> {
+    pub fn new(loader: DataSource, cache: Arc<Cache>, window: Option<Window>) -> Result<Self> {
         Self::with_formats(loader, cache, window, &FormatRegistry::with_builtins())
     }
 
     /// [`Provider::new`] but resolving the reader from a caller-supplied registry
     /// — the seam that lets a new format plug in without any Provider change.
     pub fn with_formats(
-        loader: DataLoader,
+        loader: DataSource,
         cache: Arc<Cache>,
         window: Option<Window>,
         formats: &FormatRegistry,
@@ -487,7 +487,7 @@ impl Provider {
     }
 
     /// [`materialize`](Self::materialize) with an optional PER-CALL projection
-    /// pushdown that OVERRIDES the loader's baked [`DataLoader::select`] for this
+    /// pushdown that OVERRIDES the loader's baked [`DataSource::select`] for this
     /// call only — the seam a caller (EarthSciAST) uses to push a projection down
     /// at sample time without rebuilding the provider. Mirrors the Julia/Python
     /// per-call `select` override.
@@ -700,7 +700,7 @@ impl Provider {
     // --- internals ----------------------------------------------------------
 
     /// The effective lower bound: the window start clamped to the loader epoch.
-    fn lower_bound(&self, temporal: &LoaderTemporal) -> OffsetDateTime {
+    fn lower_bound(&self, temporal: &SourceTemporal) -> OffsetDateTime {
         match self.window {
             Some((a, _)) if a > temporal.start => a,
             _ => temporal.start,
@@ -741,7 +741,7 @@ impl Provider {
     }
 
     /// Fetch + decode a file into a native dataset under the effective `select`
-    /// (the per-call override, else the loader's baked [`DataLoader::select`]).
+    /// (the per-call override, else the loader's baked [`DataSource::select`]).
     fn read_file(&self, url: String, select: &Selection) -> Result<NativeDataset> {
         // Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
         // select): a Zarr `url` is a directory-like prefix, not a fetchable blob,
@@ -804,7 +804,7 @@ impl Provider {
     /// `[last, last]` bracket with equal timestamps — never an error).
     fn refresh_bracket(
         &mut self,
-        temporal: &LoaderTemporal,
+        temporal: &SourceTemporal,
         anchor: OffsetDateTime,
         freq_s: i64,
         file_s: i64,
@@ -890,7 +890,7 @@ impl Provider {
     /// [`refresh_bracket`](Self::refresh_bracket), but returns owned buffers.
     fn bracket_peek(
         &self,
-        temporal: &LoaderTemporal,
+        temporal: &SourceTemporal,
         anchor: OffsetDateTime,
         freq_s: i64,
         file_s: i64,

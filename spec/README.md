@@ -11,7 +11,7 @@ Cache-format version: **`v1`**. Bumping `v1/` invalidates every cached blob.
 
 ## What EarthSciIO is (the boundary)
 
-EarthSciIO is the **impure provider** between *"a parsed `DataLoader` contract +
+EarthSciIO is the **impure provider** between *"a parsed `DataSource` contract +
 a target time/grid"* and *"native-grid arrays in memory"*. It owns: URL
 resolution at a time, download + content-addressed cache, and read → native
 arrays. It does **not** own the contract (ESM), the schema/types (ESS), regrid /

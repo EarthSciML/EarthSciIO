@@ -21,7 +21,7 @@ pytest.importorskip("zarr")  # the reader is now built on zarr-python 3.x
 from earthsciio import (
     Cache,
     CSVReader,
-    DataLoader,
+    DataSource,
     FF10Reader,
     Provider,
     cache_key,
@@ -255,7 +255,7 @@ def test_zarr_registered_active_and_store_backed():
 def test_provider_routes_store_backed(tmp_path):
     _mini_store(tmp_path)
     cache = Cache(root=tmp_path, offline=True, verify=True)
-    loader = DataLoader(
+    loader = DataSource(
         name="isrm", format="zarr", url=BASE, variables=["field3d"],
         reader_kwargs={"select": {"axes": [{"indices": [1]}, {"indices": [1, 4]}, "all"]}},
     )
@@ -349,7 +349,7 @@ def test_per_call_select_pushes_down_and_fetches_only_needed_chunks(tmp_path):
     _sr_store(tmp_path)
     store = _CountingStore(LocalStore(tmp_path))
     cache = Cache(store, offline=True, verify=False)
-    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    p = Provider(DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
 
     # layer 1, sources {5,12}∈chunk0 and {305,340}∈chunk3, all receptors.
     sel = {"axes": [{"indices": [1]}, {"indices": [5, 12, 305, 340]}, "all"]}
@@ -382,7 +382,7 @@ def test_per_call_select_preserves_permuted_order(tmp_path):
     sorted — the load-bearing ordering contract for the 3-way conformance case."""
     _sr_store(tmp_path)
     cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
-    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    p = Provider(DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
     sel = {"axes": [{"indices": [0]}, {"indices": [340, 5, 305, 12]}, "all"]}
     f = p.materialize(select=sel).variables["sr"]
     # Order preserved exactly (a reader that sorted would give 5,12,305,340).
@@ -394,7 +394,7 @@ def test_per_call_select_overrides_baked(tmp_path):
     cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
     baked = {"axes": [{"indices": [0]}, {"indices": [7]}, "all"]}
     p = Provider(
-        DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"],
+        DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"],
                    reader_kwargs={"select": baked}),
         cache,
     )
@@ -413,7 +413,7 @@ def test_array_shape_reads_only_zarray(tmp_path):
     _sr_store(tmp_path)
     store = _CountingStore(LocalStore(tmp_path))
     cache = Cache(store, offline=True, verify=False)
-    p = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    p = Provider(DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
 
     assert p.array_shape("sr") == (3, 500, 1)
     # array_shape reads ONLY metadata — never a chunk object. (zarr-python may
@@ -428,13 +428,13 @@ def test_supports_selection_and_array_shape_capability_surface(tmp_path):
     cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
 
     # store-backed zarr provider CAN push down
-    pz = Provider(DataLoader(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
+    pz = Provider(DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"]), cache)
     assert supports_selection(ZarrReader()) is True
     assert pz.supports_selection is True
 
     # whole-file readers cannot; array_shape is None (shape unknown without a read)
     for fmt in ("csv", "ff10", "netcdf"):
-        pw = Provider(DataLoader(name="x", format=fmt, url="file:///dev/null"), cache)
+        pw = Provider(DataSource(name="x", format=fmt, url="file:///dev/null"), cache)
         assert pw.supports_selection is False
         assert pw.array_shape("anything") is None
     assert supports_selection(CSVReader()) is False
@@ -443,7 +443,7 @@ def test_supports_selection_and_array_shape_capability_surface(tmp_path):
 
 def test_per_call_select_on_non_store_reader_raises(tmp_path):
     cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
-    pw = Provider(DataLoader(name="x", format="csv", url="file:///dev/null"), cache)
+    pw = Provider(DataSource(name="x", format="csv", url="file:///dev/null"), cache)
     # raised before any fetch — the reader can't honour a projection pushdown
     with pytest.raises(ValueError):
         pw.materialize(select={"axes": ["all"]})

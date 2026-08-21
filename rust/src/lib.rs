@@ -150,6 +150,22 @@ pub use manifest::{Manifest, MANIFEST_SCHEMA};
 #[cfg(not(target_arch = "wasm32"))]
 pub use offline::{is_offline, OFFLINE_ENV};
 #[cfg(not(target_arch = "wasm32"))]
-pub use provider::{DataLoader, LoaderTemporal, Provider, StoreAccess, Window, STORE_ACCESS_ENV};
+pub use provider::{DataSource, Provider, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV};
+
+/// The 0.1.1 spelling of [`DataSource`]. From `.esm` 1.0.0 the declaration is a
+/// `data_sources` entry, not a `data_loaders` one, and its consumers spell it
+/// `DataSource`; this alias keeps 0.1.1 source-compatible and is dropped in
+/// 0.2.0.
+#[cfg(not(target_arch = "wasm32"))]
+#[deprecated(
+    since = "0.1.2",
+    note = "renamed to `DataSource` (.esm 1.0.0 `data_sources`)"
+)]
+pub type DataLoader = DataSource;
+
+/// The 0.1.1 spelling of [`SourceTemporal`]. See [`DataLoader`].
+#[cfg(not(target_arch = "wasm32"))]
+#[deprecated(since = "0.1.2", note = "renamed to `SourceTemporal`")]
+pub type LoaderTemporal = SourceTemporal;
 #[cfg(not(target_arch = "wasm32"))]
 pub use validate::{CacheDecision, Temporal};

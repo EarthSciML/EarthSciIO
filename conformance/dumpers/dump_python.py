@@ -55,7 +55,7 @@ REPO_ROOT = HERE.parent.parent
 # harness driver can invoke this from anywhere — mirrors verify.py's offline ethos.
 sys.path.insert(0, str(REPO_ROOT))
 
-from earthsciio import Cache, DataLoader, Provider  # noqa: E402
+from earthsciio import Cache, DataSource, Provider  # noqa: E402
 from earthsciio.registry import format_registry  # noqa: E402
 
 
@@ -149,7 +149,7 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
         variables = list(case["variables"])
         reader_kwargs["select"] = case.get("select")
 
-    loader = DataLoader(
+    loader = DataSource(
         name=case["loader"],
         format=fmt,
         url=case["resolved_url"],

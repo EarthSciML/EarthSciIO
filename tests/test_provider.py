@@ -22,8 +22,8 @@ import pytest
 from earthsciio import (
     BackendNotRegistered,
     Cache,
-    DataLoader,
-    LoaderTemporal,
+    DataSource,
+    SourceTemporal,
     Provider,
     UnknownReaderOption,
     format_registry,
@@ -85,7 +85,7 @@ def _match(field, expected_nested) -> bool:
 
 def test_const_provider_materializes_oracle_arrays(cache):
     case = _era5_case()
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL), cache)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
     assert p.is_const
     assert p.refresh_times() == []  # CONST => never refreshes
 
@@ -104,7 +104,7 @@ def test_const_provider_materializes_oracle_arrays(cache):
 
 
 def test_const_refresh_returns_constant_data(cache):
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL), cache)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
     a = p.refresh(_utc(0))  # CONST: refresh is the constant data (materialize once)
     b = p.refresh(_utc(99))
     assert np.array_equal(a["sp"].data, b["sp"].data)
@@ -116,10 +116,10 @@ def test_const_refresh_returns_constant_data(cache):
 # --------------------------------------------------------------------------- #
 
 
-def _discrete_internal_axis() -> DataLoader:
+def _discrete_internal_axis() -> DataSource:
     # one file holds the day's hourly records; cadence slices the internal axis
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=2 * HOUR)
-    return DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=2 * HOUR)
+    return DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
 
 
 def test_discrete_refresh_times_match_cadence(cache):
@@ -168,10 +168,10 @@ def test_discrete_refresh_is_idempotent_within_interval(cache):
 # --------------------------------------------------------------------------- #
 
 
-def _interp_loader(end=None, file_period=2 * HOUR) -> DataLoader:
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=file_period,
+def _interp_loader(end=None, file_period=2 * HOUR) -> DataSource:
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=file_period,
                               end=end, records_per_sample=2)
-    return DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal)
+    return DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
 
 
 def test_interp_bracket_returns_two_records_with_time_axis(cache):
@@ -222,7 +222,7 @@ def test_interp_bracket_end_clamp_degenerates(cache):
 
 def test_interp_rejects_bad_records_per_sample():
     with pytest.raises(ValueError):
-        LoaderTemporal(start=START, frequency=HOUR, file_period=HOUR, records_per_sample=3)
+        SourceTemporal(start=START, frequency=HOUR, file_period=HOUR, records_per_sample=3)
 
 
 # --------------------------------------------------------------------------- #
@@ -231,22 +231,22 @@ def test_interp_rejects_bad_records_per_sample():
 
 
 def test_refresh_times_bounded_by_temporal_end_without_window(cache):
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=2 * HOUR, end=_utc(3))
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=2 * HOUR, end=_utc(3))
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
     assert p.refresh_times() == [_utc(0), _utc(1), _utc(2)]
 
 
 def test_refresh_times_empty_when_unbounded(cache):
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=2 * HOUR)
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=2 * HOUR)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
     assert p.refresh_times() == []  # no window, no end => no enumerable schedule
 
 
 def test_refresh_times_window_start_clamped_to_epoch(cache):
     # window starts mid-cadence; the first tstop is the aligned anchor >= start
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=DAY)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
     p = Provider(
-        DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal),
+        DataSource("era5", "netcdf", ERA5_URL, temporal=temporal),
         cache,
         window=(START + dt.timedelta(minutes=30), _utc(3)),
     )
@@ -259,20 +259,20 @@ def test_refresh_times_window_start_clamped_to_epoch(cache):
 
 
 def test_strftime_url_template_resolves_per_anchor():
-    loader = DataLoader("era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc")
+    loader = DataSource("era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc")
     assert loader.resolve_url(START) == ERA5_URL
 
 
 def test_prefetch_const_warms_single_file(cache):
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL), cache)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
     entries = p.prefetch()
     assert len(entries) == 1
     assert entries[0].status == "hit"  # offline corpus hit, no decode
 
 
 def test_prefetch_strftime_window_hits_corpus(cache):
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=DAY)
-    loader = DataLoader("era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc",
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    loader = DataSource("era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc",
                         temporal=temporal)
     p = Provider(loader, cache, window=(START, START + DAY))
     entries = p.prefetch()
@@ -286,8 +286,8 @@ def test_prefetch_enumerates_file_anchors_and_dedups(cache):
         seen.append(anchor)
         return ERA5_URL  # every file anchor collapses to the one corpus blob
 
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=HOUR)
-    p = Provider(DataLoader("era5", "netcdf", url_for, temporal=temporal), cache,
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=HOUR)
+    p = Provider(DataSource("era5", "netcdf", url_for, temporal=temporal), cache,
                  window=(_utc(0), _utc(2)))
     entries = p.prefetch()
     assert seen == [_utc(0), _utc(1)]  # one anchor per file period across the window
@@ -296,8 +296,8 @@ def test_prefetch_enumerates_file_anchors_and_dedups(cache):
 
 
 def test_prefetch_unbounded_raises(cache):
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=HOUR)
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=HOUR)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
     with pytest.raises(ValueError):
         p.prefetch()  # no window, no temporal.end
 
@@ -308,7 +308,7 @@ def test_prefetch_unbounded_raises(cache):
 
 
 def test_csv_provider_with_variable_selection(cache):
-    loader = DataLoader(
+    loader = DataSource(
         "openaq",
         "csv",
         OPENAQ_URL,
@@ -329,7 +329,7 @@ def test_csv_provider_with_variable_selection(cache):
 
 def test_unknown_format_raises_at_construction(cache):
     with pytest.raises(BackendNotRegistered):
-        Provider(DataLoader("x", "nonesuch", ERA5_URL), cache)
+        Provider(DataSource("x", "nonesuch", ERA5_URL), cache)
 
 
 # --------------------------------------------------------------------------- #
@@ -344,7 +344,7 @@ def test_unrecognised_reader_option_raises_at_construction(cache):
     """A mis-typed decode option must not be swallowed by the reader's ``**_``
     catch-all: an ignored option reads back much later as an empty selection or
     a mis-parsed table, arbitrarily far from its cause."""
-    loader = DataLoader(
+    loader = DataSource(
         "openaq",
         "csv",
         OPENAQ_URL,
@@ -363,7 +363,7 @@ def test_recognised_reader_options_are_the_reader_signature(cache):
     assert {"numeric_columns", "delimiter", "header_row", "select"} <= accepted
     assert "handle" not in accepted and "variables" not in accepted
     # An empty option set never errors, whatever the reader accepts.
-    Provider(DataLoader("openaq", "csv", OPENAQ_URL), cache)
+    Provider(DataSource("openaq", "csv", OPENAQ_URL), cache)
 
 
 def test_a_store_backed_reader_declares_its_options_on_read_store():
@@ -376,9 +376,9 @@ def test_a_store_backed_reader_declares_its_options_on_read_store():
 
 def test_loader_temporal_rejects_nonpositive_cadence():
     with pytest.raises(ValueError):
-        LoaderTemporal(start=START, frequency=dt.timedelta(0), file_period=HOUR)
+        SourceTemporal(start=START, frequency=dt.timedelta(0), file_period=HOUR)
     with pytest.raises(ValueError):
-        LoaderTemporal(start=START, frequency=HOUR, file_period=dt.timedelta(0))
+        SourceTemporal(start=START, frequency=HOUR, file_period=dt.timedelta(0))
 
 
 def test_refresh_before_start_raises(cache):
@@ -389,13 +389,13 @@ def test_refresh_before_start_raises(cache):
 
 def test_refresh_record_out_of_range_raises(cache):
     # file_period=DAY claims 24 hourly records, but the fixture file holds 2
-    temporal = LoaderTemporal(start=START, frequency=HOUR, file_period=DAY)
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
     with pytest.raises(IndexError):
         p.refresh(_utc(5))  # record 5 absent from the 2-record file
 
 
 def test_absent_variable_raises(cache):
-    p = Provider(DataLoader("era5", "netcdf", ERA5_URL, variables=["nope"]), cache)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, variables=["nope"]), cache)
     with pytest.raises(KeyError):
         p.materialize()

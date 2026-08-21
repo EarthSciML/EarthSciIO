@@ -217,7 +217,7 @@ fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
 /// * `aws_skip_signature`, either polarity, from **any** source
 ///   ([`S3_SIGNING_KEYS`]). Nothing injects it, so `=false` is an unambiguous
 ///   "sign, I mean it" and `=true` an unambiguous "do not".
-/// * A credential option the **caller passed** — [`crate::DataLoader::store_options`],
+/// * A credential option the **caller passed** — [`crate::DataSource::store_options`],
 ///   or the `options` argument of a `*_with_options` entry point. That is a
 ///   document or a program describing this read, not an ambient variable.
 /// * Static keys in the environment **next to an endpoint override**
@@ -247,7 +247,7 @@ fn has_any(options: &[(String, String)], keys: &[&str]) -> bool {
 /// that to reach its own private bucket through this path, the two ways to say
 /// so are `AWS_SKIP_SIGNATURE=false` in the same environment — one variable,
 /// no code — or `aws_skip_signature=false` on the loader
-/// ([`crate::DataLoader::store_options`]) when only some of its loaders are
+/// ([`crate::DataSource::store_options`]) when only some of its loaders are
 /// private. Both keep authenticating with exactly the credentials the
 /// environment already provides; only the *decision* moved.
 ///

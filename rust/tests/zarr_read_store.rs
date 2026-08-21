@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    cache_key, ArrayData, AxisSelect, Cache, DataLoader, Provider, Selection,
+    cache_key, ArrayData, AxisSelect, Cache, DataSource, Provider, Selection,
 };
 
 const BASE: &str = "s3://earthsci-fixtures/isrm-mini.zarr";
@@ -66,7 +66,7 @@ fn read_store_is_lazy_never_touching_unselected_chunks() {
         .build()
         .unwrap();
 
-    let loader = DataLoader::new("isrm", "zarr", BASE)
+    let loader = DataSource::new("isrm", "zarr", BASE)
         .variables(["field3d", "pop1d"])
         .select(Selection::Orthogonal(vec![
             AxisSelect::Indices(vec![1]),
@@ -106,7 +106,7 @@ fn over_selection_hits_poison_and_errors() {
         .verify_on_read(false)
         .build()
         .unwrap();
-    let loader = DataLoader::new("isrm", "zarr", BASE)
+    let loader = DataSource::new("isrm", "zarr", BASE)
         .variables(["field3d"])
         .select(Selection::Orthogonal(vec![
             AxisSelect::Indices(vec![1]),
@@ -146,7 +146,7 @@ fn per_call_select_preserves_permuted_order_and_is_lazy() {
         .unwrap();
 
     // Baked select defaults to All; the PER-CALL override drives the projection.
-    let loader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]);
+    let loader = DataSource::new("isrm", "zarr", PBASE).variables(["sr"]);
     let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
 
     let sel = Selection::Orthogonal(vec![
@@ -184,7 +184,7 @@ fn per_call_select_overrides_baked_and_leaves_it_intact() {
         AxisSelect::Indices(vec![2]),
         AxisSelect::All,
     ]);
-    let loader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]).select(baked);
+    let loader = DataSource::new("isrm", "zarr", PBASE).variables(["sr"]).select(baked);
     let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
 
     // No per-call select ⇒ the baked select applies: source [2] -> [200,201,202,203].
@@ -228,14 +228,14 @@ fn supports_selection_and_array_shape_capability_surface() {
     );
 
     // store-backed zarr provider CAN push down; array_shape reads ONLY .zarray.
-    let zloader = DataLoader::new("isrm", "zarr", PBASE).variables(["sr"]);
+    let zloader = DataSource::new("isrm", "zarr", PBASE).variables(["sr"]);
     let zprovider = Provider::new(zloader, cache.clone(), None).unwrap();
     assert!(zprovider.supports_selection());
     assert_eq!(zprovider.array_shape("sr").unwrap(), Some(vec![3, 50, 4]));
 
     // whole-file (netcdf) reader: no pushdown; shape unknown without a read.
     let nloader =
-        DataLoader::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
+        DataSource::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
     let nprovider = Provider::new(nloader, cache, None).unwrap();
     assert!(!nprovider.supports_selection());
     assert_eq!(nprovider.array_shape("t2m").unwrap(), None);
@@ -250,7 +250,7 @@ fn per_call_select_on_whole_file_reader_errors() {
         .build()
         .unwrap();
     let loader =
-        DataLoader::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
+        DataSource::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
     let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
     // A per-call projection on a reader that can't honour it is an error (pre-fetch).
     let sel = Selection::Orthogonal(vec![AxisSelect::All]);

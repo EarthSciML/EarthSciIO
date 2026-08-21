@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, AxisSelect, Cache, Coord, DType, DataLoader, Ff10Reader, FormatRegistry,
+    ArrayData, AxisSelect, Cache, Coord, DType, DataSource, Ff10Reader, FormatRegistry,
     NativeField, Provider, Selection,
 };
 use serde_json::{json, Map, Value};
@@ -169,7 +169,7 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
         .expect("offline cache over the corpus");
 
     let url = case["resolved_url"].as_str().unwrap();
-    let mut loader = DataLoader::new(case["loader"].as_str().unwrap(), fmt, url);
+    let mut loader = DataSource::new(case["loader"].as_str().unwrap(), fmt, url);
     // Store-backed (zarr): name the arrays (no .zmetadata to enumerate) + carry
     // the orthogonal selection that drives lazy chunk fetch.
     if formats.get(fmt).map(|r| r.store_backed()).unwrap_or(false) {

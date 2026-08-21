@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use earthsciio::{
-    write_zarr_v3, ArrayData, Cache, DataLoader, NativeField, OutputSchema, Provider, WriteCoord,
+    write_zarr_v3, ArrayData, Cache, DataSource, NativeField, OutputSchema, Provider, WriteCoord,
     WriteVar,
 };
 use serde_json::{Map, Value};
@@ -112,7 +112,7 @@ fn write_then_read_roundtrip_within_tolerance() {
     // --- read back through the new ZarrReader (Provider over file://) -------- //
     let base_url = format!("file://{}", store_dir.display());
     let cache = Arc::new(Cache::builder().data_dir(&cache_dir).build().expect("cache"));
-    let loader = DataLoader::new("roundtrip", "zarr", &base_url)
+    let loader = DataSource::new("roundtrip", "zarr", &base_url)
         .variables(["conc", "time", "x", "y"]);
     let mut provider = Provider::new(loader, cache, None).expect("provider");
     let buffers = provider.materialize().expect("materialize written store");
@@ -299,7 +299,7 @@ fn wasm_profile_write_then_read_roundtrip_within_tolerance() {
     let base_url = format!("file://{}", store_dir.display());
     let cache = Arc::new(Cache::builder().data_dir(&cache_dir).build().expect("cache"));
     let loader =
-        DataLoader::new("wasm-roundtrip", "zarr", &base_url).variables(["conc", "time", "x", "y"]);
+        DataSource::new("wasm-roundtrip", "zarr", &base_url).variables(["conc", "time", "x", "y"]);
     let mut provider = Provider::new(loader, cache, None).expect("provider");
     let buffers = provider.materialize().expect("materialize wasm-profile store");
 

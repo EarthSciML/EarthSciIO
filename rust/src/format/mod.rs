@@ -365,7 +365,7 @@ pub trait Reader: Send + Sync {
     }
 
     /// A copy of this reader configured by the loader's declared
-    /// [`DataLoader::reader_options`](crate::DataLoader::reader_options) — the
+    /// [`DataSource::reader_options`](crate::DataSource::reader_options) — the
     /// Rust spelling of the Python/Julia `reader_kwargs`, and the seam that
     /// lets a DOCUMENT (rather than a caller with a hand-built registry) say
     /// how a format is decoded: the FF10 zip member glob, the asserted header

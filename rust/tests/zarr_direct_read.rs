@@ -33,7 +33,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, AxisSelect, Cache, DataLoader, Provider, Selection, StoreAccess, STORE_ACCESS_ENV,
+    ArrayData, AxisSelect, Cache, DataSource, Provider, Selection, StoreAccess, STORE_ACCESS_ENV,
 };
 
 /// Total bytes of every regular file under `dir` (absent dir ⇒ 0). This is the
@@ -145,7 +145,7 @@ fn read_with(url: &str, cache_root: &Path, access: StoreAccess) -> Vec<f64> {
             .build()
             .expect("build cache"),
     );
-    let loader = DataLoader::new("ISRM_SR", "zarr", url)
+    let loader = DataSource::new("ISRM_SR", "zarr", url)
         .variables([VAR])
         .select(gated_selection())
         .store_access(access);
@@ -253,7 +253,7 @@ fn the_default_is_still_cached() {
             .expect("build cache"),
     );
     // No `.store_access(..)` call at all — the pre-existing construction.
-    let loader = DataLoader::new("ISRM_SR", "zarr", &url)
+    let loader = DataSource::new("ISRM_SR", "zarr", &url)
         .variables([VAR])
         .select(gated_selection());
     let mut provider = Provider::new(loader, cache, None).expect("build provider");
@@ -280,7 +280,7 @@ fn env_sets_the_default_but_the_loader_wins() {
     let _lock = STORE_ACCESS_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let base = DataLoader::new("L", "zarr", "file:///nonexistent.zarr");
+    let base = DataSource::new("L", "zarr", "file:///nonexistent.zarr");
 
     std::env::set_var(STORE_ACCESS_ENV, "direct");
     assert_eq!(StoreAccess::from_env(), StoreAccess::Direct);
@@ -343,7 +343,7 @@ fn direct_read_tolerates_the_zarr_python_v2_metadata_quirk() {
             .build()
             .expect("build cache"),
     );
-    let loader = DataLoader::new("L", "zarr", format!("file://{}", store.display()))
+    let loader = DataSource::new("L", "zarr", format!("file://{}", store.display()))
         .variables([VAR])
         .store_access(StoreAccess::Direct);
     let mut provider = Provider::new(loader, cache, None).expect("provider");
@@ -370,7 +370,7 @@ fn array_shape_probe_works_directly_and_writes_nothing() {
             .build()
             .expect("build cache"),
     );
-    let loader = DataLoader::new("L", "zarr", &url)
+    let loader = DataSource::new("L", "zarr", &url)
         .variables([VAR])
         .store_access(StoreAccess::Direct);
     let provider = Provider::new(loader, cache, None).expect("provider");
@@ -417,7 +417,7 @@ fn isrm_one_chunk() -> Selection {
 /// unsigned — whatever the process environment happens to be carrying.
 fn read_one_isrm_chunk(access: StoreAccess, root: &Path) -> (f64, u64, std::time::Duration) {
     let cache = Arc::new(Cache::builder().data_dir(root).build().expect("cache"));
-    let loader = DataLoader::new("ISRM_SR", "zarr", ISRM_URL)
+    let loader = DataSource::new("ISRM_SR", "zarr", ISRM_URL)
         .variables([ISRM_SR])
         .select(isrm_one_chunk())
         .store_access(access);

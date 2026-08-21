@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use earthsciio::format::{AxisSelect, Selection};
-use earthsciio::{Cache, DataLoader, Error, Provider};
+use earthsciio::{Cache, DataSource, Error, Provider};
 
 /// An UNCOMPRESSED Zarr **v2** array: `.zarray` + `.zattrs` + raw LE f64 chunks,
 /// and deliberately NO `zarr.json`.
@@ -93,7 +93,7 @@ fn online_cache(tmp: &Path) -> Arc<Cache> {
 fn v2_store_without_zarr_json_is_readable_online() {
     let tmp = tempfile::tempdir().expect("tmpdir");
     let base = fixture(tmp.path());
-    let loader = DataLoader::new("mini", "zarr", base).variables(["field"]);
+    let loader = DataSource::new("mini", "zarr", base).variables(["field"]);
     let mut p = Provider::new(loader, online_cache(tmp.path()), None).expect("provider");
 
     let fields = p.materialize().expect("a v2 store must open online");
@@ -105,7 +105,7 @@ fn v2_store_without_zarr_json_is_readable_online() {
 fn v2_selection_still_pushes_down_online() {
     let tmp = tempfile::tempdir().expect("tmpdir");
     let base = fixture(tmp.path());
-    let loader = DataLoader::new("mini", "zarr", base).variables(["field"]);
+    let loader = DataSource::new("mini", "zarr", base).variables(["field"]);
     let mut p = Provider::new(loader, online_cache(tmp.path()), None).expect("provider");
 
     let sel = Selection::Orthogonal(vec![AxisSelect::Indices(vec![0, 2]), AxisSelect::All]);
@@ -119,7 +119,7 @@ fn v2_selection_still_pushes_down_online() {
 fn array_shape_reads_v2_metadata_online() {
     let tmp = tempfile::tempdir().expect("tmpdir");
     let base = fixture(tmp.path());
-    let loader = DataLoader::new("mini", "zarr", base).variables(["field"]);
+    let loader = DataSource::new("mini", "zarr", base).variables(["field"]);
     let p = Provider::new(loader, online_cache(tmp.path()), None).expect("provider");
 
     assert_eq!(p.array_shape("field").expect("array_shape"), Some(vec![3, 4]));

@@ -28,7 +28,7 @@
 //! crosscheck path.
 //!
 //! A zipped input is configured **by the loader**:
-//! [`DataLoader::reader_options`](crate::DataLoader::reader_options) —
+//! [`DataSource::reader_options`](crate::DataSource::reader_options) —
 //! `{"member_glob": "*egu*", "skip_header_row": true}` — reaches this reader
 //! through [`Reader::configured`], which is the Rust spelling of the
 //! Python/Julia `reader_kwargs`. So an `.esm` document that declares the glob

@@ -1,5 +1,5 @@
 """The cadence-aware **Provider** (component (b)) — the sanctioned impure I/O
-boundary for one ESS ``DataLoader`` node.
+boundary for one ESS ``DataSource`` node.
 
 A :class:`Provider` is bound to one loader and created once per simulation. It
 resolves a URL (per cadence anchor, for a time-varying source), fetches it
@@ -49,7 +49,8 @@ from .errors import UnknownReaderOption
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
 
-__all__ = ["LoaderTemporal", "DataLoader", "Provider", "Window"]
+__all__ = ["SourceTemporal", "DataSource", "Provider", "Window",
+           "LoaderTemporal", "DataLoader"]
 
 #: A run window ``(start, end)`` — half-open ``[start, end)``.
 Window = Tuple[_dt.datetime, _dt.datetime]
@@ -72,7 +73,7 @@ def _snap_down(start: _dt.datetime, t: _dt.datetime, step: _dt.timedelta) -> _dt
 
 
 @dataclass(frozen=True)
-class LoaderTemporal:
+class SourceTemporal:
     """The temporal cadence of a DISCRETE loader (absent ⇒ CONST).
 
     ``frequency`` is the cadence step (e.g. 1 hour for ERA5) — it drives the
@@ -114,8 +115,8 @@ class LoaderTemporal:
 
 
 @dataclass
-class DataLoader:
-    """The I/O-relevant projection of an ESS ``DataLoader`` the Provider needs.
+class DataSource:
+    """The I/O-relevant projection of an ESS ``DataSource`` the Provider needs.
 
     The full ESM contract (units, variable remap, grid family) lives upstream in
     ESS; this is only what resolves bytes and decodes them.
@@ -148,14 +149,14 @@ class DataLoader:
     format: str
     url: UrlSpec
     variables: Sequence[str] = ()
-    temporal: Optional[LoaderTemporal] = None
+    temporal: Optional[SourceTemporal] = None
     mirrors: Sequence[str] = ()
     auth_realm: Optional[str] = None
     reader_kwargs: Dict[str, object] = field(default_factory=dict)
 
     @property
     def is_const(self) -> bool:
-        """True if the loader is time-invariant (no :class:`LoaderTemporal`)."""
+        """True if the loader is time-invariant (no :class:`SourceTemporal`)."""
         return self.temporal is None
 
     def resolve_url(self, anchor: _dt.datetime) -> str:
@@ -208,7 +209,7 @@ def reader_option_names(reader: Any) -> Set[str]:
     }
 
 
-def check_reader_options(reader: Any, loader: "DataLoader") -> None:
+def check_reader_options(reader: Any, loader: "DataSource") -> None:
     """Reject a ``reader_kwargs`` key the bound ``reader`` does not recognise.
 
     Called once, when the :class:`Provider` is built, so a mis-typed decode
@@ -232,7 +233,7 @@ class Provider:
     Parameters
     ----------
     loader:
-        The :class:`DataLoader` this provider serves.
+        The :class:`DataSource` this provider serves.
     cache:
         The content-addressed :class:`~earthsciio.cache.Cache` (component (a)).
     window:
@@ -249,7 +250,7 @@ class Provider:
 
     def __init__(
         self,
-        loader: DataLoader,
+        loader: DataSource,
         cache: Cache,
         window: Optional[Window] = None,
         *,
@@ -436,7 +437,7 @@ class Provider:
         if upper is None:
             raise ValueError(
                 "prefetch needs a bounded window: pass window=(start, end) or set "
-                "LoaderTemporal.end"
+                "SourceTemporal.end"
             )
         start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
         entries: List[CacheEntry] = []
@@ -519,7 +520,7 @@ class Provider:
             self._files.move_to_end(file_anchor)
         return ds
 
-    def _refresh_bracket(self, temporal: LoaderTemporal,
+    def _refresh_bracket(self, temporal: SourceTemporal,
                          anchor: _dt.datetime,
                          select: Optional[Any] = None) -> NativeDataset:
         """Return the two records bracketing ``anchor`` (floor + successor) with
@@ -720,3 +721,11 @@ def _record_index(file_ds: NativeDataset, temporal: Any, anchor: _dt.datetime,
                 if idx is not None:
                     return int(idx)
     return (anchor - file_anchor) // temporal.frequency
+
+
+# --- 0.1.1 compatibility -------------------------------------------------
+# From `.esm` 1.0.0 the declaration is a `data_sources` entry, not a
+# `data_loaders` one, and the consumers spell it `DataSource`. These aliases
+# keep 0.1.1 source-compatible; they will be dropped in 0.2.0.
+DataLoader = DataSource
+LoaderTemporal = SourceTemporal

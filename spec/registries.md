@@ -93,8 +93,8 @@ NativeField = { dtype, dims: [string], shape: [int], data, fill_value? }
 ### 2.1 Reader options (`reader_kwargs`)
 
 A loader carries **format-specific decode options** alongside its format name:
-Python/Julia spell them `reader_kwargs` on the `DataLoader` and splat them into
-`read_native`; Rust spells them `DataLoader.reader_options` and resolves them
+Python/Julia spell them `reader_kwargs` on the `DataSource` and splat them into
+`read_native`; Rust spells them `DataSource.reader_options` and resolves them
 once, at Provider construction, through `Reader::configured` (its trait method
 signature takes no kwargs, so a *configured reader instance* is the Rust idiom).
 Either way the meaning is one thing:
