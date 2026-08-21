@@ -100,11 +100,21 @@ decided in this order (first applicable wins):
 
 1. **Content hash** — if a loader-declared checksum exists (none today; future
    `source.checksums` schema field), verify `sha256(blob)` against it. Strongest.
-2. **Conditional GET** — if `etag`/`last_modified` are stored, revalidate with
+2. **Declared immutability** — a static loader (no `temporal`) or a closed past
+   period (e.g. `file_period:P1D` for a past date) cannot change, so it is a hit
+   with **no network access at all**. An implementation MUST NOT revalidate one.
+3. **Conditional GET** — if `etag`/`last_modified` are stored, revalidate with
    `If-None-Match` / `If-Modified-Since`; `304 Not Modified` ⇒ valid, reuse.
-3. **TTL from `temporal`** — a closed past period (e.g. `file_period:P1D` for a
-   past date) is immutable ⇒ infinite TTL; a current/incomplete period ⇒ short
-   TTL. Static loaders (no `temporal`) are immutable once fetched.
+4. **TTL from `temporal`** — a current/incomplete period ⇒ short TTL.
+
+Rules 2 and 3 were previously the other way round, on the reasoning that
+validators beat heuristic freshness. They do beat rule 4, which is a heuristic —
+but rule 2 is a *declaration*, and a conditional GET against an immutable source
+can only ever answer "unchanged". The old order also made rule 2 **unreachable
+in practice**: S3 returns an ETag on every object, so every warm cache hit
+against an S3-backed store paid a round-trip to learn nothing. Measured on a
+596,444-cell zarr store that cost 85.9 ms per chunk against a 0.078 ms local
+read, and dominated the wall clock of runs whose data was already on disk.
 
 In **offline mode** (see [offline-mode.md](offline-mode.md)) none of the network
 steps run: presence + stored `sha256_content` is the only check.

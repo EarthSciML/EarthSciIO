@@ -97,11 +97,25 @@ pub fn decide_at(
             CacheDecision::Miss
         };
     }
-    // 2. Conditional validators ⇒ revalidate over the network.
+    // 2. Declared immutability. A static or closed-period source cannot change,
+    //    so a conditional GET can only ever answer "unchanged" — a network
+    //    round-trip whose result is known in advance. This MUST stay above rule
+    //    3: S3 returns an ETag on EVERY object, so with the validators first
+    //    this arm is unreachable for any S3-backed store and every warm cache
+    //    hit pays a round-trip to be told nothing. Measured on the ISRM store,
+    //    85.9 ms/chunk before against a 0.078 ms raw file read.
+    if matches!(
+        temporal,
+        None | Some(Temporal::Static) | Some(Temporal::ClosedPeriod)
+    ) {
+        return CacheDecision::Hit;
+    }
+    // 3. Conditional validators ⇒ revalidate over the network. Validators beat
+    //    the TTL HEURISTIC below, but not the DECLARATION above.
     if manifest.etag.is_some() || manifest.last_modified.is_some() {
         return CacheDecision::Revalidate;
     }
-    // 3. TTL from temporal (no validators present).
+    // 4. TTL from temporal (incomplete period, no validators present).
     match temporal {
         None | Some(Temporal::Static) | Some(Temporal::ClosedPeriod) => CacheDecision::Hit,
         Some(t @ Temporal::Incomplete { .. }) => {
@@ -143,11 +157,35 @@ mod tests {
         assert_eq!(decide(&m, None, Some("deadbeef")), CacheDecision::Miss);
     }
 
+    /// Rule 2 beats rule 3 — the regression guard for the ordering fix.
+    ///
+    /// S3 returns an ETag on EVERY object, so with validators checked first no
+    /// S3-backed store could ever take the immutable path, and every warm cache
+    /// hit paid a network round-trip to be told "unchanged". Measured on the
+    /// ISRM zarr store: 85.9 ms per chunk against a 0.078 ms local read.
     #[test]
-    fn etag_forces_revalidate() {
+    fn an_immutable_source_is_never_revalidated_even_with_validators() {
         let m = manifest(Some("\"v1\""), "2026-01-01T00:00:00Z");
+        assert_eq!(decide(&m, None, None), CacheDecision::Hit);
         assert_eq!(
             decide(&m, Some(&Temporal::Static), None),
+            CacheDecision::Hit
+        );
+        assert_eq!(
+            decide(&m, Some(&Temporal::ClosedPeriod), None),
+            CacheDecision::Hit
+        );
+    }
+
+    /// Rule 3 beats rule 4: only the DECLARATION outranks a conditional GET.
+    #[test]
+    fn validators_still_beat_the_ttl_heuristic() {
+        let m = manifest(Some("\"v1\""), "2026-01-01T00:00:00Z");
+        let temporal = Temporal::Incomplete {
+            ttl: Duration::from_secs(3600),
+        };
+        assert_eq!(
+            decide(&m, Some(&temporal), None),
             CacheDecision::Revalidate
         );
     }

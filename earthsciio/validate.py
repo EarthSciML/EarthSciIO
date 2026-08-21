@@ -7,12 +7,21 @@ order (first applicable wins, ``spec/cache-format.md`` §4):
 1. **content hash** — if a loader-declared checksum exists, compare it to
    ``manifest.sha256_content``. Strongest. (No loader declares one today; this is
    the future ``source.checksums`` hook.)
-2. **conditional GET** — if ``etag``/``last_modified`` are stored, revalidate
+2. **declared immutability** — a static loader (no ``temporal``) or a closed
+   past period cannot change, so it is a hit with no network access at all.
+   A *declaration* outranks a conditional GET, whose only possible answer here
+   is "unchanged".
+3. **conditional GET** — if ``etag``/``last_modified`` are stored, revalidate
    over the network (``If-None-Match`` / ``If-Modified-Since``). Validators beat
-   heuristic freshness, so this fires **before** TTL.
-3. **TTL from ``temporal``** — a closed past period is immutable (infinite TTL);
-   a current/incomplete period is fresh only until its TTL elapses; a static
-   loader (no ``temporal``) is immutable once fetched.
+   the TTL *heuristic*, so this fires **before** TTL — but not before rule 2.
+4. **TTL from ``temporal``** — a current/incomplete period is fresh only until
+   its TTL elapses.
+
+Rule 2 used to sit below rule 3, which made it unreachable for any store that
+returns an ETag — i.e. all of S3. Every warm hit then paid a round-trip to be
+told the blob had not changed; on the ISRM store that was 85.9 ms per chunk
+against a 0.078 ms file read, and it dominated the wall clock of a run whose
+data was already entirely on local disk.
 
 Offline mode short-circuits all of this (presence + stored hash only); that
 short-circuit lives in :mod:`earthsciio.cache`, not here. ``decide`` is pure and
@@ -119,10 +128,19 @@ def decide(
     if expected_checksum:
         stored = (manifest.sha256_content or "").lower()
         return HIT if stored == expected_checksum.lower() else MISS
-    # 2. conditional GET when validators are stored
-    if manifest.etag or manifest.last_modified:
-        return REVALIDATE
-    # 3. TTL from temporal
+    # 2. declared immutability. A static or closed-period source cannot change,
+    #    so a conditional GET can only ever answer "unchanged" -- a network
+    #    round-trip whose result is known in advance. This MUST stay above the
+    #    validator rule: S3 returns an ETag on EVERY object, so with the
+    #    validators first this branch is unreachable for any S3-backed store and
+    #    every warm cache hit pays a round-trip to be told nothing. Measured on
+    #    the ISRM store: 85.9 ms/chunk before, 0.078 ms/chunk after, the latter
+    #    being the raw file-read floor.
     if temporal is None or temporal.immutable:
         return HIT
+    # 3. conditional GET when validators are stored. Validators beat the TTL
+    #    HEURISTIC below, but not the DECLARATION above.
+    if manifest.etag or manifest.last_modified:
+        return REVALIDATE
+    # 4. TTL from temporal (incomplete period, no validators)
     return HIT if is_fresh(manifest.fetched_at, temporal.ttl, now) else MISS
