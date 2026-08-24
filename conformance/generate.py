@@ -655,6 +655,101 @@ def build_shapefile_zip() -> tuple[bytes, dict, dict]:
     return data, expected, decode
 
 # -----------------------------------------------------------------------------
+# Fixture 6 — georeferenced GeoTIFF raster (transport=file, format=geotiff).
+#
+# The shape the ESS raster loaders actually fetch: a single-band north-up
+# geographic raster, the ArcGIS ImageServer `exportImage` / USGS 3DEP / LANDFIRE
+# response. Closes the gap `spec/conformance.md` reserved and that
+# tests/test_geotiff_reader.py names in its docstring — until now there was no
+# committed binary GeoTIFF in the corpus, so the three tracks' geotiff readers
+# had never been compared against each other on the same bytes.
+#
+# What it pins, deliberately, in one small blob:
+#   * `Band1` — GDAL's 1-based band naming (the LANDFIRE loader's file_variable)
+#   * lat/lon axis NAMES, from GTModelTypeGeoKey=2 (geographic). A projected
+#     raster would be y/x; getting this branch wrong is silent and survives
+#     every single-track test.
+#   * CELL-CENTRE axes, not corners: the tiepoint anchors the top-left CORNER,
+#     so every coordinate carries the +0.5-cell offset.
+#   * NON-SQUARE cells (sx=0.5, sy=0.25). A reader that assumes square pixels,
+#     or that reads ModelPixelScale[1] as the x scale, still passes a square
+#     fixture — this one catches it.
+#   * y-DOWN row order against y-UP model space: lat DECREASES with row index.
+#   * GDAL_NODATA -> NaN (spec/conformance.md §3), on an interior cell so a
+#     reader that drops an edge row cannot accidentally pass.
+#   * int16 storage -> float64 output, the native-array dtype contract.
+#
+# SINGLE band on purpose. Multi-band is genuinely ambiguous across the three
+# decoders — tifffile reads page 0 only, rasterio counts pages AND samples as
+# bands, and the Rust reader derives a band count from a flat sample buffer, so
+# a 2-band fixture would encode an interleaving convention nothing has agreed
+# on yet. That is a real question, but it is not this case's question.
+# -----------------------------------------------------------------------------
+# Top-left CORNER of the raster in model space, and the cell size.
+TIF_LON0, TIF_LAT0 = -121.5, 40.0
+TIF_SX, TIF_SY = 0.5, 0.25
+TIF_NODATA = -9999.0
+TIF_URL = "https://landfire.gov/arcgis/rest/services/Landfire/US_230/ImageServer/exportImage?bbox=-121.5,39.25,-119.5,40.0&imageSR=4326&format=tiff"
+
+
+def build_geotiff() -> tuple[bytes, dict, dict]:
+    """A 3(lat) x 4(lon) single-band geographic GeoTIFF + its expected arrays."""
+    import tifffile  # authoring side only; also the reader's pure-Python backend
+
+    nlat, nlon = 3, 4
+    # int16 counts (a LANDFIRE fuel-model code raster), with one interior NODATA.
+    values = np.arange(nlat * nlon, dtype="int16").reshape(nlat, nlon) * 7 + 100
+    values[1, 2] = int(TIF_NODATA)
+
+    geokeys = (
+        1, 1, 0, 3,          # KeyDirectoryVersion, Revision, MinorRevision, NumberOfKeys
+        1024, 0, 1, 2,       # GTModelTypeGeoKey = 2 (geographic)
+        1025, 0, 1, 1,       # GTRasterTypeGeoKey = 1 (PixelIsArea)
+        2048, 0, 1, 4326,    # GeographicTypeGeoKey = WGS 84
+    )
+    # GDAL writes GDAL_NODATA as ASCII, integral for an integer band ("-9999",
+    # not "-9999.0") — and tifffile parses the tag as an int, warning loudly on
+    # anything else. Match real GDAL output so the committed blob is faithful and
+    # decodes without a warning in any of the three tracks.
+    sentinel = f"{int(TIF_NODATA)}\x00"
+    extratags = [
+        (33550, "d", 3, (TIF_SX, TIF_SY, 0.0)),                        # ModelPixelScale
+        (33922, "d", 6, (0.0, 0.0, 0.0, TIF_LON0, TIF_LAT0, 0.0)),     # ModelTiepoint
+        (34735, "H", len(geokeys), geokeys),                           # GeoKeyDirectory
+        (42113, "s", len(sentinel), sentinel.encode()),                # GDAL_NODATA
+    ]
+    buf = io.BytesIO()
+    # `software=False` and no datetime keep the bytes reproducible: a committed
+    # corpus blob is compared by sha256, so a version string baked into the
+    # header would churn the manifest on every tifffile upgrade.
+    tifffile.imwrite(buf, values, extratags=extratags, software=False)
+    data = buf.getvalue()
+
+    # The expected native arrays, derived from the georef the same way the spec
+    # says a reader must: centres, y-down, nodata -> NaN, float64.
+    band = values.astype("float64")
+    band[band == TIF_NODATA] = np.nan
+    lon = TIF_LON0 + (np.arange(nlon, dtype="float64") + 0.5) * TIF_SX
+    lat = TIF_LAT0 - (np.arange(nlat, dtype="float64") + 0.5) * TIF_SY
+
+    def field(arr, dims):
+        flat = np.asarray(arr, dtype="float64").ravel(order="C")
+        return {
+            "dtype": "float64",
+            "dims": list(dims),
+            "shape": list(np.shape(arr)),
+            "fill_value": None,
+            "data": [None if np.isnan(v) else float(v) for v in flat],
+        }
+
+    expected = {
+        "variables": {"Band1": field(band, ("lat", "lon"))},
+        "coords": {"lon": field(lon, ("lon",)), "lat": field(lat, ("lat",))},
+    }
+    return data, expected, {"nodata": TIF_NODATA, "band_names": None}
+
+
+# -----------------------------------------------------------------------------
 # Fixture 4 — synthetic Zarr v2 store (transport=s3, format=zarr, store=local).
 #
 # A tiny multi-chunk Zarr v2 store that pins the load-bearing capability: LAZY
@@ -1058,6 +1153,29 @@ def main() -> None:
                "column forced to float64 by numeric_columns. shape_type/crs_wkt "
                "are one-element `meta` string fields, not field attrs, because "
                "the Rust NativeField has none and equality compares fields."),
+    ))
+
+    tif_data, tif_expected, tif_decode = build_geotiff()
+    summary.append(("landfire-raster-tile",) + emit_case(
+        "landfire-raster-tile",
+        loader="landfire", kind="grid", fmt="geotiff", transport="file",
+        store="local",
+        resolved_url=TIF_URL,
+        ext="tif", data=tif_data, expected=tif_expected, decode=tif_decode,
+        select={"all_cells": True},
+        notes=("Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the "
+               "shape the LANDFIRE / USGS 3DEP ImageServer `exportImage` "
+               "responses have. Pins the georef contract the three readers each "
+               "implement separately and had never been compared on: Band1 "
+               "naming; lat/lon axis names from GTModelTypeGeoKey=2 (a projected "
+               "raster would be y/x); CELL-CENTRE axes offset half a cell from "
+               "the tiepoint's top-left CORNER; NON-SQUARE cells (sx=0.5, "
+               "sy=0.25) so a reader assuming square pixels fails; lat "
+               "DECREASING with row index (y-up model space, y-down rows); "
+               "GDAL_NODATA -> NaN on an INTERIOR cell; and int16 storage "
+               "widened to float64. Single-band on purpose — multi-band "
+               "interleaving is not agreed across tifffile/rasterio/the Rust "
+               "tiff crate, so pinning it here would invent a convention."),
     ))
 
     index = {

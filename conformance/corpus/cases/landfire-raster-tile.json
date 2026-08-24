@@ -1,0 +1,86 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "landfire-raster-tile",
+  "loader": "landfire",
+  "kind": "grid",
+  "format": "geotiff",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://landfire.gov/arcgis/rest/services/Landfire/US_230/ImageServer/exportImage?bbox=-121.5,39.25,-119.5,40.0&imageSR=4326&format=tiff",
+  "cache_key": "f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885",
+  "blob_path": "cache/v1/blobs/f8/f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885.tif",
+  "manifest_path": "cache/v1/meta/f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885.json",
+  "content_sha256": "03dc94052170393fdd657831409c231cd3482f194e6ca32d12852e8538a30a31",
+  "bytes": 424,
+  "select": {
+    "all_cells": true
+  },
+  "decode": {
+    "nodata": -9999.0,
+    "band_names": null
+  },
+  "expected": {
+    "variables": {
+      "Band1": {
+        "dtype": "float64",
+        "dims": [
+          "lat",
+          "lon"
+        ],
+        "shape": [
+          3,
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          100.0,
+          107.0,
+          114.0,
+          121.0,
+          128.0,
+          135.0,
+          null,
+          149.0,
+          156.0,
+          163.0,
+          170.0,
+          177.0
+        ]
+      }
+    },
+    "coords": {
+      "lon": {
+        "dtype": "float64",
+        "dims": [
+          "lon"
+        ],
+        "shape": [
+          4
+        ],
+        "fill_value": null,
+        "data": [
+          -121.25,
+          -120.75,
+          -120.25,
+          -119.75
+        ]
+      },
+      "lat": {
+        "dtype": "float64",
+        "dims": [
+          "lat"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          39.875,
+          39.625,
+          39.375
+        ]
+      }
+    }
+  },
+  "notes": "Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the shape the LANDFIRE / USGS 3DEP ImageServer `exportImage` responses have. Pins the georef contract the three readers each implement separately and had never been compared on: Band1 naming; lat/lon axis names from GTModelTypeGeoKey=2 (a projected raster would be y/x); CELL-CENTRE axes offset half a cell from the tiepoint's top-left CORNER; NON-SQUARE cells (sx=0.5, sy=0.25) so a reader assuming square pixels fails; lat DECREASING with row index (y-up model space, y-down rows); GDAL_NODATA -> NaN on an INTERIOR cell; and int16 storage widened to float64. Single-band on purpose \u2014 multi-band interleaving is not agreed across tifffile/rasterio/the Rust tiff crate, so pinning it here would invent a convention."
+}

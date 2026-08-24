@@ -42,10 +42,14 @@ jobs:
       #   zarr       `isrm-zarr-tile`,         reader: zarr-python 3.x (store-backed);
       #              `permuted-order-tile`     oracle: numcodecs Blosc (spec/conformance.md
       #                                        "Zarr decode notes / Compression")
+      #   geotiff    `landfire-raster-tile`    reader: rasterio (GDAL); oracle +
+      #                                        generate.py: tifffile (deliberately
+      #                                        NOT the reader's backend)
       # The `zarr` extra pulls both zarr>=3 and numcodecs; it needs Python >=3.11,
-      # which is what this job pins above. `csv`/`ff10` need no extra (stdlib).
-      - name: Install Python track (+ netcdf/shapefile/zarr reader stacks, schema validator)
-        run: python -m pip install --upgrade pip && pip install -e ".[netcdf,shapefile,zarr,test]"
+      # which is what this job pins above. The `geotiff` extra pulls rasterio AND
+      # tifffile. `csv`/`ff10` need no extra (stdlib).
+      - name: Install Python track (+ netcdf/shapefile/zarr/geotiff reader stacks, schema validator)
+        run: python -m pip install --upgrade pip && pip install -e ".[netcdf,shapefile,zarr,geotiff,test]"
 
       # --- Julia track ----------------------------------------------------- #
       - name: Set up Julia

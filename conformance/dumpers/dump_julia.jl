@@ -50,6 +50,10 @@ _load_weakdep(:EarthSciIOBloscExt, "Blosc")
 # The `shapefile` case decodes through the `EarthSciIOShapefileExt` weakdep
 # extension (`using Shapefile`) — the same bootstrap as Blosc above.
 _load_weakdep(:EarthSciIOShapefileExt, "Shapefile")
+# The `geotiff` case decodes through `EarthSciIOTiffImagesExt` (`using
+# TiffImages`), the Julia peer of the Python reader's tifffile backend and the
+# Rust `tiff` crate — same bootstrap again.
+_load_weakdep(:EarthSciIOTiffImagesExt, "TiffImages")
 
 # Row-major (C-order) flatten of a native array whose axes are in file (`dims`)
 # order — matches numpy `.reshape(-1)` on the Python track's arrays.

@@ -28,8 +28,8 @@ conformance/
 ```
 
 Needs the three toolchains: Python
-(`pip install -e ".[netcdf,shapefile,zarr,test]"` — one extra per corpus format,
-`zarr` needs Python ≥3.11), Julia
+(`pip install -e ".[netcdf,shapefile,zarr,geotiff,test]"` — one extra per corpus
+format, `zarr` needs Python ≥3.11), Julia
 (`julia --project=julia -e 'using Pkg; Pkg.instantiate()'`), Rust (`cargo`). Exit
 0 ⇔ every decoding track agrees with the oracle and pairwise with the others.
 
