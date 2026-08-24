@@ -11,9 +11,10 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use earthsciio::auth::StaticHeaderAuth;
-use earthsciio::{cache_key, Cache, FetchRequest};
+use earthsciio::{cache_key, Cache, FetchRequest, Temporal};
 
 // --- file transport ---------------------------------------------------------
 
@@ -167,6 +168,13 @@ fn http_fetch_conditional_get_and_offline_reuse() {
     let server = spawn_mock_server(body.clone(), etag);
     let url = format!("http://127.0.0.1:{}/era5/20181108.nc", server.port);
 
+    // ERA5's current period is still filling in, so the loader declares it
+    // `Incomplete`. That declaration is what puts revalidation in play at all:
+    // a source with NO `temporal` is a declared-immutable one, and an immutable
+    // source is a hit on the spot rather than a conditional GET (validate.rs
+    // rule 2 above rule 3, spec/cache-format.md §4). Step 3 covers that case.
+    let ttl = Duration::from_secs(3600);
+
     let tmp = tempfile::tempdir().unwrap();
     let cache_root = tmp.path().join("cache");
     let online = Cache::builder()
@@ -177,7 +185,11 @@ fn http_fetch_conditional_get_and_offline_reuse() {
 
     // 1) First fetch downloads (one 200) and records the ETag in the manifest.
     let blob = online
-        .fetch(&FetchRequest::new(&url).loader("era5"))
+        .fetch(
+            &FetchRequest::new(&url)
+                .loader("era5")
+                .temporal(Temporal::Incomplete { ttl }),
+        )
         .unwrap();
     assert_eq!(std::fs::read(&blob.path).unwrap(), body);
     assert_eq!(blob.manifest.bytes, body.len() as u64);
@@ -187,9 +199,15 @@ fn http_fetch_conditional_get_and_offline_reuse() {
     assert_eq!(server.not_modified.load(Ordering::SeqCst), 0);
 
     // 2) Second fetch revalidates with If-None-Match and gets a 304 — the blob
-    //    is reused, NOT re-downloaded (gets stays 1; one 304 recorded).
+    //    is reused, NOT re-downloaded (gets stays 1; one 304 recorded). The
+    //    blob is still inside its TTL, so this also pins the other half of the
+    //    ordering: a stored validator outranks the TTL heuristic.
     let blob2 = online
-        .fetch(&FetchRequest::new(&url).loader("era5"))
+        .fetch(
+            &FetchRequest::new(&url)
+                .loader("era5")
+                .temporal(Temporal::Incomplete { ttl }),
+        )
         .unwrap();
     assert_eq!(blob2.path, blob.path);
     assert_eq!(std::fs::read(&blob2.path).unwrap(), body);
@@ -204,7 +222,29 @@ fn http_fetch_conditional_get_and_offline_reuse() {
         "must take the conditional-GET path"
     );
 
-    // 3) Offline re-read resolves purely from disk — no socket at all.
+    // 3) The same URL fetched with no temporal declaration is immutable, and an
+    //    immutable source is served straight from disk: no download and not
+    //    even a conditional GET, whose answer is known in advance. The counters
+    //    below are the integration-tier guard for that ordering — a stored ETag
+    //    is present here, which is exactly the case that used to force a
+    //    round-trip on every warm hit.
+    let immutable = online
+        .fetch(&FetchRequest::new(&url).loader("era5"))
+        .unwrap();
+    assert_eq!(immutable.path, blob.path);
+    assert_eq!(std::fs::read(&immutable.path).unwrap(), body);
+    assert_eq!(
+        server.gets.load(Ordering::SeqCst),
+        1,
+        "an immutable source must not re-download"
+    );
+    assert_eq!(
+        server.not_modified.load(Ordering::SeqCst),
+        1,
+        "an immutable source must not revalidate either"
+    );
+
+    // 4) Offline re-read resolves purely from disk — no socket at all.
     let offline = Cache::builder()
         .data_dir(&cache_root)
         .offline(true)
