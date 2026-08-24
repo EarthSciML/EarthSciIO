@@ -201,23 +201,37 @@ def read_ff10(path, expected, decode=None):
     return out, {}
 
 
+def _numcodecs_codec(name):
+    """The named ``numcodecs`` codec, or an actionable error naming the extra.
+
+    The oracle decodes zarr chunks with numcodecs *on purpose* — independently of
+    the production reader's zarr-python stack (spec/conformance.md). It ships in
+    the ``zarr`` extra; without it the corpus self-check cannot run at all, so say
+    so rather than surfacing a bare ``ModuleNotFoundError`` from six frames down.
+    """
+    try:
+        import numcodecs
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise SystemExit(
+            f"conformance: the corpus's zarr cases need the '{name}' codec from "
+            "numcodecs, which is not installed. Install the extras every corpus "
+            'format needs: pip install -e ".[netcdf,shapefile,zarr,test]" '
+            "(the zarr extra requires Python >=3.11)."
+        ) from exc
+    return getattr(numcodecs, name)
+
+
 def _zarr_decompress(compressor, raw):
     """Independent decode of one chunk object's bytes (the zarr oracle codec)."""
     if compressor is None:
         return bytes(raw)
     cid = str(compressor.get("id", "")).lower()
     if cid == "blosc":
-        from numcodecs import Blosc
-
-        return bytes(Blosc().decode(raw))
+        return bytes(_numcodecs_codec("Blosc")().decode(raw))
     if cid == "zlib":
-        from numcodecs import Zlib
-
-        return bytes(Zlib().decode(raw))
+        return bytes(_numcodecs_codec("Zlib")().decode(raw))
     if cid == "zstd":
-        from numcodecs import Zstd
-
-        return bytes(Zstd().decode(raw))
+        return bytes(_numcodecs_codec("Zstd")().decode(raw))
     if cid in ("", "none"):
         return bytes(raw)
     raise ValueError(f"unsupported zarr compressor id {cid!r}")

@@ -35,7 +35,9 @@ reader decode, native-array equality, offline-only). It needs only `numpy` (+
 `xarray`/`netCDF4` for the NetCDF case) and optionally `jsonschema` for schema
 validation. The `shapefile` case additionally needs `pyshp` — which is also what
 `generate.py` writes the fixture with, so a track regenerating the corpus needs
-it too. Other tracks read the **committed** blobs and need no Python.
+it too; the `zarr` cases need `numcodecs` for the oracle's blosc chunk decode
+(`spec/conformance.md`). In extras: `pip install -e ".[netcdf,shapefile,zarr,test]"`.
+Other tracks read the **committed** blobs and need no Python.
 
 ## Cross-language harness (`esio-9nb.9`)
 

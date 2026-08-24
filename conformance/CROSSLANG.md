@@ -27,7 +27,9 @@ conformance/
 ./conformance/run_conformance.sh /tmp/dumps # keep the per-track dumps for inspection
 ```
 
-Needs the three toolchains: Python (`pip install -e ".[netcdf]"`), Julia
+Needs the three toolchains: Python
+(`pip install -e ".[netcdf,shapefile,zarr,test]"` — one extra per corpus format,
+`zarr` needs Python ≥3.11), Julia
 (`julia --project=julia -e 'using Pkg; Pkg.instantiate()'`), Rust (`cargo`). Exit
 0 ⇔ every decoding track agrees with the oracle and pairwise with the others.
 
