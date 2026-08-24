@@ -4,6 +4,7 @@ using SHA: sha256
 import JSON
 import Blosc   # activates the EarthSciIOBloscExt weakdep ext for the zarr decode
 import Shapefile  # activates the EarthSciIOShapefileExt weakdep ext for the shapefile decode
+import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the geotiff decode
 
 @testset "EarthSciIO — Julia track: cache + transport + store + readers + provider" begin
     # component (a): cache / transport / store
