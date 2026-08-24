@@ -119,6 +119,8 @@ class NetCDFReader:
     NAME = "netcdf"
     FORMATS = ("netcdf",)
     EXTENSIONS = ("nc", "nc4", "cdf")
+    #: Third-party stacks this reader needs (see Registry.register).
+    REQUIRES = (("xarray",), ("netCDF4",))
 
     def formats(self) -> List[str]:
         return list(self.FORMATS)
@@ -424,6 +426,8 @@ class GeoTIFFReader:
     NAME = "geotiff"
     FORMATS = ("geotiff",)
     EXTENSIONS = ("tif", "tiff")
+    #: rasterio (GDAL) is preferred; tifffile is the pure-Python fallback.
+    REQUIRES = (("rasterio", "tifffile"),)
 
     def formats(self) -> List[str]:
         return list(self.FORMATS)
@@ -934,6 +938,8 @@ class ShapefileReader:
     NAME = "shapefile"
     FORMATS = ("shapefile",)
     EXTENSIONS = ("shp", "zip")
+    #: pyshp, whose import name is `shapefile`.
+    REQUIRES = (("shapefile",),)
 
     def formats(self) -> List[str]:
         return list(self.FORMATS)
@@ -1128,6 +1134,15 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same
     factory is re-registered, so importing the package twice is safe. Orthogonal
     to the ``zarr`` stub — distinct names/keys never collide.
+
+    Registration is UNCONDITIONAL, including for readers whose decode stack is an
+    optional extra: asking for ``geotiff`` without rasterio/tifffile should raise
+    that reader's "install the extra" error, not
+    :class:`~earthsciio.errors.BackendNotRegistered`. What each reader needs is
+    declared as ``requires`` metadata instead, so a caller that must know what
+    this environment can actually decode — the conformance dumpers, a diagnostic
+    — asks :meth:`~earthsciio.registry.Registry.available` rather than assuming
+    ``status == "active"`` means "works here".
     """
     reg = registry if registry is not None else format_registry
     reg.register(
@@ -1136,6 +1151,7 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         keys=list(NetCDFReader.FORMATS),
         status="active",
         extensions=list(NetCDFReader.EXTENSIONS),
+        requires=NetCDFReader.REQUIRES,
         notes="CF-decode via xarray; scale/offset + _FillValue->NaN; time axis raw.",
     )
     reg.register(
@@ -1152,6 +1168,7 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         keys=list(GeoTIFFReader.FORMATS),
         status="active",
         extensions=list(GeoTIFFReader.EXTENSIONS),
+        requires=GeoTIFFReader.REQUIRES,
         notes="Raster bands via GDAL/rasterio (tifffile fallback); GDAL_NODATA->NaN.",
     )
     reg.register(
@@ -1160,6 +1177,7 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         keys=list(ShapefileReader.FORMATS),
         status="active",
         extensions=list(ShapefileReader.EXTENSIONS),
+        requires=ShapefileReader.REQUIRES,
         notes="ESRI shapefile via pyshp; one row per PART with .dbf attributes "
               "replicated; `geometry` [index, vertex, xy] right-padded by repeating "
               "the final vertex; the record's stored bbox as xmin/ymin/xmax/ymax; "

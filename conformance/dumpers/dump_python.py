@@ -17,7 +17,8 @@ Dump schema — ``earthsciio/native-dump/v1`` (see ``conformance/CROSSLANG.md``)
       "schema": "earthsciio/native-dump/v1",
       "language": "python",
       "provider": "earthsciio.Provider",
-      "readers": ["csv", "netcdf"],          # active format names this track has
+      "readers": ["csv", "netcdf"],          # formats this track can decode HERE
+                                             # (active AND its extra installed)
       "cases": {
         "<case_id>": {
           "format": "netcdf",
@@ -112,6 +113,13 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
     Skips (without error) a case whose ``format`` has no registered reader, so the
     harness reports the gap instead of failing — matching the Rust track, which
     ships ``netcdf`` only.
+
+    A reader whose optional decode stack is not installed skips the same way, and
+    says which extra is missing. Registration alone does NOT mean this
+    environment can decode the format: `geotiff` is always registered but needs
+    rasterio or tifffile, so without them an unguarded run raised ImportError
+    from inside the reader and the coverage gate reported the confusing
+    "registers a reader but did not decode this case".
     """
     fmt = case["format"]
     if fmt not in format_registry or format_registry.status(fmt) != "active":
@@ -119,6 +127,16 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
             "format": fmt,
             "status": "skipped",
             "reason": f"no active reader registered for format '{fmt}' in the Python track",
+        }
+    missing = format_registry.missing_requirements(fmt)
+    if missing:
+        return {
+            "format": fmt,
+            "status": "skipped",
+            "reason": (
+                f"the '{fmt}' reader needs {', '.join(missing)}, not installed "
+                f"in this environment"
+            ),
         }
 
     # An OFFLINE cache rooted at the corpus: every case resolves from disk by its
@@ -190,8 +208,14 @@ def main(argv: List[str]) -> int:
         "schema": "earthsciio/native-dump/v1",
         "language": "python",
         "provider": "earthsciio.Provider",
+        # What this environment can actually decode, not merely what the library
+        # implements. The comparator's coverage gate holds a track to every
+        # format it lists here, so listing a reader whose extra is missing turns
+        # an honest "not installed" into a spurious failure.
         "readers": sorted(
-            k for k in format_registry.keys() if format_registry.status(k) == "active"
+            k
+            for k in format_registry.keys()
+            if format_registry.status(k) == "active" and format_registry.available(k)
         ),
         "cases": cases,
     }
