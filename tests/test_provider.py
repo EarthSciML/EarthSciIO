@@ -83,6 +83,7 @@ def _match(field, expected_nested) -> bool:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.needs_format("netcdf")
 def test_const_provider_materializes_oracle_arrays(cache):
     case = _era5_case()
     p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
@@ -103,6 +104,7 @@ def test_const_provider_materializes_oracle_arrays(cache):
     assert set(p.coords) == {"latitude", "longitude", "time"}
 
 
+@pytest.mark.needs_format("netcdf")
 def test_const_refresh_returns_constant_data(cache):
     p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
     a = p.refresh(_utc(0))  # CONST: refresh is the constant data (materialize once)
@@ -128,6 +130,7 @@ def test_discrete_refresh_times_match_cadence(cache):
     assert p.refresh_times() == [_utc(0), _utc(1)]  # the hourly cadence
 
 
+@pytest.mark.needs_format("netcdf")
 def test_discrete_refresh_slices_record_per_anchor(cache):
     p = Provider(_discrete_internal_axis(), cache, window=(_utc(0), _utc(2)))
     s0 = p.refresh(_utc(0))
@@ -142,12 +145,14 @@ def test_discrete_refresh_slices_record_per_anchor(cache):
     assert set(p.coords) == {"latitude", "longitude"}  # time dropped from coords too
 
 
+@pytest.mark.needs_format("netcdf")
 def test_discrete_materialize_primes_first_anchor(cache):
     p = Provider(_discrete_internal_axis(), cache, window=(_utc(0), _utc(2)))
     primed = p.materialize()
     assert np.array_equal(primed["t2m"].data, p.refresh(_utc(0))["t2m"].data)
 
 
+@pytest.mark.needs_format("netcdf")
 def test_discrete_between_anchors_uses_active_record(cache):
     p = Provider(_discrete_internal_axis(), cache, window=(_utc(0), _utc(2)))
     at_anchor = p.refresh(_utc(0))["t2m"].data.copy()
@@ -155,6 +160,7 @@ def test_discrete_between_anchors_uses_active_record(cache):
     assert np.array_equal(between["t2m"].data, at_anchor)
 
 
+@pytest.mark.needs_format("netcdf")
 def test_discrete_refresh_is_idempotent_within_interval(cache):
     p = Provider(_discrete_internal_axis(), cache, window=(_utc(0), _utc(2)))
     a = p.refresh(_utc(1))["sp"].data
@@ -174,6 +180,7 @@ def _interp_loader(end=None, file_period=2 * HOUR) -> DataSource:
     return DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
 
 
+@pytest.mark.needs_format("netcdf")
 def test_interp_bracket_returns_two_records_with_time_axis(cache):
     p = Provider(_interp_loader(), cache, window=(_utc(0), _utc(2)))
     b = p.refresh(_utc(0))
@@ -188,6 +195,7 @@ def test_interp_bracket_returns_two_records_with_time_axis(cache):
     assert b["time"].attrs["units"] == "seconds since 1970-01-01T00:00:00Z"
 
 
+@pytest.mark.needs_format("netcdf")
 def test_interp_bracket_floors_within_interval(cache):
     p = Provider(_interp_loader(), cache, window=(_utc(0), _utc(2)))
     at = p.refresh(_utc(0))["t2m"].data
@@ -198,6 +206,7 @@ def test_interp_bracket_floors_within_interval(cache):
     assert list(b["time"].data) == pytest.approx([START.timestamp(), _utc(1).timestamp()])
 
 
+@pytest.mark.needs_format("netcdf")
 def test_interp_bracket_crosses_file_boundary(cache):
     # No temporal.end => a successor is assumed to exist; hour 1 is the last record
     # in the 2-record file, so its "after" record is record 0 of the next file
@@ -210,6 +219,7 @@ def test_interp_bracket_crosses_file_boundary(cache):
     assert list(b["time"].data) == pytest.approx([_utc(1).timestamp(), _utc(2).timestamp()])
 
 
+@pytest.mark.needs_format("netcdf")
 def test_interp_bracket_end_clamp_degenerates(cache):
     # temporal.end=hour 2 => hour 1 has no successor; the bracket holds [last, last]
     p = Provider(_interp_loader(end=_utc(2)), cache, window=(_utc(0), _utc(2)))
@@ -387,6 +397,7 @@ def test_refresh_before_start_raises(cache):
         p.refresh(START - HOUR)
 
 
+@pytest.mark.needs_format("netcdf")
 def test_refresh_record_out_of_range_raises(cache):
     # file_period=DAY claims 24 hourly records, but the fixture file holds 2
     temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
@@ -395,6 +406,7 @@ def test_refresh_record_out_of_range_raises(cache):
         p.refresh(_utc(5))  # record 5 absent from the 2-record file
 
 
+@pytest.mark.needs_format("netcdf")
 def test_absent_variable_raises(cache):
     p = Provider(DataSource("era5", "netcdf", ERA5_URL, variables=["nope"]), cache)
     with pytest.raises(KeyError):
