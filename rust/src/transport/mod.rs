@@ -23,6 +23,18 @@ use std::sync::Arc;
 use crate::auth::AuthResolver;
 use crate::error::Result;
 
+/// `$var` as whole seconds, or `default_secs` when unset or unparsable — the
+/// shared knob-reading for the transports' request timeouts.
+pub(crate) fn env_secs(var: &str, default_secs: u64) -> std::time::Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(default_secs),
+            std::time::Duration::from_secs,
+        )
+}
+
 /// Conditional-GET validators carried from a prior manifest into a fetch. Empty
 /// when there is nothing cached to revalidate against.
 #[derive(Debug, Default, Clone)]

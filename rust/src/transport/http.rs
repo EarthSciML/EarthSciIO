@@ -4,7 +4,6 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::time::Duration;
 
 use reqwest::blocking::Client;
 use reqwest::header::{
@@ -12,18 +11,10 @@ use reqwest::header::{
 };
 use reqwest::StatusCode;
 
-use super::{Conditional, FetchResult, FetchStatus, Transport};
+use super::{env_secs, Conditional, FetchResult, FetchStatus, Transport};
 use crate::auth::AuthResolver;
 use crate::error::{Error, Result};
 use crate::key::Sha256Writer;
-
-/// `$var` as whole seconds, or `default_secs` when unset or unparsable.
-fn env_secs(var: &str, default_secs: u64) -> Duration {
-    std::env::var(var)
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map_or(Duration::from_secs(default_secs), Duration::from_secs)
-}
 
 /// HTTP(S) transport. The `rustls-tls` / ring backend means `https` works
 /// without a system OpenSSL.
