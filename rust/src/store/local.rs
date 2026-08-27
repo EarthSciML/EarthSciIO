@@ -114,6 +114,25 @@ impl Store for LocalStore {
         self.find_blob(key)
     }
 
+    fn get_blob_hinted(&self, key: &str, ext: &str) -> Option<PathBuf> {
+        // The write path names the blob `<key>.<ext>` (or bare `<key>`), so a
+        // warm hit is one or two metadata probes, never a directory scan. The
+        // scan stays as the fallback for a blob committed under a different
+        // URL's extension (e.g. a mirror), and it is what renders the miss
+        // verdict — the probes can only accelerate a hit.
+        let hinted = self.blob_path(key, ext);
+        if fs::metadata(&hinted).is_ok() {
+            return Some(hinted);
+        }
+        if !ext.is_empty() {
+            let bare = self.blob_path(key, "");
+            if fs::metadata(&bare).is_ok() {
+                return Some(bare);
+            }
+        }
+        self.find_blob(key)
+    }
+
     fn get_meta(&self, key: &str) -> Result<Option<Manifest>> {
         let path = self.meta_path(key);
         match fs::read(&path) {
@@ -247,6 +266,34 @@ mod tests {
         // find_blob works regardless of extension.
         assert!(store.get_blob("deadbeef").is_none());
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn hinted_lookup_matches_scan() {
+        let root = tmp_root();
+        let store = LocalStore::new(&root);
+
+        // Blob committed WITH an extension: the right hint and the empty hint
+        // probe it, a wrong hint falls back to the scan — all the same path.
+        let key = crate::key::cache_key("https://x/hinted.nc");
+        let staging = store.new_staging().unwrap();
+        fs::write(staging.path(), b"b").unwrap();
+        let blob = store.commit_blob(&key, staging, "nc").unwrap();
+        assert_eq!(store.get_blob_hinted(&key, "nc").unwrap(), blob);
+        assert_eq!(store.get_blob_hinted(&key, "csv").unwrap(), blob);
+        assert_eq!(store.get_blob_hinted(&key, "").unwrap(), blob);
+
+        // Blob committed WITHOUT an extension (e.g. a zarr `.zarray` object).
+        let bare_key = crate::key::cache_key("https://x/store.zarr/.zarray");
+        let staging = store.new_staging().unwrap();
+        fs::write(staging.path(), b"b").unwrap();
+        let bare = store.commit_blob(&bare_key, staging, "").unwrap();
+        assert_eq!(store.get_blob_hinted(&bare_key, "nc").unwrap(), bare);
+        assert_eq!(store.get_blob_hinted(&bare_key, "").unwrap(), bare);
+
+        // A hint never turns a miss into a hit.
+        assert!(store.get_blob_hinted("deadbeef", "nc").is_none());
         fs::remove_dir_all(&root).ok();
     }
 

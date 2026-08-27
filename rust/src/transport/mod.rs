@@ -77,6 +77,21 @@ pub trait Transport: Send + Sync {
         conditional: &Conditional,
         auth: Option<&dyn AuthResolver>,
     ) -> Result<FetchResult>;
+
+    /// [`fetch`](Transport::fetch), plus the sha256 (lowercase hex) of the bytes
+    /// written when the transport hashed them in transit. `None` means the
+    /// caller hashes the staged file itself — the default, so an existing
+    /// transport stays valid unchanged.
+    fn fetch_hashed(
+        &self,
+        resolved_url: &str,
+        dest: &Path,
+        conditional: &Conditional,
+        auth: Option<&dyn AuthResolver>,
+    ) -> Result<(FetchResult, Option<String>)> {
+        self.fetch(resolved_url, dest, conditional, auth)
+            .map(|result| (result, None))
+    }
 }
 
 /// Scheme → transport lookup. Adding a scheme is a registration, never a

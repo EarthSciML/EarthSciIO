@@ -4,6 +4,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 use reqwest::blocking::Client;
 use reqwest::header::{
@@ -14,6 +15,15 @@ use reqwest::StatusCode;
 use super::{Conditional, FetchResult, FetchStatus, Transport};
 use crate::auth::AuthResolver;
 use crate::error::{Error, Result};
+use crate::key::Sha256Writer;
+
+/// `$var` as whole seconds, or `default_secs` when unset or unparsable.
+fn env_secs(var: &str, default_secs: u64) -> Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(Duration::from_secs(default_secs), Duration::from_secs)
+}
 
 /// HTTP(S) transport. The `rustls-tls` / ring backend means `https` works
 /// without a system OpenSSL.
@@ -23,9 +33,19 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     /// Construct with a default blocking client.
+    ///
+    /// A stalled connection must fail rather than hang the run, but this
+    /// reqwest's blocking builder has no per-read timeout, and a tight total
+    /// deadline would kill slow-but-progressing large downloads (record files
+    /// run 100+ MB) — reqwest's own blocking default of 30 s total did exactly
+    /// that. So: 30 s to connect, a generous 600 s per request, overridable via
+    /// `EARTHSCIIO_HTTP_CONNECT_TIMEOUT_SECS` /
+    /// `EARTHSCIIO_HTTP_READ_TIMEOUT_SECS` (whole seconds).
     pub fn new() -> Self {
         let client = Client::builder()
             .user_agent(concat!("earthsciio/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(env_secs("EARTHSCIIO_HTTP_CONNECT_TIMEOUT_SECS", 30))
+            .timeout(env_secs("EARTHSCIIO_HTTP_READ_TIMEOUT_SECS", 600))
             .build()
             .expect("default reqwest blocking client builds");
         Self { client }
@@ -55,6 +75,17 @@ impl Transport for HttpTransport {
         conditional: &Conditional,
         auth: Option<&dyn AuthResolver>,
     ) -> Result<FetchResult> {
+        self.fetch_hashed(url, dest, conditional, auth)
+            .map(|(result, _)| result)
+    }
+
+    fn fetch_hashed(
+        &self,
+        url: &str,
+        dest: &Path,
+        conditional: &Conditional,
+        auth: Option<&dyn AuthResolver>,
+    ) -> Result<(FetchResult, Option<String>)> {
         let mut headers = HeaderMap::new();
         if let Some(etag) = &conditional.etag {
             if let Ok(v) = HeaderValue::from_str(etag) {
@@ -98,12 +129,15 @@ impl Transport for HttpTransport {
         let status = resp.status();
         if status == StatusCode::NOT_MODIFIED {
             // Cached blob is still valid; staging stays empty.
-            return Ok(FetchResult {
-                status: FetchStatus::NotModified,
-                etag: conditional.etag.clone(),
-                last_modified: conditional.last_modified.clone(),
-                bytes_written: 0,
-            });
+            return Ok((
+                FetchResult {
+                    status: FetchStatus::NotModified,
+                    etag: conditional.etag.clone(),
+                    last_modified: conditional.last_modified.clone(),
+                    bytes_written: 0,
+                },
+                None,
+            ));
         }
         if !status.is_success() {
             // 404/410 are a DEFINITIVE absence — the store answered, and the
@@ -125,22 +159,30 @@ impl Transport for HttpTransport {
         let etag = header_string(resp.headers(), &ETAG);
         let last_modified = header_string(resp.headers(), &LAST_MODIFIED);
 
-        // Stream the body straight to the staging file (no full-body buffering).
-        let mut file =
+        // Stream the body straight to the staging file (no full-body buffering),
+        // hashing the bytes in transit so the cache commit needs no second full
+        // read of the file.
+        let file =
             std::fs::File::create(dest).map_err(|e| Error::io(Some(dest.to_path_buf()), e))?;
-        let bytes_written = resp.copy_to(&mut file).map_err(|e| Error::Transport {
+        let mut writer = Sha256Writer::new(file);
+        let bytes_written = resp.copy_to(&mut writer).map_err(|e| Error::Transport {
             url: url.to_string(),
             detail: e.to_string(),
         })?;
-        file.flush()
+        writer
+            .flush()
             .map_err(|e| Error::io(Some(dest.to_path_buf()), e))?;
+        let sha = writer.finalize();
 
-        Ok(FetchResult {
-            status: FetchStatus::Downloaded,
-            etag,
-            last_modified,
-            bytes_written,
-        })
+        Ok((
+            FetchResult {
+                status: FetchStatus::Downloaded,
+                etag,
+                last_modified,
+                bytes_written,
+            },
+            Some(sha),
+        ))
     }
 }
 

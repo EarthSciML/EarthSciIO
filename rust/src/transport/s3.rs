@@ -102,6 +102,18 @@ impl Transport for S3Transport {
         let https = s3_https_url(url, &region)?;
         self.http.fetch(&https, dest, conditional, auth)
     }
+
+    fn fetch_hashed(
+        &self,
+        url: &str,
+        dest: &Path,
+        conditional: &Conditional,
+        auth: Option<&dyn AuthResolver>,
+    ) -> Result<(FetchResult, Option<String>)> {
+        let region = resolve_region(self.region.as_deref());
+        let https = s3_https_url(url, &region)?;
+        self.http.fetch_hashed(&https, dest, conditional, auth)
+    }
 }
 
 #[cfg(test)]

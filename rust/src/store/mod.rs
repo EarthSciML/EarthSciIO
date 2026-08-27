@@ -67,6 +67,15 @@ pub trait Store: Send + Sync {
     /// never by the debug-only extension.
     fn get_blob(&self, key: &str) -> Option<PathBuf>;
 
+    /// [`get_blob`](Store::get_blob) with `ext` — the debug-only extension the
+    /// write path derives from the URL — as a probe hint. Identical semantics
+    /// (same hits, same misses); the hint only lets a backend try the
+    /// deterministic blob path(s) before any directory scan.
+    fn get_blob_hinted(&self, key: &str, ext: &str) -> Option<PathBuf> {
+        let _ = ext;
+        self.get_blob(key)
+    }
+
     /// Read the manifest for `key`, or `None` if absent.
     fn get_meta(&self, key: &str) -> Result<Option<Manifest>>;
 

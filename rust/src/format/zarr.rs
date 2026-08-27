@@ -37,6 +37,7 @@
 //! output cell belongs to exactly one chunk id, so it is still written exactly
 //! once, from the same value (`f32 as f64` is exact).
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
@@ -250,8 +251,11 @@ where
             let total: usize = out_shape.iter().product();
             let mut data = vec![0.0f64; total];
             let out_stride = c_strides(&out_shape);
-            // Which output positions each chunk coordinate owns, per dimension.
-            let owners = chunk_owners(&sel_idx, &chunk_shape);
+            // Which output cells each chunk coordinate owns, per dimension.
+            // Built ONCE per array — the mapping is chunk-invariant (a 52k-entry
+            // list per "All" axis in the ISRM reads) — and shared read-only by
+            // the workers; only the boundary-clipped chunk stride is per-chunk.
+            let owners = chunk_owners(&sel_idx, &chunk_shape, &out_stride);
 
             // Fetch + decode ONLY the chunk objects the selection intersects, and
             // scatter each one into `data` immediately so it can be dropped before
@@ -271,7 +275,6 @@ where
                 let subset = array
                     .chunk_subset(&cid_u64)
                     .map_err(|e| zarr_err(format!("chunk subset {cid:?} of '{array_name}': {e}")))?;
-                let cstart: Vec<usize> = subset.start().iter().map(|&s| s as usize).collect();
                 let cshape: Vec<usize> = subset.shape().iter().map(|&s| s as usize).collect();
                 // The `f32` buffer is scattered AS f32 (widened per element, which is
                 // exact) — never materialized as a full `f64` chunk.
@@ -280,13 +283,13 @@ where
                         .retrieve_array_subset::<Vec<f32>>(&subset)
                         .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
                     let mut g = out.lock().expect("zarr scatter mutex poisoned");
-                    scatter_chunk(&mut g, &elems, cid, &cstart, &cshape, &owners, &out_stride);
+                    scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
                 } else {
                     let elems = array
                         .retrieve_array_subset::<Vec<f64>>(&subset)
                         .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
                     let mut g = out.lock().expect("zarr scatter mutex poisoned");
-                    scatter_chunk(&mut g, &elems, cid, &cstart, &cshape, &owners, &out_stride);
+                    scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
                 }
                 // `elems` drops HERE, before this worker fetches its next chunk.
                 Ok(())
@@ -431,8 +434,13 @@ fn c_strides(shape: &[usize]) -> Vec<usize> {
 }
 
 /// Per dimension, which output positions each chunk coordinate owns: chunk coord
-/// `c` maps to the `(output position along this dim, global index)` pairs whose
-/// global index falls in chunk `c`.
+/// `c` maps to one `(output-linear offset, within-chunk index)` pair per output
+/// position whose global index falls in chunk `c`. The output stride is already
+/// applied and the chunk start (`c * chunk_len` — the regular grid the rest of
+/// the chunk math also assumes) already subtracted, so this whole structure is
+/// chunk-invariant: built once per array read, shared read-only by the fetch
+/// workers, with only the boundary-clip-dependent chunk stride left for
+/// [`scatter_chunk`] to apply.
 ///
 /// This is what makes the scatter incremental. Every output position along a
 /// dimension lies in EXACTLY ONE chunk coordinate (`global / chunk_len` is a
@@ -444,14 +452,15 @@ fn c_strides(shape: &[usize]) -> Vec<usize> {
 fn chunk_owners(
     sel_idx: &[Vec<usize>],
     chunk_shape: &[usize],
+    out_stride: &[usize],
 ) -> Vec<HashMap<usize, Vec<(usize, usize)>>> {
     sel_idx
         .iter()
-        .zip(chunk_shape)
-        .map(|(idxs, &cl)| {
+        .zip(chunk_shape.iter().zip(out_stride))
+        .map(|(idxs, (&cl, &os))| {
             let mut owned: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
             for (pos, &g) in idxs.iter().enumerate() {
-                owned.entry(g / cl).or_default().push((pos, g));
+                owned.entry(g / cl).or_default().push((pos * os, g % cl));
             }
             owned
         })
@@ -460,35 +469,40 @@ fn chunk_owners(
 
 /// Scatter ONE decoded chunk into the C-order output over the selection shape,
 /// then let the caller drop it. `elems` is the chunk's C-order elements over the
-/// (boundary-clipped) subset starting at `cstart` with shape `cshape`; `f32`
-/// elements are widened per element here (`f32 -> f64` is exact) so a `float32`
-/// chunk is never doubled into an `f64` buffer.
+/// (boundary-clipped) subset with shape `cshape`; `f32` elements are widened per
+/// element here (`f32 -> f64` is exact) so a `float32` chunk is never doubled
+/// into an `f64` buffer.
 fn scatter_chunk<T: Copy + Into<f64>>(
     out: &mut [f64],
     elems: &[T],
     cid: &[usize],
-    cstart: &[usize],
     cshape: &[usize],
     owners: &[HashMap<usize, Vec<(usize, usize)>>],
-    out_stride: &[usize],
 ) {
     let ndim = cid.len();
     let cstride = c_strides(cshape);
     // Per dimension, the (output-linear, within-chunk-linear) contribution of every
-    // output position this chunk owns along that dimension.
-    let mut per_dim: Vec<Vec<(usize, usize)>> = Vec::with_capacity(ndim);
+    // output position this chunk owns along that dimension. `owners` already
+    // carries both halves; only the chunk stride is applied here, and a stride
+    // of 1 — always the last dimension, the large axis in the profiled reads —
+    // needs no per-chunk rebuild at all.
+    let mut per_dim: Vec<Cow<[(usize, usize)]>> = Vec::with_capacity(ndim);
     for d in 0..ndim {
         // A chunk id produced by `needed_chunks` always owns something on every
         // dimension; bail out rather than panic if that ever stops holding.
         let Some(owned) = owners[d].get(&cid[d]) else {
             return;
         };
-        per_dim.push(
-            owned
-                .iter()
-                .map(|&(pos, g)| (pos * out_stride[d], (g - cstart[d]) * cstride[d]))
-                .collect(),
-        );
+        per_dim.push(if cstride[d] == 1 {
+            Cow::Borrowed(owned.as_slice())
+        } else {
+            Cow::Owned(
+                owned
+                    .iter()
+                    .map(|&(lin, local)| (lin, local * cstride[d]))
+                    .collect(),
+            )
+        });
     }
     // Odometer over the Cartesian product of the per-dimension owner lists: one
     // output cell per combination. (`ndim == 0` writes the single scalar cell.)
@@ -554,9 +568,9 @@ mod tests {
     fn scatter_places_selected_indices() {
         // 1-D array, chunk_shape 2, one chunk (id 0) holding [10,20], select [1,0].
         let sel = vec![vec![1usize, 0]];
-        let owners = chunk_owners(&sel, &[2]);
+        let owners = chunk_owners(&sel, &[2], &c_strides(&[2]));
         let mut out = vec![0.0f64; 2];
-        scatter_chunk(&mut out, &[10.0f64, 20.0], &[0], &[0], &[2], &owners, &c_strides(&[2]));
+        scatter_chunk(&mut out, &[10.0f64, 20.0], &[0], &[2], &owners);
         assert_eq!(out, vec![20.0, 10.0]);
     }
 
@@ -657,17 +671,17 @@ mod tests {
         let out_shape: Vec<usize> = sel_idx.iter().map(Vec::len).collect();
         let total: usize = out_shape.iter().product();
         let out_stride = c_strides(&out_shape);
-        let owners = chunk_owners(sel_idx, chunk_shape);
+        let owners = chunk_owners(sel_idx, chunk_shape, &out_stride);
 
         // NEW: allocate first, scatter each chunk as it is "decoded", drop it.
         let mut new_out = vec![0.0f64; total];
         let mut written = 0usize;
         for cid in &cids {
-            let (cstart, cshape, elems) = synth_chunk(cid, shape, chunk_shape);
+            let (_cstart, cshape, elems) = synth_chunk(cid, shape, chunk_shape);
             written += (0..shape.len())
                 .map(|d| owners[d].get(&cid[d]).map_or(0, Vec::len))
                 .product::<usize>();
-            scatter_chunk(&mut new_out, &elems, cid, &cstart, &cshape, &owners, &out_stride);
+            scatter_chunk(&mut new_out, &elems, cid, &cshape, &owners);
             // `elems` drops here — the whole point.
         }
 
@@ -748,7 +762,7 @@ mod tests {
 
         // And every visited chunk is genuinely used: it owns at least one output
         // cell on every dimension (a chunk fetched for nothing would be over-fetch).
-        let owners = chunk_owners(&sel_idx, &chunk_shape);
+        let owners = chunk_owners(&sel_idx, &chunk_shape, &c_strides(&[1, 2, 4]));
         for cid in &cids {
             for (d, own) in owners.iter().enumerate() {
                 assert!(
@@ -774,16 +788,16 @@ mod tests {
         let sel_idx = vec![vec![4usize, 1, 0], vec![0, 3, 4]];
         let out_shape: Vec<usize> = sel_idx.iter().map(Vec::len).collect();
         let out_stride = c_strides(&out_shape);
-        let owners = chunk_owners(&sel_idx, &chunk_shape);
+        let owners = chunk_owners(&sel_idx, &chunk_shape, &out_stride);
         let total: usize = out_shape.iter().product();
 
         let mut from_f32 = vec![0.0f64; total];
         let mut from_f64 = vec![0.0f64; total];
         for cid in needed_chunks(&sel_idx, &chunk_shape) {
-            let (cstart, cshape, elems) = synth_chunk(&cid, &shape, &chunk_shape);
+            let (_cstart, cshape, elems) = synth_chunk(&cid, &shape, &chunk_shape);
             let widened: Vec<f64> = elems.iter().map(|&x| x as f64).collect();
-            scatter_chunk(&mut from_f32, &elems, &cid, &cstart, &cshape, &owners, &out_stride);
-            scatter_chunk(&mut from_f64, &widened, &cid, &cstart, &cshape, &owners, &out_stride);
+            scatter_chunk(&mut from_f32, &elems, &cid, &cshape, &owners);
+            scatter_chunk(&mut from_f64, &widened, &cid, &cshape, &owners);
         }
         assert_bit_identical(&from_f32, &from_f64, "f32 vs pre-widened f64");
     }
@@ -794,10 +808,10 @@ mod tests {
         // survive the scatter unchanged (the reader does not map fill_value to NaN).
         let sel_idx = vec![vec![3usize, 0, 1, 2]];
         let chunk_shape = vec![4usize];
-        let owners = chunk_owners(&sel_idx, &chunk_shape);
+        let owners = chunk_owners(&sel_idx, &chunk_shape, &c_strides(&[4]));
         let elems = vec![-0.0f64, f64::NAN, f64::INFINITY, 0.0];
         let mut out = vec![0.0f64; 4];
-        scatter_chunk(&mut out, &elems, &[0], &[0], &[4], &owners, &c_strides(&[4]));
+        scatter_chunk(&mut out, &elems, &[0], &[4], &owners);
         assert_eq!(out[0].to_bits(), 0.0f64.to_bits()); // global 3
         assert_eq!(out[1].to_bits(), (-0.0f64).to_bits()); // global 0 — sign kept
         assert!(out[2].is_nan()); // global 1
