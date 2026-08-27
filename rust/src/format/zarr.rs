@@ -72,6 +72,28 @@ fn zarr_err(detail: impl Into<String>) -> Error {
     }
 }
 
+/// How many chunk objects to have in flight at once per array read.
+///
+/// Chunk fetches are latency-bound object GETs (or cache-hit file reads), so
+/// the sweet spot is well above the CPU count but small enough that the
+/// transient decoded-chunk buffers (one per worker) stay negligible next to the
+/// output. `EARTHSCIIO_FETCH_CONCURRENCY` overrides; `1` restores the serial
+/// loop. wasm has no threads, so it is always serial there.
+fn fetch_concurrency() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        1
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::env::var("EARTHSCIIO_FETCH_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|v| v.clamp(1, 64))
+            .unwrap_or(16)
+    }
+}
+
 impl Reader for ZarrReader {
     fn formats(&self) -> &'static [&'static str] {
         &["zarr"]
@@ -233,8 +255,18 @@ where
 
             // Fetch + decode ONLY the chunk objects the selection intersects, and
             // scatter each one into `data` immediately so it can be dropped before
-            // the next is fetched (peak = output + ONE decoded chunk).
-            for cid in needed_chunks(&sel_idx, &chunk_shape) {
+            // the next is fetched (peak = output + one decoded chunk PER WORKER).
+            //
+            // Chunk objects are independent URLs fetched over a high-latency
+            // transport, so they are retrieved CONCURRENTLY: a fixed pool of
+            // scoped workers drains the chunk-id list, each fetching + decoding
+            // with no lock held and taking the `data` mutex only for the (cheap)
+            // scatter. Every output cell belongs to exactly one chunk id, so the
+            // writes are disjoint and the result is byte-identical to the serial
+            // order. A measured ISRM prepare spent ~85% of its wall time waiting
+            // on these GETs one at a time.
+            let cids: Vec<Vec<usize>> = needed_chunks(&sel_idx, &chunk_shape);
+            let fetch_one = |cid: &Vec<usize>, out: &std::sync::Mutex<&mut [f64]>| -> Result<()> {
                 let cid_u64: Vec<u64> = cid.iter().map(|&c| c as u64).collect();
                 let subset = array
                     .chunk_subset(&cid_u64)
@@ -247,15 +279,50 @@ where
                     let elems = array
                         .retrieve_array_subset::<Vec<f32>>(&subset)
                         .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
-                    scatter_chunk(&mut data, &elems, &cid, &cstart, &cshape, &owners, &out_stride);
+                    let mut g = out.lock().expect("zarr scatter mutex poisoned");
+                    scatter_chunk(&mut g, &elems, cid, &cstart, &cshape, &owners, &out_stride);
                 } else {
                     let elems = array
                         .retrieve_array_subset::<Vec<f64>>(&subset)
                         .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
-                    scatter_chunk(&mut data, &elems, &cid, &cstart, &cshape, &owners, &out_stride);
+                    let mut g = out.lock().expect("zarr scatter mutex poisoned");
+                    scatter_chunk(&mut g, &elems, cid, &cstart, &cshape, &owners, &out_stride);
                 }
-                // `elems` drops HERE, before the next chunk object is fetched.
+                // `elems` drops HERE, before this worker fetches its next chunk.
+                Ok(())
+            };
+            let workers = fetch_concurrency().min(cids.len());
+            let out = std::sync::Mutex::new(&mut data[..]);
+            if workers <= 1 {
+                for cid in &cids {
+                    fetch_one(cid, &out)?;
+                }
+            } else {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                let next = AtomicUsize::new(0);
+                let fail: std::sync::Mutex<Option<Error>> = std::sync::Mutex::new(None);
+                std::thread::scope(|s| {
+                    for _ in 0..workers {
+                        s.spawn(|| loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            if i >= cids.len() {
+                                break;
+                            }
+                            if let Err(e) = fetch_one(&cids[i], &out) {
+                                *fail.lock().expect("zarr error mutex poisoned") = Some(e);
+                                // Claim every remaining chunk so the pool drains
+                                // promptly after the first failure.
+                                next.store(cids.len(), Ordering::Relaxed);
+                                break;
+                            }
+                        });
+                    }
+                });
+                if let Some(e) = fail.into_inner().expect("zarr error mutex poisoned") {
+                    return Err(e);
+                }
             }
+            drop(out);
 
             out_vars.insert(
                 array_name.clone(),
