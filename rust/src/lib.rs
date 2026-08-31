@@ -135,7 +135,8 @@ pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use format::{
     write_zarr_v3, ArrayData, AxisSelect, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader,
-    NativeDataset, NativeField, NetcdfReader, Reader, Selection, ShapefileReader, ZarrReader,
+    NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Selection,
+    ShapefileReader, ZarrReader,
 };
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
