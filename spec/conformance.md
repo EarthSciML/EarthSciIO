@@ -38,6 +38,15 @@ data tooling beyond the format reader.
 | `shapefile-polygon-zip` | emis_polygons | points | shapefile | file | local | ESRI **shapefile** zipped with its `.shx`/`.dbf`/`.prj` sidecars. Pins the whole reader contract in one layer: **one row per PART** (a mainland + an island decode to two rows with the `.dbf` attributes replicated), the esm-spec §8.6.1 **repeat-final-vertex** padding, the `*`-only deletion rule (a NUL flag byte is NOT a deletion), the record's **stored** bbox replicated to its parts, and the dtype rules (`C`→string, `N`→float64 with blank→NaN, `L`→bool, a `C` code column forced float64 by `numeric_columns`) |
 | `isrm-zarr-tile` | isrm | grid | zarr | s3 | local | **store-backed** Zarr v2: lazy orthogonal chunk selection (fetch only the intersecting chunk objects), blosc/lz4+shuffle decode, partial edge chunk, `fill_value` 0.0 NOT→NaN, no coords. `objects[]` per-object key/integrity. |
 
+A **`parquet` corpus case is likewise reserved**: the decode contract is pinned
+normatively below (§3, "Parquet decode notes"), but a corpus case is a
+*cross-language* artifact — `crosscheck.py` compares the Python, Julia and Rust
+dumps of the same blob — and only the Rust track ships a `parquet` reader today.
+Committing the case now would fail the conformance job for a gap it does not
+describe. It belongs with the Python (pyarrow) and Julia (Parquet2.jl) readers — see
+[`parquet-bindings-handoff.md`](parquet-bindings-handoff.md) for that work order;
+`rust/tests/parquet_reader.rs` covers the Rust track meanwhile.
+
 GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
 shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are
 absent in this environment and binary-hosting (git-lfs vs `/projects`) is an
@@ -153,6 +162,106 @@ Every reader MUST decode identically, or cross-language equality fails. Pinned:
   attributes because the Rust `NativeField` carries no attrs and native-array
   equality compares fields. The CRS is DECLARED, never acted on — reprojection
   is ESD's job (Risk R3).
+
+### Parquet decode notes (columnar table reader)
+
+The `parquet` reader takes an Apache Parquet file as a **flat table**: every
+column becomes a rank-1 field over `index`, keyed by its **on-disk column name**,
+and a table produces **no coordinates** (like the CSV and Zarr readers). `index`
+has length `num_rows`.
+
+Parquet carries an explicit logical type per column, so unlike the CF attribute
+sniffing the NetCDF reader must do, the dtype is a **total function of the Arrow
+type** — which is what makes cross-language parity cheap here, and why any track
+that deviates is wrong rather than merely different:
+
+| Arrow type | dtype |
+|---|---|
+| `Boolean` | `bool` |
+| `Int8`/`Int16`/`Int32`/`UInt8`/`UInt16` | `int32` |
+| `Int64`/`UInt32`/`UInt64` | `int64` |
+| `Float16`/`Float32`/`Float64` | `float64` |
+| `Decimal128`/`Decimal256` | `float64` — unscaled value ÷ 10^scale |
+| `Utf8`/`LargeUtf8`/`Utf8View` | `string` |
+| `Date32`/`Time32` | `int32` — **raw, undecoded** |
+| `Date64`/`Time64`/`Timestamp`/`Duration` | `int64` — **raw, undecoded** |
+| `Dictionary(_, V)` | as `V`, expanded to one value per row |
+| `Null` | `float64`, every cell `NaN` |
+
+- **The narrow/wide integer split is the NetCDF reader's, verbatim.** It is
+  restated rather than re-derived so a MOVES `int32` ID column and a CF `int32`
+  time axis cannot drift apart.
+- **A `uint64` above `int64::MAX` is an error** naming the column and row, never
+  a wraparound into a negative ID.
+- **Temporal columns are carried verbatim as their raw stored integer.** The
+  Arrow unit (`s`/`ms`/`us`/`ns`) and any timezone are **not** applied and **not**
+  reported — the same rule a CF time axis gets, because turning an epoch offset
+  into a wall-clock instant is ESS's job (Risk R3). A document needing the unit
+  must state it itself.
+- **A categorical is expanded.** `Dictionary(K, V)` decodes to one `V` per row;
+  the key encoding is a storage detail and never reaches the native array.
+- **Nested and binary columns have no rank-1 reading.** `List`/`Struct`/`Map`/
+  `Union`/`Binary` naming: requesting one in `variables` is an **error** (the
+  document named an array it would not get); unrequested, it is simply not a
+  native field, as the NetCDF reader skips its non-numeric variables.
+- **A zero-row file is TYPED, not absent.** The schema lives in the footer, so
+  every column comes back empty with its declared dtype. This matters: most of a
+  MOVES fixture's ~770 tables are empty, and a document binding one must still
+  see the array it named.
+
+#### Null policy
+
+Nearly every Parquet column is nullable in its schema whether or not it holds a
+null — a table exported from a relational database usually marks every column
+nullable — so **nullability cannot pick the dtype**. The policy is about values:
+
+- a null in a **float** column (a `Decimal`, a `Null` column, or any column
+  forced float by `float_columns` included) becomes **`NaN`**, the same fold CF
+  `_FillValue` gets, and `fill_value` stays null;
+- a null in an **integer**, **string** or **boolean** column is an **error**
+  naming the column and the row. Those types have no NaN, so any default would
+  be a real value silently standing in for a missing one — the failure mode that
+  surfaces much later as wrong numbers.
+
+Two reader options open that gate, and only when a document declares them:
+`null_int` substitutes an integer sentinel **and reports it back in
+`fill_value`** (an integer sentinel cannot be NaN, so it survives into the array
+exactly as a CF integer fill does); `null_string` substitutes text, which is
+then indistinguishable from a real cell holding the same text — which is why the
+document has to choose it. A boolean has no such option; declare the column in
+`float_columns` if a third state is genuinely meant.
+
+#### `float_columns`, and floats stored as text
+
+`float_columns` forces the named columns to `float64` whatever their on-disk
+type — the Parquet twin of the shapefile reader's `numeric_columns` — and does
+two jobs on purpose, because they are the same statement about the source
+("this column is a float64 measurement"):
+
+1. an **integer** column that is really a measurement, whose missing cells must
+   become `NaN` rather than a sentinel;
+2. a column of **fixed-decimal text**. A corpus that needs byte-reproducible
+   floats stores them as decimal strings rather than IEEE doubles — the MOVES
+   snapshots write `meanBaseRate` as `"261.000000000000"` — and this is how a
+   document says so. The text is **trimmed and parsed**; an empty or
+   all-whitespace cell is `NaN` (the FF10/shapefile blank→NaN rule); anything
+   else unparseable is an **error** naming the column, the row and the text.
+   Without the option such a column stays `string`: the reader never guesses
+   that text is really a number.
+
+#### Projection pushdown
+
+The loader's `variables` are pushed into the Parquet reader as a projection, so
+**only those column chunks are read off disk** — not read-then-discarded. These
+tables are wide (a MOVES table runs to dozens of columns) and a document
+typically wants three. Empty `variables` reads every column. A requested name
+absent from the file is an error listing what is present, never a silently
+missing array.
+
+Row selection is **not** a reader concern: esm-spec §8.9 puts `codes`,
+`record_filter`, `select` and `extent` downstream of the decode, and `select`
+never reaches a whole-file reader at all (the Provider hands one
+`Selection::All` unconditionally). Only `reader_options` reaches this reader.
 
 ### Zarr decode notes (store-backed reader)
 
