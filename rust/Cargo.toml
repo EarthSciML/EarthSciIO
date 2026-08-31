@@ -2,7 +2,11 @@
 name = "earthsciio"
 version = "0.1.2"
 edition = "2021"
-rust-version = "1.74"
+# 1.85 is arrow-rs's MSRV (the `parquet`/`arrow-array`/`arrow-schema` family in
+# the native table below); the rest of the tree still builds on 1.74. CI builds
+# on `stable`, so this is a declaration of what is actually supported rather than
+# a gate anything enforces.
+rust-version = "1.85"
 license = "AGPL-3.0-only"
 description = "EarthSciIO Rust core: URL download + shared content-addressed cache (transport/store registries, offline mode)."
 repository = "https://github.com/EarthSciML/EarthSciIO"
@@ -163,6 +167,47 @@ url = { version = "2", optional = true }
 # merged upstream and shipped in 0.9.1, whose source is byte-identical to the
 # fork revision pinned here before, so the release is a straight substitute.
 netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
+
+# Apache Parquet decode for the `parquet` format reader — the columnar table
+# format the MOVES/NONROAD oracle snapshots (and most modern tabular science
+# data) ship in. `parquet` is arrow-rs's own implementation, i.e. the reference
+# Rust one, and the same crate family that backs `object_store` above; nothing
+# here is hand-rolled, exactly as with `shapefile`/`netcdf-reader`/`tiff`.
+#
+# `default-features = false` drops the parts a blob reader has no use for:
+# `async`/`object_store` (the Provider hands this reader a cached PATH, never a
+# URL), `encryption`, `cli`, `sysinfo`. What is kept:
+#
+#   arrow                the typed columnar reader — the whole point, since a
+#                        Parquet column's logical type is explicit and maps onto
+#                        DType directly (no CF-style attribute sniffing).
+#   snap flate2 brotli   the pure-Rust compression codecs. Snappy is Parquet's
+#   lz4                  de-facto default. `flate2-rust_backend` is REQUIRED
+#                        alongside `flate2` (parquet fails to compile without a
+#                        backend chosen) and picks miniz_oxide, i.e. pure Rust,
+#                        over the zlib-rs alternative.
+#   zstd                 vendored C zstd — ALREADY in the tree via zarrs, so it
+#                        adds no new build requirement (see the zarrs note).
+#
+# So the build story is unchanged: a C compiler alone, no clang/bindgen, no
+# system libparquet/libarrow.
+#
+# arrow-array + arrow-schema are named directly (rather than pulling the `arrow`
+# umbrella, which drags arrow-cast/csv/json/ipc/flight) because they are all the
+# reader needs: a RecordBatch and its DataType. They are version-locked to
+# `parquet` — arrow-rs releases the whole family in lockstep and mixing majors
+# does not compile.
+parquet = { version = "59", default-features = false, features = [
+    "arrow",
+    "snap",
+    "flate2",
+    "flate2-rust_backend",
+    "brotli",
+    "lz4",
+    "zstd",
+] }
+arrow-array = "59"
+arrow-schema = "59"
 
 # ============================================================================
 # wasm32 — the OUTPUT half of the crate, and nothing else.

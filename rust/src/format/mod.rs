@@ -32,6 +32,8 @@ mod geotiff;
 #[cfg(not(target_arch = "wasm32"))]
 mod netcdf;
 #[cfg(not(target_arch = "wasm32"))]
+mod parquet;
+#[cfg(not(target_arch = "wasm32"))]
 mod shapefile;
 #[cfg(not(target_arch = "wasm32"))]
 mod zarr;
@@ -49,6 +51,8 @@ pub use ff10::Ff10Reader;
 pub use geotiff::GeoTiffReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use netcdf::NetcdfReader;
+#[cfg(not(target_arch = "wasm32"))]
+pub use parquet::ParquetReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shapefile::ShapefileReader;
 #[cfg(not(target_arch = "wasm32"))]
@@ -477,6 +481,12 @@ impl FormatRegistry {
         // `.shp` of a zip (or a bare `.shp`); `member`/`numeric_columns` reach it
         // from a document through `Reader::configured`.
         r.register(Arc::new(ShapefileReader::new()));
+        // parquet (columnar table): every column becomes a rank-1 field over
+        // `index`, keyed by its on-disk column name, with the requested
+        // `variables` pushed down as a projection so only those column chunks
+        // are read. `float_columns`/`null_int`/`null_string` reach it from a
+        // document through `Reader::configured`.
+        r.register(Arc::new(ParquetReader::new()));
         r.register(Arc::new(ZarrReader::new()));
         r
     }
