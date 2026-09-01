@@ -252,6 +252,35 @@ invisible until a document reads a fill-bearing integer column and gets a real
 value where a missing one was meant. A cross-language corpus case comparing
 these dumps has to normalise the three spellings to one before diffing.
 
+#### Backend limits that a corpus case must route around
+
+Every track hits the contract above through a third-party decoder, and two of
+those decoders cannot reach all of it. These are **known, permitted
+divergences** — recorded so a cross-language corpus case does not encode a
+difference it cannot fix, and so nobody "fixes" a track into disagreeing with
+its own library:
+
+- **Julia cannot open a file that carries a nested column at all.** Parquet2.jl
+  builds a `Column` for every schema node when the file is opened, so a file
+  with a list/struct/map column errors on open rather than decoding its flat
+  columns beside it. Rust and Python decode the flat columns and treat the
+  nested one as absent (§3's rule). A corpus case must therefore **not** put a
+  nested column in a shared fixture; the rule stays normative and is exercised
+  per-track instead.
+- **Julia recovers a timestamp only to millisecond resolution.** Parquet2.jl
+  decodes every timestamp to a `DateTime` before the reader sees it, so a
+  MICROS or NANOS column's raw integer is not recoverable. A shared fixture
+  should keep timestamps millisecond-aligned.
+- **Julia's decimals arrive as `Dec64`.** Rust and Python both compute
+  `f64(unscaled) / 10.0^scale`; Julia cannot see the unscaled integer. For
+  `|unscaled| < 2^53` and `scale <= 22` the two agree bit-for-bit, because both
+  operands of that division are exact and the quotient is correctly rounded.
+  Outside that range they may differ, bounded by `Dec64`'s 16 digits.
+
+The first is a genuine gap in coverage, not merely a formatting difference: the
+"nested column is simply not a field" rule is normative but is unenforceable
+cross-language until Parquet2.jl can open such a file.
+
 #### `float_columns`, and floats stored as text
 
 `float_columns` forces the named columns to `float64` whatever their on-disk
