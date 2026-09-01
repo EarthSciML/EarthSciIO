@@ -48,6 +48,10 @@ s3 = ["s3fs>=2023.1", "fsspec>=2023.1"]
 # GDAL, no C toolchain), the peer of the Julia `Shapefile.jl` extension and the
 # Rust `shapefile` crate. Imported lazily so a base install stays lean.
 shapefile = ["pyshp>=2.3"]
+# Parquet reader: pyarrow is the reference Apache Arrow/Parquet implementation
+# and the peer of the Rust `parquet` crate, so the Arrow type mapping is the same
+# enum on both sides. Imported lazily so a base install stays lean.
+parquet = ["pyarrow>=14"]
 test = ["pytest>=7", "jsonschema>=4", "referencing>=0.30"]
 
 [tool.setuptools.packages.find]

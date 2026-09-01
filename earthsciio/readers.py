@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv as _csv
 import datetime as _dt
+import decimal as _decimal
 import fnmatch as _fnmatch
 import io as _io
 import zipfile as _zipfile
@@ -39,6 +40,7 @@ __all__ = [
     "GeoTIFFReader",
     "FF10Reader",
     "ShapefileReader",
+    "ParquetReader",
     "register_format_readers",
 ]
 
@@ -1118,12 +1120,401 @@ def _shp_text(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Parquet reader (pyarrow) — `spec/conformance.md` §3, "Parquet decode notes".
+# --------------------------------------------------------------------------- #
+
+#: Working context for the decimal → unscaled-integer shift below. Wide enough
+#: for a `Decimal256` (76 digits), so the shift never rounds.
+_PQ_DECIMAL_CTX = _decimal.Context(prec=100)
+
+
+def _pq_target_dtype(typ: Any, forced_float: bool) -> Optional[str]:
+    """The §3 native dtype an Arrow column maps to, or ``None`` when it has none.
+
+    A total function of the Arrow type — which is what makes cross-language
+    parity cheap here, and why a track that deviates is *wrong* rather than
+    merely different. pyarrow is the same Apache Arrow project as the Rust
+    ``parquet`` crate, so this is literally the same enum as
+    ``rust/src/format/parquet.rs``'s ``target_dtype``.
+
+    ``forced_float`` is the column being named in ``float_columns``: a statement
+    about the SOURCE ("this column is a float64 measurement"), so it applies to
+    anything with a rank-1 numeric reading, decimal *text* included. A column
+    with no rank-1 reading at all (list/struct/map/union/binary/interval) has
+    none whatever the option says.
+    """
+    import pyarrow.types as pt
+
+    if pt.is_dictionary(typ):
+        # A categorical reads as its VALUE type, expanded to one value per row;
+        # the key encoding is storage and never reaches the native array.
+        return _pq_target_dtype(typ.value_type, forced_float)
+    if pt.is_boolean(typ):
+        return "float64" if forced_float else "bool"
+    # The narrow/wide integer split is the NetCDF reader's, VERBATIM — restated
+    # so a MOVES `int32` ID column and a CF `int32` time axis cannot drift apart.
+    if (
+        pt.is_int8(typ) or pt.is_int16(typ) or pt.is_int32(typ)
+        or pt.is_uint8(typ) or pt.is_uint16(typ)
+    ):
+        return "float64" if forced_float else "int32"
+    if pt.is_int64(typ) or pt.is_uint32(typ) or pt.is_uint64(typ):
+        return "float64" if forced_float else "int64"
+    if pt.is_floating(typ) or pt.is_decimal128(typ) or pt.is_decimal256(typ):
+        return "float64"
+    # An all-null column has no type of its own; float64 is the one logical type
+    # that can represent every cell of it (as NaN).
+    if pt.is_null(typ):
+        return "float64"
+    if pt.is_string(typ) or pt.is_large_string(typ) or pt.is_string_view(typ):
+        return "float64" if forced_float else "string"
+    # Temporal columns ride as their RAW stored integer (see `_pq_cells`).
+    if pt.is_date32(typ) or pt.is_time32(typ):
+        return "float64" if forced_float else "int32"
+    if (
+        pt.is_date64(typ) or pt.is_time64(typ)
+        or pt.is_timestamp(typ) or pt.is_duration(typ)
+    ):
+        return "float64" if forced_float else "int64"
+    return None
+
+
+def _pq_cells(col: Any) -> Tuple[List[Any], Any]:
+    """A column's cells as plain Python values (``None`` for a null) + its type.
+
+    The returned type is the DICTIONARY-DECODED one, so the caller sees the
+    value type a categorical really carries.
+
+    Two decodes happen here rather than in the caller:
+
+    * a ``Dictionary(K, V)`` is expanded to one ``V`` per row — a null key and a
+      key pointing at a null value are both nulls, which ``cast`` already folds;
+    * a temporal column is cast to its **raw stored integer**. The Arrow unit
+      (``s``/``ms``/``us``/``ns``) and any timezone are NOT applied and NOT
+      reported, the same rule a CF time axis gets: turning an epoch offset into
+      a wall-clock instant is ESS's job (Risk R3). Casting is what keeps the raw
+      value — ``to_pylist`` alone would hand back ``datetime`` objects.
+
+    ``to_pylist`` is used rather than ``to_pandas``/``to_numpy`` on purpose:
+    pandas promotes a nullable int64 column to ``float64``, which is exactly the
+    silent substitution the null policy below exists to forbid.
+    """
+    import pyarrow as pa
+    import pyarrow.types as pt
+
+    typ = col.type
+    if pt.is_dictionary(typ):
+        col = col.cast(typ.value_type)
+        typ = col.type
+    if pt.is_date32(typ) or pt.is_time32(typ):
+        return col.cast(pa.int32()).to_pylist(), typ
+    if (
+        pt.is_date64(typ) or pt.is_time64(typ)
+        or pt.is_timestamp(typ) or pt.is_duration(typ)
+    ):
+        return col.cast(pa.int64()).to_pylist(), typ
+    return col.to_pylist(), typ
+
+
+def _pq_null_error(name: str, row: int, kind: str, option: str) -> ValueError:
+    """The refusal a null in a type with no missing value gets.
+
+    It names the way out, because "declare a sentinel" is a decision only the
+    document can make.
+    """
+    return ValueError(
+        f"parquet column {name!r} row {row} is null, and a {kind} native field has no "
+        f"missing value; declare the `{option}` reader option to substitute one, or "
+        f"list the column in `float_columns` to read it as float64 with NaN"
+    )
+
+
+def _pq_float_text(name: str, row: int, text: str) -> float:
+    """A decimal-TEXT cell as ``float64`` under ``float_columns``.
+
+    Trimmed and parsed; blank → ``NaN`` (the FF10/shapefile rule); anything else
+    unparseable is an error naming the column, the row and the text. The
+    underscore guard keeps Python's numeric-literal spelling (``"1_0"`` parses as
+    10.0) from accepting text no other track would.
+    """
+    t = text.strip()
+    if not t:
+        return np.nan
+    if "_" not in t:
+        try:
+            return float(t)
+        except ValueError:
+            pass
+    raise ValueError(
+        f"parquet column {name!r} row {row}: {text!r} is not a float64 "
+        f"(the column is declared in `float_columns`)"
+    )
+
+
+def _pq_field(
+    name: str,
+    col: Any,
+    dtype: str,
+    null_int: Optional[int],
+    null_string: Optional[str],
+) -> NativeField:
+    """One Parquet column as a rank-1 :class:`NativeField` over ``index``.
+
+    Applies the §3 null policy: a null in a **float** column is ``NaN`` (the same
+    fold a CF ``_FillValue`` gets); a null in an **integer**, **string** or
+    **boolean** column is an error naming the column and the row, because those
+    types have no NaN and any default would be a real value silently standing in
+    for a missing one. ``null_int`` / ``null_string`` open that gate only when a
+    document declares them, and ``null_int`` is reported back in
+    ``attrs["fill_value"]`` (an integer sentinel cannot be NaN, so it survives
+    into the array exactly as a CF integer fill does).
+    """
+    import pyarrow.types as pt
+
+    cells, typ = _pq_cells(col)
+
+    if dtype == "float64":
+        if pt.is_decimal128(typ) or pt.is_decimal256(typ):
+            # Unscaled integer ÷ 10^scale, in double — the arrow-rs reader's own
+            # arithmetic, so the two tracks round identically.
+            scale = typ.scale
+            div = 10.0 ** scale
+            values = [
+                np.nan if c is None else float(int(c.scaleb(scale, _PQ_DECIMAL_CTX))) / div
+                for c in cells
+            ]
+        elif pt.is_string(typ) or pt.is_large_string(typ) or pt.is_string_view(typ):
+            values = [
+                np.nan if c is None else _pq_float_text(name, i, c)
+                for i, c in enumerate(cells)
+            ]
+        elif pt.is_boolean(typ):
+            for i, c in enumerate(cells):
+                if c is not None:
+                    raise ValueError(
+                        f"parquet column {name!r} row {i}: a boolean cell cannot be "
+                        f"read as float64"
+                    )
+            values = [np.nan] * len(cells)
+        else:
+            values = [np.nan if c is None else float(c) for c in cells]
+        return NativeField(np.array(values, dtype="float64"), ("index",), {})
+
+    if dtype in ("int32", "int64"):
+        lo, hi = (-(2 ** 31), 2 ** 31 - 1) if dtype == "int32" else (-(2 ** 63), 2 ** 63 - 1)
+        values = []
+        for i, c in enumerate(cells):
+            if c is None:
+                if null_int is None:
+                    raise _pq_null_error(name, i, "integer", "null_int")
+                v = int(null_int)
+            else:
+                v = int(c)
+            if not lo <= v <= hi:
+                # The one integer width that does not fit: refuse rather than
+                # wrap a uint64 into a negative ID.
+                raise ValueError(
+                    f"parquet column {name!r} row {i}: value {v} does not fit the "
+                    f"{dtype} native dtype"
+                )
+            values.append(v)
+        attrs = {"fill_value": int(null_int)} if null_int is not None else {}
+        return NativeField(np.array(values, dtype=dtype), ("index",), attrs)
+
+    if dtype == "string":
+        text: List[str] = []
+        for i, c in enumerate(cells):
+            if c is None:
+                if null_string is None:
+                    raise _pq_null_error(name, i, "string", "null_string")
+                text.append(str(null_string))
+            else:
+                # Utf8 → str, and NOTHING else: an `SCC` or any other
+                # leading-zero code must not be helpfully turned into a number.
+                text.append(c)
+        return NativeField(text, ("index",), {})
+
+    for i, c in enumerate(cells):
+        if c is None:
+            # No sentinel option: a third boolean state is a float64 column.
+            raise ValueError(
+                f"parquet column {name!r} row {i} is null, and a boolean native field "
+                f"has no missing value; declare the column in the `float_columns` "
+                f"reader option if a third state is meant"
+            )
+    return NativeField(np.array(cells, dtype="bool"), ("index",), {})
+
+
+class ParquetReader:
+    """The active ``parquet`` reader — an Apache Parquet file as a flat table.
+
+    Decode is delegated to **pyarrow** (:mod:`pyarrow.parquet`), imported lazily
+    so a base install stays lean. pyarrow is the reference Apache Arrow/Parquet
+    implementation and the peer of the Rust track's ``parquet`` crate, so the
+    Arrow type surface below is literally the same enum on both sides — the
+    reason cross-language parity is cheap here. Nothing about the format is
+    re-implemented; what this reader owns is the mapping onto the NATIVE-ARRAY
+    contract (``spec/conformance.md`` §3, "Parquet decode notes").
+
+    **A table, not a grid.** Like the ``csv``/``ff10``/``shapefile`` readers,
+    every column becomes a rank-1 field over ``index``, keyed by its **on-disk
+    column name**, and the dataset carries **no coordinates**. ``index`` has
+    length ``num_rows``. A zero-row file is **typed, not absent**: the schema
+    lives in the footer, so every column comes back empty with its declared
+    dtype — which matters because most of a MOVES fixture's ~770 tables are
+    empty and a document binding one must still see the array it named.
+
+    **Type mapping** (a total function of the Arrow type):
+
+    ==========================================  =========
+    Arrow type                                  dtype
+    ==========================================  =========
+    ``Boolean``                                 ``bool``
+    ``Int8``/``Int16``/``Int32``/``UInt8``/``UInt16``  ``int32``
+    ``Int64``/``UInt32``/``UInt64``             ``int64``
+    ``Float16``/``Float32``/``Float64``         ``float64``
+    ``Decimal128``/``Decimal256``               ``float64`` (unscaled ÷ 10^scale)
+    ``Utf8``/``LargeUtf8``/``Utf8View``         ``string``
+    ``Date32``/``Time32``                       ``int32`` (raw, **undecoded**)
+    ``Date64``/``Time64``/``Timestamp``/``Duration``  ``int64`` (raw, **undecoded**)
+    ``Dictionary(_, V)``                        as ``V``, expanded
+    ``Null``                                    ``float64``, all ``NaN``
+    ==========================================  =========
+
+    The narrow/wide integer split is the :class:`NetCDFReader`'s, **verbatim**,
+    so a MOVES ``int32`` ID column and a CF ``int32`` time axis cannot drift
+    apart. A ``uint64`` above ``int64`` max is an error naming the column and
+    row, never a wraparound into a negative ID. Nested and binary columns have
+    no rank-1 reading: naming one in ``variables`` is an error, unrequested it is
+    simply not a field (as the NetCDF reader skips its non-numeric variables).
+
+    **Null policy.** Nearly every Parquet column is nullable in its schema
+    whether or not it holds a null — a table exported from a relational database
+    usually marks every column nullable — so nullability cannot pick the dtype.
+    A null in a float column is ``NaN``; a null in an integer/string/boolean
+    column is an error, opened only by a declared ``null_int`` / ``null_string``.
+
+    **Column projection pushes down.** ``variables`` becomes a pyarrow column
+    projection, so only those column chunks are read off disk — not
+    read-then-discarded. These tables are wide (a MOVES table runs to dozens of
+    columns) and a document typically wants three. Empty ``variables`` reads
+    every column; a requested name absent from the file is an error listing what
+    is present, never a silently missing array.
+
+    READER-ONLY (Risk R3): no row selection, no filtering, no code mapping, no
+    name remap, no unit conversion. esm-spec §8.9 puts ``codes``,
+    ``record_filter``, ``select`` and ``extent`` downstream of the decode, and
+    ``select`` never reaches a whole-file reader at all (the Provider hands one
+    whole-file selection unconditionally).
+
+    ``reader_kwargs``: ``float_columns=[...]`` forces the named columns to
+    ``float64`` whatever their on-disk type — the Parquet twin of the
+    ``ShapefileReader``'s ``numeric_columns`` — and does two jobs, because they
+    are the same statement about the source: an integer column that is really a
+    measurement (missing cells → ``NaN`` rather than a sentinel), **and** a
+    column of fixed-decimal **text**. A corpus that needs byte-reproducible
+    floats stores them as decimal strings rather than IEEE doubles — the MOVES
+    snapshots write ``meanBaseRate`` as ``"261.000000000000"`` — and this is how
+    a document says so. ``null_int=n`` / ``null_string="…"`` declare the null
+    substitutes above. None of the three enters the cache key.
+    """
+
+    #: Registry name + format key(s) + extension sniff hints.
+    NAME = "parquet"
+    FORMATS = ("parquet",)
+    EXTENSIONS = ("parquet", "parq", "pq")
+
+    def formats(self) -> List[str]:
+        return list(self.FORMATS)
+
+    def extensions(self) -> List[str]:
+        return list(self.EXTENSIONS)
+
+    def open(self, blob_path: Any) -> Any:
+        return blob_path
+
+    def read_native(
+        self,
+        handle: Any,
+        variables: Optional[Sequence[str]] = None,
+        select: Optional[Any] = None,
+        *,
+        float_columns: Optional[Sequence[str]] = None,
+        null_int: Optional[int] = None,
+        null_string: Optional[str] = None,
+        **_: Any,
+    ) -> NativeDataset:
+        """Decode a Parquet blob into a flat table of rank-1 ``index`` fields.
+
+        ``select`` is accepted and ignored: row selection is esm-spec §8.9.2 work
+        downstream of the decode, and the Provider hands a whole-file reader one
+        whole-file selection unconditionally. The whole table is read.
+        """
+        try:
+            import pyarrow.parquet as _pq  # lazy: only this path needs pyarrow
+        except ImportError as exc:  # pragma: no cover - exercised with no backend
+            raise ImportError(
+                "the parquet reader needs the pyarrow backend: install it — "
+                "e.g. `pip install earthsciio[parquet]`."
+            ) from exc
+
+        pf = _pq.ParquetFile(handle)
+        schema = pf.schema_arrow
+        present = list(schema.names)
+
+        # Resolve the requested names against the file's OWN schema first, so an
+        # unknown one is this reader's error listing what is present rather than
+        # pyarrow's "field not found".
+        wanted = [str(v) for v in variables] if variables else []
+        if wanted:
+            missing = sorted({w for w in wanted if w not in present})
+            if missing:
+                raise KeyError(
+                    f"requested variables not in the parquet file: {missing}; "
+                    f"present: {present}"
+                )
+        want = set(wanted)
+        forced = {str(c) for c in float_columns} if float_columns else set()
+
+        # Decide every column's dtype from the SCHEMA, before a single data byte
+        # is read: an unreadable column named in `variables` fails without
+        # touching it, and an unrequested one is simply never projected. Building
+        # the accumulators from the schema is also what makes a zero-row file
+        # typed rather than absent.
+        columns: List[str] = []
+        dtypes: List[str] = []
+        for field in schema:
+            if want and field.name not in want:
+                continue
+            dtype = _pq_target_dtype(field.type, field.name in forced)
+            if dtype is None:
+                if field.name in want:
+                    raise ValueError(
+                        f"parquet column {field.name!r} has arrow type {field.type}, "
+                        f"which has no rank-1 native reading (nested and binary "
+                        f"columns are not supported)"
+                    )
+                continue
+            columns.append(field.name)
+            dtypes.append(dtype)
+
+        # PROJECTION PUSHDOWN. `columns` reaches pyarrow as the read projection,
+        # so only these column chunks come off disk and get decoded.
+        out: Dict[str, NativeField] = {}
+        if columns:
+            table = pf.read(columns=columns)
+            for i, (name, dtype) in enumerate(zip(columns, dtypes)):
+                out[name] = _pq_field(name, table.column(i), dtype, null_int, null_string)
+        return NativeDataset(out, {})
+
+
+# --------------------------------------------------------------------------- #
 # Registration (idempotent) — called from earthsciio/__init__.py on import.
 # --------------------------------------------------------------------------- #
 
 
 def register_format_readers(registry: Optional[Registry] = None) -> None:
-    """Register the active ``netcdf`` + ``csv`` + ``geotiff`` + ``ff10`` + ``shapefile`` readers.
+    """Register the active ``netcdf``/``csv``/``geotiff``/``ff10``/``shapefile``/``parquet`` readers.
 
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same
     factory is re-registered, so importing the package twice is safe. Orthogonal
@@ -1164,6 +1555,23 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
               "replicated; `geometry` [index, vertex, xy] right-padded by repeating "
               "the final vertex; the record's stored bbox as xmin/ymin/xmax/ymax; "
               ".prj WKT carried as attrs.crs_wkt; `.shp` inside a zip via `member`.",
+    )
+    reg.register(
+        ParquetReader.NAME,
+        ParquetReader,
+        keys=list(ParquetReader.FORMATS),
+        status="active",
+        extensions=list(ParquetReader.EXTENSIONS),
+        notes="Apache Parquet as a FLAT TABLE via pyarrow; every column a rank-1 field "
+              "over `index`, no coords; dtype a total function of the Arrow type (the "
+              "netcdf reader's narrow/wide integer split, verbatim); temporal columns "
+              "carried as their RAW integer (unit/timezone unapplied); Dictionary(_,V) "
+              "expanded to V; nested/binary columns are not fields (an error when named); "
+              "a zero-row file is typed, not absent. Null policy: float->NaN, "
+              "integer/string/boolean an error unless `null_int` (reported back as "
+              "attrs.fill_value) / `null_string` is declared. `float_columns` forces "
+              "float64 and parses fixed-decimal TEXT (blank->NaN). `variables` pushes "
+              "down as a column projection.",
     )
     reg.register(
         FF10Reader.NAME,
