@@ -64,7 +64,9 @@ disjoint subsets).
       "status": "decoded",
       "variables": {
         "t2m": { "dtype": "float64", "dims": ["time","latitude","longitude"],
-                 "shape": [2,3,3], "data": [282.5, /* … */, null] }
+                 "shape": [2,3,3], "data": [282.5, /* … */, null] },
+        "pollutantID": { "dtype": "int32", "dims": ["index"], "shape": [6],
+                         "fill_value": -1, "data": [2,3,-1,110,100,31] }
       },
       "coords": {
         "time": { "dtype": "int32", "dims": ["time"], "shape": [2], "data": [0,1],
@@ -85,6 +87,32 @@ arrays line up element-for-element. A masked / `_FillValue` cell is `null`
 (== NaN). Strings are verbatim. A case whose format the track can't read is
 `status:"skipped"` with a `reason` — **explicit, never omitted** — so a real
 coverage gap is distinguishable from a dumper bug.
+
+`fill_value` is present only when a **surviving** fill/missing sentinel exists
+(today: a `parquet` `null_int` on an integer column). It is the one place the
+dump deliberately **normalises across tracks**: `spec/conformance.md` §3 pins
+Rust reporting it in `NativeField::fill_value` and Python/Julia in
+`attrs["fill_value"]` — *the same datum in three spellings, not three
+decisions* — so each dumper reads its own spelling and writes this one key, and
+`crosscheck.py` compares it numerically (Rust's `f64` slot dumps `-1.0` where
+the other two dump `-1`). Without it, a track that silently DROPPED a declared
+sentinel would cross-check clean, and the loss would surface much later as a
+real value standing where a missing one was meant.
+
+## Narrowing a run
+
+`$ESIO_CONFORMANCE_CASES` is a comma-separated case-id list honoured identically
+by the three dumpers **and** `crosscheck.py`, so a filtered run is still a
+complete cross-check of the cases it names:
+
+```bash
+ESIO_CONFORMANCE_CASES=moves-rate-table-parquet ./conformance/run_conformance.sh
+```
+
+It exists for an environment where one track's backend for some *other* format
+is missing or too old — without it a single unrelated broken case makes the gate
+unrunnable and hides real divergences elsewhere. CI leaves it unset, which is
+every case.
 
 ## Documented tolerance (`spec/conformance.md` §4)
 
@@ -111,6 +139,11 @@ the oracle [`verify.py`](verify.py).
 | `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 | `permuted-order-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
 | `shapefile-polygon-zip` | shapefile | ✅ | ✅ | ✅ (three-way) |
+| `moves-rate-table-parquet` | parquet | ✅ | ✅ | ✅ (three-way) |
+
+The parquet case is the columnar one: it is where the reader OPTIONS
+(`float_columns`, `null_int`, `null_string`) and the `variables` projection are
+cross-checked, and where the `fill_value` normalisation above is exercised.
 
 The Rust track has no `csv` reader yet, so the CSV case is a logged Rust skip
 (mirrors [`rust/tests/conformance_decode.rs`](../rust/tests/conformance_decode.rs)),

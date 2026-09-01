@@ -13,6 +13,12 @@
 #     OUT_DIR  where the three dumps are written (default: a temp dir, removed on
 #              exit). Pass a path to keep the dumps for inspection.
 #
+# $ESIO_CONFORMANCE_CASES narrows the run to a comma-separated case-id list,
+# honoured identically by the three dumpers and the comparator (so a filtered run
+# is still a complete cross-check of the cases it names). It exists for an
+# environment where one track's backend for some OTHER format is missing or too
+# old; CI leaves it unset, which is every case.
+#
 # Exit status is the comparator's: 0 = all tracks agree, 1 = a divergence or a
 # coverage regression. Any dumper failing (build/decode) also aborts non-zero.
 
@@ -25,6 +31,11 @@ cd "$REPO_ROOT"
 # (offline=true wins over the environment), but force the shared offline switch so
 # any incidental default-cache construction also refuses the network.
 export EARTHSCI_OFFLINE=1
+# The Julia dumper bootstraps its weakdep decode backends (Blosc, Shapefile,
+# Parquet2) into a temp environment when the minimal `--project=julia` cannot
+# import them. Pkg must resolve that from the depot rather than reaching for the
+# network, or an offline run hangs on a registry fetch.
+export JULIA_PKG_OFFLINE="${JULIA_PKG_OFFLINE:-true}"
 
 if [ "$#" -ge 1 ]; then
   OUT="$1"

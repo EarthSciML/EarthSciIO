@@ -37,16 +37,14 @@ data tooling beyond the format reader.
 | `ff10-zip-egu-glob` | nei2016 | points | ff10 | file | local | EPA-2016fd-shaped **zip** of FF10 members (two `*egu*` + one excluded + a glob-matching **directory placeholder** entry, ignored), each member with a non-comment `country_cd,…` header line. Pins `member_glob` selection (exclusion, **sorted member-name concatenation**) + `skip_header_row` (one asserted header line dropped per member). The blob is the whole zip; member selection is reader config, never part of the cache key |
 | `shapefile-polygon-zip` | emis_polygons | points | shapefile | file | local | ESRI **shapefile** zipped with its `.shx`/`.dbf`/`.prj` sidecars. Pins the whole reader contract in one layer: **one row per PART** (a mainland + an island decode to two rows with the `.dbf` attributes replicated), the esm-spec §8.6.1 **repeat-final-vertex** padding, the `*`-only deletion rule (a NUL flag byte is NOT a deletion), the record's **stored** bbox replicated to its parts, and the dtype rules (`C`→string, `N`→float64 with blank→NaN, `L`→bool, a `C` code column forced float64 by `numeric_columns`) |
 | `isrm-zarr-tile` | isrm | grid | zarr | s3 | local | **store-backed** Zarr v2: lazy orthogonal chunk selection (fetch only the intersecting chunk objects), blosc/lz4+shuffle decode, partial edge chunk, `fill_value` 0.0 NOT→NaN, no coords. `objects[]` per-object key/integrity. |
+| `moves-rate-table-parquet` | moves | points | parquet | file | local | MOVES-shaped **Parquet** rate table, 6 rows in **2 row groups** (so the batch seam and row order are pinned), snappy. One column per supported Arrow family: the narrow/wide integer split (a `uint8` 255 read unsigned, a `uint32` 4294967295 that does not fit an int32), a **categorical expanded**, float32 widened bit-exactly, `Decimal128` as unscaled/10^scale, temporal columns as their **raw** stored integer at their stored width, an all-`Null` column as float64/all-NaN. Null policy + both gates: `null_int=-1` fills every integer null **and** is reported in `fill_value`; `null_string` fills a text null *and* a dictionary null while a real `""` survives. `float_columns` does **both** its jobs — decimal TEXT (blank→NaN) and an integer measurement whose nulls become NaN, so no `fill_value` survives it. `variables` is a real **projection**: a readable column and a `Binary` one are both left out |
 
-A **`parquet` corpus case is likewise reserved**: the decode contract is pinned
-normatively below (§3, "Parquet decode notes"), but a corpus case is a
-*cross-language* artifact — `crosscheck.py` compares the Python, Julia and Rust
-dumps of the same blob — and the Python track does not ship a `parquet` reader
-yet. Committing the case now would fail the conformance job for a gap it does not
-describe. It belongs with the Python (pyarrow) reader — see
-[`parquet-bindings-handoff.md`](parquet-bindings-handoff.md) for that work order;
-`rust/tests/parquet_reader.rs` and `julia/test/test_parquet_reader.jl` cover the
-Rust and Julia tracks meanwhile.
+The `parquet` case carries no nested column, no sub-millisecond timestamp and no
+decimal outside `Dec64`'s exact range — each because a Parquet2.jl limit
+(recorded in §3 below) makes that shape unenforceable across three tracks, not
+because the contract is unclear. Those rules stay normative and are exercised
+per-track by `rust/tests/parquet_reader.rs`, `julia/test/test_parquet_reader.jl`
+and `tests/test_parquet_reader.py`.
 
 GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
 shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are
@@ -193,7 +191,11 @@ that deviates is wrong rather than merely different:
   restated rather than re-derived so a MOVES `int32` ID column and a CF `int32`
   time axis cannot drift apart.
 - **A `uint64` above `int64::MAX` is an error** naming the column and row, never
-  a wraparound into a negative ID.
+  a wraparound into a negative ID — *when the column is read as an integer*.
+  Under `float_columns` the document has declared it a float64 measurement,
+  there is no integer to wrap into, and it decodes. (The range check belongs to
+  the integer coercion, not to the decode; a track that puts it in the decode
+  refuses a read the other two perform.)
 - **Temporal columns are carried verbatim as their raw stored integer.** The
   Arrow unit (`s`/`ms`/`us`/`ns`) and any timezone are **not** applied and **not**
   reported — the same rule a CF time axis gets, because turning an epoch offset
@@ -252,6 +254,14 @@ invisible until a document reads a fill-bearing integer column and gets a real
 value where a missing one was meant. A cross-language corpus case comparing
 these dumps has to normalise the three spellings to one before diffing.
 
+That normalisation is **done, in two steps**: each provider dumper emits its own
+spelling under the single `fill_value` key of `earthsciio/native-dump/v1`, and
+[`crosscheck.py`](../conformance/crosscheck.py) compares that key numerically
+(Rust's slot is an `f64`, so it dumps `-1.0` where the other two dump `-1`, and
+those are one datum) against the oracle and pairwise. The corpus case
+`moves-rate-table-parquet` declares `fill_value` on every integer column, so a
+track that silently dropped the sentinel now fails the gate.
+
 #### Backend limits that a corpus case must route around
 
 Every track hits the contract above through a third-party decoder, and two of
@@ -276,10 +286,25 @@ its own library:
   `|unscaled| < 2^53` and `scale <= 22` the two agree bit-for-bit, because both
   operands of that division are exact and the quotient is correctly rounded.
   Outside that range they may differ, bounded by `Dec64`'s 16 digits.
+- **Julia does not decode a `Float16` column at all.** Parquet2.jl does not
+  surface a FLOAT16 column, so it is not even in the file's column list there:
+  it is simply not a native field, and naming it in `variables` is an
+  "absent from the file" error. Rust and Python both return it as float64. A
+  shared fixture must therefore not carry a `Float16` column.
+- **A negative `Decimal` in a 7-byte `FIXED_LEN_BYTE_ARRAY`** (pyarrow precision
+  15–16) cannot be read in the Julia track *at all*: Parquet2.jl folds the
+  two's-complement bytes into an `Int64` **unsigned**, and the resulting 2^56
+  overflows a `Dec64`'s 16 digits inside page decode. The reader reports that as
+  an error naming the limit. **Narrower** widths (precision ≤ 14) are NOT a
+  permitted divergence — they were silently returning the unsigned
+  reinterpretation (`-2.50` in a `decimal128(9, 2)` as `42949670.46`), and
+  `EarthSciIOParquet2Ext` now repairs the sign exactly, so all three tracks
+  agree there. Widths ≥ 8 bytes were always correct.
 
 The first is a genuine gap in coverage, not merely a formatting difference: the
 "nested column is simply not a field" rule is normative but is unenforceable
-cross-language until Parquet2.jl can open such a file.
+cross-language until Parquet2.jl can open such a file. The `Float16` gap is the
+same shape, one column type down.
 
 #### `float_columns`, and floats stored as text
 
@@ -307,6 +332,10 @@ tables are wide (a MOVES table runs to dozens of columns) and a document
 typically wants three. Empty `variables` reads every column. A requested name
 absent from the file is an error listing what is present, never a silently
 missing array.
+
+An **empty** `variables` list is the same as none at all — every column — and a
+track that reads it as "no columns" disagrees with the other two. (`select` is
+separate and never reaches a whole-file reader.)
 
 Row selection is **not** a reader concern: esm-spec §8.9 puts `codes`,
 `record_filter`, `select` and `extent` downstream of the decode, and `select`
@@ -385,13 +414,23 @@ The cross-language harness (`esio-9nb.9`, **shipped** —
 
 ```bash
 python3 conformance/verify.py     # offline; validates schemas + all cases, exit 1 on any failure
-python3 conformance/generate.py   # deterministically regenerates the corpus (needs numpy + netCDF4)
+python3 conformance/generate.py   # deterministically regenerates the corpus (needs numpy + netCDF4 + pyarrow)
 ./conformance/run_conformance.sh  # offline; run all 3 providers + assert cross-language array equality
+
+# narrow the run to named cases (all three dumpers + the comparator honour it):
+ESIO_CONFORMANCE_CASES=moves-rate-table-parquet ./conformance/run_conformance.sh
 ```
+
+`$ESIO_CONFORMANCE_CASES` exists for an environment where one track's backend
+for some *other* format is missing or too old — without it a single unrelated
+broken case makes the gate unrunnable and hides real divergences elsewhere. CI
+leaves it unset, which is every case.
 
 `generate.py` is committed for provenance and is **byte-deterministic**
 (NETCDF3_CLASSIC, fixed data, pinned `fetched_at`) — regenerating does not churn
-the committed blobs. Conformance consumers read the **committed** blobs, so no
+the committed blobs. The **parquet** blob is the one exception: its bytes carry
+the writing pyarrow's `created_by` string and `ARROW:schema` metadata, so
+regenerating it on a different pyarrow rewrites it (committed with 21.0.0). Conformance consumers read the **committed** blobs, so no
 language track needs Python.
 
 ---

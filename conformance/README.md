@@ -10,7 +10,7 @@ corpus/
   cache/v1/meta/<key>.json               # manifests
   cases/<id>.json                        # one conformance case per blob
   cases.json                             # case index
-generate.py                              # deterministic corpus generator (numpy + netCDF4 + pyshp)
+generate.py                              # deterministic corpus generator (numpy + netCDF4 + pyshp + pyarrow)
 verify.py                                # reference runner / oracle — the 5 conformance checks, offline
 dumpers/dump_python.py                   # Python  provider -> native-dump/v1   (cross-language harness)
 dumpers/dump_julia.jl                    # Julia   provider -> native-dump/v1
@@ -33,9 +33,10 @@ python3 conformance/generate.py   # regenerate the corpus (byte-deterministic)
 track reproduces its five checks (cache-key agreement, manifest integrity,
 reader decode, native-array equality, offline-only). It needs only `numpy` (+
 `xarray`/`netCDF4` for the NetCDF case) and optionally `jsonschema` for schema
-validation. The `shapefile` case additionally needs `pyshp` — which is also what
-`generate.py` writes the fixture with, so a track regenerating the corpus needs
-it too. Other tracks read the **committed** blobs and need no Python.
+validation. The `shapefile` case additionally needs `pyshp`, and the `parquet`
+case `pyarrow` — which is also what `generate.py` writes those fixtures with, so
+a track regenerating the corpus needs them too. Other tracks read the
+**committed** blobs and need no Python.
 
 ## Cross-language harness (`esio-9nb.9`)
 
