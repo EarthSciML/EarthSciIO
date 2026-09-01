@@ -148,4 +148,49 @@ write(
     compression="snappy",
 )
 
+# NEGATIVE decimals at every FIXED_LEN_BYTE_ARRAY width pyarrow uses. Parquet
+# stores an FLBA decimal as a big-endian TWO'S COMPLEMENT integer, and
+# Parquet2.jl folds those bytes into an Int64 with no sign extension, so every
+# negative in a column narrower than 8 bytes came back as its huge unsigned
+# reinterpretation until `EarthSciIOParquet2Ext` repaired it. The precisions
+# below are one per width: 2 -> 2 bytes, 4 -> 2, 9 -> 4, 12 -> 6, 18 -> 8 (the
+# width that never needed repairing). Each column carries its extreme negative,
+# its extreme positive, and the cells either side of zero.
+write(
+    "parquet_decimals.parquet",
+    pa.table(
+        {
+            "d02": pa.array(["99", "-99", "0", "-1", "1"]).cast(pa.decimal128(2, 0)),
+            "d04": pa.array(["99.99", "-99.99", "0.00", "-0.01", "0.01"])
+            .cast(pa.decimal128(4, 2)),
+            "d09": pa.array(
+                ["9999999.99", "-9999999.99", "0.00", "-0.01", "0.01"]
+            ).cast(pa.decimal128(9, 2)),
+            "d12": pa.array(
+                ["9999999999.99", "-9999999999.99", "0.00", "-0.01", "0.01"]
+            ).cast(pa.decimal128(12, 2)),
+            "d18": pa.array(
+                ["999999.999999", "-999999.999999", "0.000000", "-0.000001",
+                 "0.000001"]
+            ).cast(pa.decimal128(18, 6)),
+        }
+    ),
+    compression="none",
+)
+
+# The ONE width the repair cannot reach: a 7-byte FLBA (pyarrow precision
+# 15-16). The unsigned fold of a negative is 2^56 — 17 decimal digits, which
+# overflows a Dec64's 16 — so Parquet2 throws during page decode, before any
+# repair could run. The reader turns that into a message naming the limit.
+write(
+    "parquet_decimal7.parquet",
+    pa.table(
+        {
+            "pos": pa.array(["1.25", "2.50"]).cast(pa.decimal128(15, 2)),
+            "neg": pa.array(["-1.25", "2.50"]).cast(pa.decimal128(15, 2)),
+        }
+    ),
+    compression="none",
+)
+
 print("wrote fixtures to", OUT, file=sys.stderr)

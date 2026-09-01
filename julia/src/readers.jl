@@ -1141,18 +1141,27 @@ READER-ONLY (Risk R3): row selection, `record_filter`, `codes` and `extent` are
 esm-spec §8.9 work DOWNSTREAM of the decode (and a whole-file reader never even
 sees a `select`), and there is no name remap and no unit conversion.
 
-!!! note "Three Parquet2.jl backend limits"
+!!! note "Parquet2.jl backend limits"
     A file containing a nested (`list`/`struct`/`map`) column cannot be OPENED by
     Parquet2.jl at all, so such a file errors rather than decoding its readable
     columns — the one place this track cannot reach the §3 contract's "unrequested,
     it is simply not a field". Parquet2.jl decodes a `Timestamp` into a
     millisecond-resolution `DateTime` before this reader sees it, so the raw
     integer of a MICROS/NANOS timestamp column is recovered only to millisecond
-    granularity. And it decodes a `Decimal` into a `Dec64` (16 significant decimal
-    digits) during page decode, so a wider `Decimal128`/`Decimal256` cannot be read
-    here at the full precision the Rust and Python tracks get from the unscaled
-    integer; within binary64's exact range the three agree bit for bit (see
-    `ext/EarthSciIOParquet2Ext.jl`).
+    granularity. A `Float16` column is not decoded at all, so it is simply not a
+    field here where the other two tracks return float64. And it decodes a
+    `Decimal` into a `Dec64` (16 significant decimal digits) during page decode,
+    so a wider `Decimal128`/`Decimal256` cannot be read here at the full precision
+    the Rust and Python tracks get from the unscaled integer; within binary64's
+    exact range the three agree bit for bit (see `ext/EarthSciIOParquet2Ext.jl`).
+
+    One further Parquet2.jl defect is REPAIRED rather than tolerated: it folds a
+    `FIXED_LEN_BYTE_ARRAY` decimal's big-endian two's-complement bytes into an
+    `Int64` with no sign extension, so every negative cell in a column narrower
+    than 8 bytes decoded as its huge unsigned reinterpretation. The extension
+    undoes that exactly. The one width it cannot reach is 7 bytes (pyarrow
+    precision 15-16), where the unsigned fold overflows `Dec64` inside the
+    backend; a negative there is an error naming the limit, never a wrong number.
 """
 struct ParquetReader <: Reader end
 

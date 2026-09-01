@@ -294,6 +294,50 @@ end
     # The schema lives in the footer, so an empty table is TYPED, not absent.
     # Most of a MOVES fixture's ~770 tables are empty, and a document binding one
     # must still see the array it named.
+    # Parquet stores a FIXED_LEN_BYTE_ARRAY decimal as a big-endian TWO'S
+    # COMPLEMENT integer. Parquet2.jl's `concat_integer` folds those bytes into
+    # an `Int64` with NO sign extension, which is only accidentally right at 8
+    # bytes; narrower than that, every NEGATIVE cell came back as its unsigned
+    # reinterpretation — `-2.50` in a `decimal128(9, 2)` read as `42949670.46`,
+    # a silently wrong number and a straight disagreement with the Rust and
+    # Python tracks, which both read the unscaled integer signed.
+    # `EarthSciIOParquet2Ext` repairs it exactly: the unsigned fold lands at or
+    # above 2^(8w-1) if and only if the true value was negative. One column per
+    # FLBA width pyarrow uses, each with its extreme negative.
+    @testset "a narrow FLBA decimal keeps its sign" begin
+        ds = read_native(ParquetReader(), _pq("decimals"))
+        @test ds["d02"].data == [99.0, -99.0, 0.0, -1.0, 1.0]
+        @test ds["d04"].data == [99.99, -99.99, 0.0, -0.01, 0.01]
+        @test ds["d09"].data == [9999999.99, -9999999.99, 0.0, -0.01, 0.01]
+        @test ds["d12"].data == [9999999999.99, -9999999999.99, 0.0, -0.01, 0.01]
+        @test ds["d18"].data ==
+              [999999.999999, -999999.999999, 0.0, -1.0e-6, 1.0e-6]
+        for n in variable_names(ds)
+            @test eltype(ds[n].data) == Float64
+        end
+    end
+
+    # The ONE width the repair cannot reach: a 7-byte FLBA (pyarrow precision
+    # 15-16). The unsigned fold of a negative is 2^56 — 17 decimal digits, which
+    # overflows a `Dec64`'s 16 — so Parquet2 throws during page decode, before
+    # any repair could run. Positives are unaffected; a negative gets a message
+    # naming the limit rather than a bare `InexactError`.
+    @testset "a 7-byte FLBA decimal names the backend limit" begin
+        ds = read_native(ParquetReader(), _pq("decimal7"); variables = ["pos"])
+        @test ds["pos"].data == [1.25, 2.5]
+        err = try
+            with_logger(NullLogger()) do
+                read_native(ParquetReader(), _pq("decimal7"); variables = ["neg"])
+            end
+            nothing
+        catch e
+            sprint(showerror, e)
+        end
+        @test err !== nothing
+        @test occursin("\"neg\"", err)
+        @test occursin("7-byte", err)
+    end
+
     @testset "a zero-row table yields typed empty columns" begin
         ds = read_native(ParquetReader(), _pq("empty"))
         @test variable_names(ds) == ["code", "id", "val"]

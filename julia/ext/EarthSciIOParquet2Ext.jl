@@ -8,9 +8,10 @@
 # snappy/zstd/gzip/lz4/brotli decompression); this extension only pulls each
 # column's decoded values out, normalizes the few types Parquet2 hands back in a
 # DECODED form the §3 contract wants RAW (a `Date`/`Time`/`DateTime` back to its
-# stored integer), and hands them to the core `_assemble_parquet`, where the
-# dtype table, the null policy and `float_columns` live (shared with any future
-# backend).
+# stored integer), REPAIRS the one place its decode is simply wrong (a narrow
+# `FIXED_LEN_BYTE_ARRAY` decimal read unsigned — `_decimal_sign_fix`), and hands
+# them to the core `_assemble_parquet`, where the dtype table, the null policy
+# and `float_columns` live (shared with any future backend).
 #
 # Projection pushdown is REAL here: `_assemble_parquet` calls `loadcolumn` only
 # for the columns that survive `variables`, and `Parquet2.load(ds, name)` reads
@@ -40,8 +41,10 @@ end
 # already a cell (the common case: integers, floats, decimals, text, booleans,
 # and the `missing` of an all-null column), so those columns pass through with
 # no per-row work at all.
-function _rawconv(pt, name::AbstractString)
-    if pt isa Parquet2.ParqDate
+function _rawconv(pt, name::AbstractString, decwidth = nothing)
+    if pt isa Parquet2.ParqDecimal
+        return _decimal_sign_fix(pt, name, decwidth)
+    elseif pt isa Parquet2.ParqDate
         # Date32: days since the epoch.
         return x -> Int64(value(x - Date(1970, 1, 1)))
     elseif pt isa Parquet2.ParqTime
@@ -61,7 +64,7 @@ function _rawconv(pt, name::AbstractString)
     return nothing
 end
 
-# A DECIMAL column needs no conversion here: Parquet2 decodes it into a `Dec64`,
+# A DECIMAL column needs no ARITHMETIC here: Parquet2 decodes it into a `Dec64`,
 # which is `<: AbstractFloat`, so the core's `Float64(::Real)` fold turns it into
 # the unscaled value ÷ 10^scale that §3 asks for.
 #
@@ -75,6 +78,63 @@ end
 # has already bounded the fidelity: the unscaled integer is consumed during page
 # decode and never reaches this extension, so a wider `Decimal128`/`Decimal256`
 # cannot be read here at full precision by any arithmetic.
+#
+# What a decimal DOES need is a SIGN repair, below.
+
+# The `FIXED_LEN_BYTE_ARRAY` width of a DECIMAL column in bytes, or `nothing`
+# when the column is not FLBA-backed (an `INT32`/`INT64`-backed decimal reaches
+# Parquet2 as a signed `Integer` and needs no repair). Read off the schema, so
+# it costs no page decode.
+function _decimal_flba_width(ds, name::AbstractString)
+    col = Parquet2.Column(Parquet2.RowGroup(ds, 1), name)
+    bt = Parquet2.parqbasetype(col)
+    bt isa Parquet2.ParqFixedByteArray || return nothing
+    return Parquet2.valuesize(bt)
+end
+
+# Repair Parquet2.jl's UNSIGNED reading of a narrow FLBA decimal.
+#
+# Parquet stores a `FIXED_LEN_BYTE_ARRAY` decimal as a big-endian TWO'S
+# COMPLEMENT integer, so the top bit of the first byte is the sign.
+# Parquet2.jl's `concat_integer` folds those `w` bytes into an `Int64` with no
+# sign extension (`utils.jl`), which is only accidentally right at `w == 8`,
+# where the sign bit lands in the `Int64`'s own. At `w < 8` every NEGATIVE value
+# comes back as its unsigned reinterpretation: with pyarrow's widths a
+# `decimal128(9, 2)` cell of `-2.50` decodes as `42949670.46` (2^32 - 250, ÷
+# 100). That is a SILENTLY WRONG number — the worst failure mode there is, and a
+# straight disagreement with the Rust and Python tracks, which both read the
+# unscaled integer signed.
+#
+# The repair is exact, not a heuristic. A valid `w`-byte unscaled value lies in
+# `[-2^(8w-1), 2^(8w-1))`, so the unsigned fold lands at or above `2^(8w-1)` if
+# and only if the true value was negative, and subtracting `2^(8w)` recovers it
+# exactly. Non-negative cells are untouched, so a file that reads correctly
+# today still does.
+#
+# `w == 7` is beyond repair here: the unsigned fold of a negative reaches
+# `2^56`, which is 17 decimal digits and does not fit `Dec64`'s 16, so Parquet2
+# throws an `InexactError` during page decode before this ever runs (see the
+# `read_native` catch). `w >= 8` never needed repairing.
+function _decimal_sign_fix(pt, name::AbstractString, width)
+    (width === nothing || width >= 8) && return nothing
+    scale = -pt.scale                       # the §3 (positive) decimal scale
+    den = 10.0^scale
+    if width > 6
+        # Nothing this function can do; `read_native` explains the failure when
+        # Parquet2 trips over it.
+        return nothing
+    end
+    limit = Float64(Int64(1) << (8 * width - 1))
+    wrap = Float64(Int64(1) << (8 * width))
+    return function (x)
+        # The unscaled integer, recovered exactly: |unscaled| < 2^48 here, well
+        # inside binary64's exact range, so the round-trip through Float64 and
+        # back is lossless.
+        u = round(Float64, Float64(x) * den)
+        u < limit && return Float64(x)
+        return (u - wrap) / den
+    end
+end
 
 """
     read_native(::ParquetReader, path; variables=nothing, float_columns=nothing,
@@ -123,8 +183,28 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
         # check `_rawconv` does for a temporal one.
         function loadcolumn(name::AbstractString)
             nrows == 0 && return Union{Missing,Int64}[]
-            conv = _rawconv(pts[index[name]], name)
-            v = Parquet2.load(ds, name)            # this column's chunk, only
+            pt = pts[index[name]]
+            # A DECIMAL also needs its FLBA width, to repair Parquet2.jl's
+            # unsigned reading of a narrow one (`_decimal_sign_fix`). Schema
+            # only — no page is touched for it.
+            width = pt isa Parquet2.ParqDecimal ? _decimal_flba_width(ds, name) : nothing
+            conv = _rawconv(pt, name, width)
+            v = try
+                Parquet2.load(ds, name)            # this column's chunk, only
+            catch e
+                # A 7-byte FLBA decimal is the one width the repair cannot
+                # reach: the unsigned fold of a negative is 2^56, 17 digits,
+                # which overflows `Dec64`'s 16 and throws in here. Say what
+                # happened instead of leaking a bare `InexactError`.
+                width === nothing || width != 7 || throw(ArgumentError(
+                    "column $(repr(name)): the Parquet2.jl backend cannot decode a " *
+                    "negative DECIMAL stored in a 7-byte FIXED_LEN_BYTE_ARRAY " *
+                    "(pyarrow precision 15-16) — it reads the two's-complement bytes " *
+                    "UNSIGNED, and 2^56 does not fit a Dec64's 16 digits. Store the " *
+                    "column at precision >= 17 (an 8-byte decimal), or read it in " *
+                    "the Python or Rust track. Backend error: $(sprint(showerror, e))"))
+                rethrow()
+            end
             conv === nothing && return v
             return Any[x === missing ? missing : conv(x) for x in v]
         end
