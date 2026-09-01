@@ -31,11 +31,6 @@ cd "$REPO_ROOT"
 # (offline=true wins over the environment), but force the shared offline switch so
 # any incidental default-cache construction also refuses the network.
 export EARTHSCI_OFFLINE=1
-# The Julia dumper bootstraps its weakdep decode backends (Blosc, Shapefile,
-# Parquet2) into a temp environment when the minimal `--project=julia` cannot
-# import them. Pkg must resolve that from the depot rather than reaching for the
-# network, or an offline run hangs on a registry fetch.
-export JULIA_PKG_OFFLINE="${JULIA_PKG_OFFLINE:-true}"
 
 if [ "$#" -ge 1 ]; then
   OUT="$1"

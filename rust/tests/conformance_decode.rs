@@ -171,11 +171,29 @@ fn decodes_every_corpus_case_to_match_expected() {
                     Some(configured) => configured,
                     None => reader,
                 }
+            } else if format == "parquet" {
+                // The parquet case pins `float_columns` (a decimal-TEXT rate and
+                // an integer measurement) and the two null gates, the same way.
+                let options =
+                    declared_options(&case, &["float_columns", "null_int", "null_string"]);
+                match reader.configured(&options).expect("configured parquet reader") {
+                    Some(configured) => configured,
+                    None => reader,
+                }
             } else {
                 reader
             };
+            // A single-blob case may still carry `variables` — for parquet that
+            // is the PROJECTION, pushed into the decode so only those column
+            // chunks are read (and so the decoded field set is exactly the
+            // expected one). Every other whole-file case reads everything.
+            let vars: Vec<String> = case
+                .get("variables")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(|v| v.as_str().unwrap().to_string()).collect())
+                .unwrap_or_default();
             reader
-                .read_native(&blob.path, &[], &Selection::All)
+                .read_native(&blob.path, &vars, &Selection::All)
                 .unwrap_or_else(|e| panic!("decode failed for {id}: {e}"))
         };
 

@@ -350,7 +350,8 @@
           null
         ]
       }
-    }
+    },
+    "coords": {}
   },
   "notes": "MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every track concatenates two batches and the row order across the seam is pinned), snappy-compressed. One column per supported Arrow family: the narrow/wide integer split (uint8 255 read unsigned, uint32 4294967295 not fitting an int32), a categorical EXPANDED to one string per row, float32 widened bit-exactly, Decimal128 as unscaled/10^scale, temporal columns as their RAW stored integer at their stored width (date32/time32[ms] -> int32; timestamp[ms]/time64[us] -> int64), and an all-Null column as float64/all-NaN. Null policy: a float null -> NaN with no surviving sentinel; a declared null_int=-1 fills the integer nulls AND is reported back in fill_value on every int column; null_string fills a text null (and a DICTIONARY null) while a real empty string stays \"\". float_columns does both of its jobs at once \u2014 `meanBaseRate` is fixed-decimal TEXT (blank -> NaN) and `modelYearID` is an integer measurement whose nulls become NaN rather than the sentinel, so no fill_value survives it. `variables` is the PROJECTION: `ignoredNote` (readable) and `internalKey` (binary, no rank-1 reading) are both left out. Deliberately carries NO nested column, ms-aligned timestamps only, and decimals inside Dec64's exact range \u2014 the three Parquet2.jl limits spec/conformance.md \u00a73 records.",
   "variables": [

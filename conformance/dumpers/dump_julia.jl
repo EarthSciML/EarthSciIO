@@ -30,6 +30,24 @@ import JSON
 # depot.
 import Pkg
 
+# Resolve `pkg` into a temp environment stacked on LOAD_PATH. Tried OFFLINE
+# first — the harness's whole claim is that it touches no network, and a depot
+# populated by `Pkg.instantiate()` already holds every weakdep — and only then
+# with the network, so a fresh depot still works (that fallback is the one step
+# of the run that can reach out).
+function _add_stacked(pkg::String, env::String)
+    was = get(ENV, "JULIA_PKG_OFFLINE", nothing)
+    try
+        ENV["JULIA_PKG_OFFLINE"] = "true"
+        Pkg.add(pkg; io = devnull)
+    catch
+        delete!(ENV, "JULIA_PKG_OFFLINE")
+        Pkg.add(pkg; io = devnull)
+    finally
+        was === nothing ? delete!(ENV, "JULIA_PKG_OFFLINE") : (ENV["JULIA_PKG_OFFLINE"] = was)
+    end
+end
+
 function _load_weakdep(extname::Symbol, pkg::String)
     Base.get_extension(EarthSciIO, extname) === nothing || return
     try
@@ -38,7 +56,7 @@ function _load_weakdep(extname::Symbol, pkg::String)
         _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
         _env = mktempdir()
         Pkg.activate(_env; io = devnull)
-        Pkg.add(pkg; io = devnull)
+        _add_stacked(pkg, _env)
         Pkg.activate(_juliaproj; io = devnull)
         push!(LOAD_PATH, _env)
         @eval import $(Symbol(pkg))

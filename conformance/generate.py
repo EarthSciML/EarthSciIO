@@ -863,7 +863,9 @@ def build_parquet_moves() -> tuple[bytes, dict, dict]:
             field["fill_value"] = PQ_NULL_INT
         variables[name] = field
 
-    expected = {"variables": variables}
+    # A table produces NO coordinates (like the CSV and Zarr readers) — spelled
+    # out as an empty map rather than omitted, so every case has the same shape.
+    expected = {"variables": variables, "coords": {}}
     decode = {
         "float_columns": PQ_FLOAT_COLUMNS,
         "null_int": PQ_NULL_INT,
