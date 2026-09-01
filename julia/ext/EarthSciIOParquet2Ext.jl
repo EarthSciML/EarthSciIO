@@ -103,13 +103,13 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
         names = String[String(n) for n in Base.names(ds)]
         kinds = Symbol[]
         types = Any[]
-        convs = Any[]
+        pts = Any[]
         for n in names
             pt = Parquet2.parqtype(ds, n)
             T = Parquet2.juliatype(ds, n)          # already excludes `Missing`
             push!(types, T)
+            push!(pts, pt)
             push!(kinds, _parquet_kind(T, _unit_exponent(pt)))
-            push!(convs, _rawconv(pt, n))
         end
         # A zero-row table is TYPED, not absent: the schema is in the footer, so
         # every column comes back empty with its declared dtype. Parquet2 cannot
@@ -118,10 +118,13 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
         nrows = Parquet2.nrow(ds)
         index = Dict(n => j for (j, n) in enumerate(names))
 
+        # Called ONLY for the columns that survive the projection, so a skipped
+        # column costs nothing at all — not its chunk, and not even the unit
+        # check `_rawconv` does for a temporal one.
         function loadcolumn(name::AbstractString)
             nrows == 0 && return Union{Missing,Int64}[]
+            conv = _rawconv(pts[index[name]], name)
             v = Parquet2.load(ds, name)            # this column's chunk, only
-            conv = convs[index[name]]
             conv === nothing && return v
             return Any[x === missing ? missing : conv(x) for x in v]
         end
