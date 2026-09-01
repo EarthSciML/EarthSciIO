@@ -43,7 +43,7 @@ end
 # no per-row work at all.
 function _rawconv(pt, name::AbstractString, decwidth = nothing)
     if pt isa Parquet2.ParqDecimal
-        return _decimal_sign_fix(pt, name, decwidth)
+        return _decimal_sign_fix(pt, decwidth)
     elseif pt isa Parquet2.ParqDate
         # Date32: days since the epoch.
         return x -> Int64(value(x - Date(1970, 1, 1)))
@@ -115,15 +115,12 @@ end
 # `2^56`, which is 17 decimal digits and does not fit `Dec64`'s 16, so Parquet2
 # throws an `InexactError` during page decode before this ever runs (see the
 # `read_native` catch). `w >= 8` never needed repairing.
-function _decimal_sign_fix(pt, name::AbstractString, width)
-    (width === nothing || width >= 8) && return nothing
+function _decimal_sign_fix(pt, width)
+    # `nothing`/>= 8: never needed one. 7: beyond reach — `read_native`'s catch
+    # explains the failure Parquet2 raises before this would run.
+    (width === nothing || width >= 7) && return nothing
     scale = -pt.scale                       # the §3 (positive) decimal scale
     den = 10.0^scale
-    if width > 6
-        # Nothing this function can do; `read_native` explains the failure when
-        # Parquet2 trips over it.
-        return nothing
-    end
     limit = Float64(Int64(1) << (8 * width - 1))
     wrap = Float64(Int64(1) << (8 * width))
     return function (x)
