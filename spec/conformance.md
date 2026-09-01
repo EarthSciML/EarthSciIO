@@ -41,11 +41,12 @@ data tooling beyond the format reader.
 A **`parquet` corpus case is likewise reserved**: the decode contract is pinned
 normatively below (§3, "Parquet decode notes"), but a corpus case is a
 *cross-language* artifact — `crosscheck.py` compares the Python, Julia and Rust
-dumps of the same blob — and only the Rust track ships a `parquet` reader today.
-Committing the case now would fail the conformance job for a gap it does not
-describe. It belongs with the Python (pyarrow) and Julia (Parquet2.jl) readers — see
+dumps of the same blob — and the Python track does not ship a `parquet` reader
+yet. Committing the case now would fail the conformance job for a gap it does not
+describe. It belongs with the Python (pyarrow) reader — see
 [`parquet-bindings-handoff.md`](parquet-bindings-handoff.md) for that work order;
-`rust/tests/parquet_reader.rs` covers the Rust track meanwhile.
+`rust/tests/parquet_reader.rs` and `julia/test/test_parquet_reader.jl` cover the
+Rust and Julia tracks meanwhile.
 
 GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
 shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are
