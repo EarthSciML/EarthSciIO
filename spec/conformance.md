@@ -45,12 +45,19 @@ decimal outside `Dec64`'s exact range — each because a Parquet2.jl limit
 because the contract is unclear. Those rules stay normative and are exercised
 per-track by `rust/tests/parquet_reader.rs`, `julia/test/test_parquet_reader.jl`
 and `tests/test_parquet_reader.py`.
+| `permuted-order-tile` | isrm | grid | zarr | s3 | local | **ordered** lazy orthogonal selection: a non-contiguous, PERMUTED index list is returned in the requested order exactly (a reader that sorted the indices fails), fetching 2 of 15 chunks |
+| `landfire-raster-tile` | landfire | grid | geotiff | file | local | **GeoTIFF** georef contract: `Band1` naming, `lat`/`lon` axis names from `GTModelTypeGeoKey`, **cell-centre** axes offset half a cell from the tiepoint's corner, **non-square** cells (`sx`≠`sy`), lat decreasing with row (y-up model vs y-down rows), `GDAL_NODATA`→NaN on an interior cell, int16→float64 |
 
-GeoTIFF / S3-store corpus entries are **format-reserved**: the case + manifest
-shape is defined here, but no binary fixture is committed yet — GDAL/git-lfs are
-absent in this environment and binary-hosting (git-lfs vs `/projects`) is an
-open decision (plan §8). They are added by the GeoTIFF reader / `esio-9nb.8`
-work using `generate.py` as the template.
+The GeoTIFF entry is **no longer reserved**: `landfire-raster-tile` commits a
+424-byte single-band raster authored by `generate.py` with `tifffile`, so no
+GDAL and no git-lfs are needed to carry it. Adding it immediately earned its
+keep — all three tracks decode the same bytes, and the Rust reader turned out
+never to have implemented `GDAL_NODATA`→NaN, which two tracks and two docstrings
+had asserted for as long as the reader existed.
+
+The **S3-store** entry remains reserved: the case + manifest shape is defined
+here, but the store-backed variant is not committed (binary hosting for a
+realistic object store is still an open decision, plan §8).
 
 ---
 
@@ -382,6 +389,49 @@ byte-range machinery). Decode contract:
   intersects, **never** the whole array (the ISRM linchpin). A store-backed
   case's `objects[]` gives every object its own `cache_key`/`content_sha256`, so
   checks 1+2 (key agreement + integrity) are asserted **per object**.
+
+### GeoTIFF decode notes (raster reader)
+
+The `geotiff` reader decodes a single blob into one field per raster band plus
+the grid axes. Every track implements it against a different decoder — rasterio
+(GDAL) with a pure-Python `tifffile` fallback in Python, `TiffImages.jl` in
+Julia, the `tiff` crate in Rust — so the georeferencing arithmetic below is the
+whole parity contract. Pinned by the `landfire-raster-tile` case.
+
+- **Band naming** — bands are keyed `Band1…BandN`, 1-based, GDAL's convention
+  (the name a loader's `file_variable: "Band1"` refers to). Band arrays are
+  **float64** regardless of the on-disk sample type.
+- **Axis names** — from `GTModelTypeGeoKey` (1024) in the GeoKeyDirectoryTag:
+  geographic (2) gives `lat`/`lon`, projected (1) gives `y`/`x`. Absent or
+  unreadable ⇒ treated as geographic. Band dims are `(<ydim>, <xdim>)`.
+  A GDAL-backed reader may instead resolve the declared CRS and ask whether it
+  is geographic. For a WELL-FORMED file the two agree, because the CS code and
+  the model type agree — but a file declaring `GTModelType = projected` while
+  giving a geographic code (4326) under `ProjectedCSTypeGeoKey` is
+  self-contradictory, and the two approaches then legitimately differ. Such a
+  file is out of contract; do not use one as a fixture.
+- **Cell-CENTRE axes** — from `ModelPixelScaleTag` (33550) `(sx, sy)` and
+  `ModelTiepointTag` (33922) `(i, j, k, x, y, z)`, which anchors raster point
+  `(i, j)` to model point `(x, y)`. Model space is **y-up** while raster rows run
+  **downward**, so with a north-up raster:
+
+      lon[c] = x + (c - i + 0.5) * sx        lat[r] = y - (r - j + 0.5) * sy
+
+  The `+ 0.5` is load-bearing: the tiepoint anchors a pixel CORNER and the axes
+  are cell CENTRES. `sx` and `sy` are independent — cells need not be square.
+- **`GDAL_NODATA` → NaN** — tag 42113, an **ASCII** string (conventionally
+  NUL-terminated, e.g. `"-9999"`), parsed to a float; cells **equal** to it
+  become NaN. A tag that is absent or does not parse means *no sentinel*, and
+  nothing is remapped — a raster whose real values include -9999 keeps them. A
+  NaN sentinel is ignored (NaN never compares equal). This is the one rule that
+  differs from the zarr reader's `fill_value`, which is deliberately NOT mapped.
+- **Georef is optional** — a plain TIFF with no scale/tiepoint decodes to bands
+  with **no coordinate arrays** rather than an error; the consumer supplies the
+  grid.
+- **Out of scope, on purpose** — multi-band interleaving is not pinned. The three
+  decoders disagree on what a "band" is for multi-sample and multi-page files
+  (page 0 only vs pages-as-bands vs a flat sample count), so the corpus commits a
+  single-band raster and a multi-band contract is deferred rather than invented.
 
 ---
 

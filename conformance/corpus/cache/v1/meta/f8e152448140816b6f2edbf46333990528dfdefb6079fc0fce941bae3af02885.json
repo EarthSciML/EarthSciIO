@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 424,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "03dc94052170393fdd657831409c231cd3482f194e6ca32d12852e8538a30a31",
+  "source_loader": "landfire",
+  "url": "https://landfire.gov/arcgis/rest/services/Landfire/US_230/ImageServer/exportImage?bbox=-121.5,39.25,-119.5,40.0&imageSR=4326&format=tiff"
+}

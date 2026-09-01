@@ -336,7 +336,12 @@ type SyncObjectStore =
     AsyncToSyncStorageAdapter<AsyncObjectStore<PrefixStore<Box<dyn ObjectStore>>>, TokioBlockOn>;
 
 /// Build a multi-thread `tokio` runtime for driving `object_store` I/O.
-fn runtime() -> Result<tokio::runtime::Runtime> {
+///
+/// `pub(crate)` because the signed `s3://` transport
+/// ([`crate::transport::S3Transport`]) drives the same async client from the
+/// same synchronous call stack, and two runtimes built two ways would be two
+/// sets of behaviour to keep in step.
+pub(crate) fn runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -348,7 +353,7 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 ///
 /// This is the one place a provider is chosen. `options` are `object_store`'s
 /// own config keys (see the module docs); an endpoint override travels here.
-fn resolve_backend(
+pub(crate) fn resolve_backend(
     url_str: &str,
     options: &[(String, String)],
 ) -> Result<(Box<dyn ObjectStore>, ObjectPath)> {

@@ -201,23 +201,37 @@ def read_ff10(path, expected, decode=None):
     return out, {}
 
 
+def _numcodecs_codec(name):
+    """The named ``numcodecs`` codec, or an actionable error naming the extra.
+
+    The oracle decodes zarr chunks with numcodecs *on purpose* — independently of
+    the production reader's zarr-python stack (spec/conformance.md). It ships in
+    the ``zarr`` extra; without it the corpus self-check cannot run at all, so say
+    so rather than surfacing a bare ``ModuleNotFoundError`` from six frames down.
+    """
+    try:
+        import numcodecs
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise SystemExit(
+            f"conformance: the corpus's zarr cases need the '{name}' codec from "
+            "numcodecs, which is not installed. Install the extras every corpus "
+            'format needs: pip install -e ".[netcdf,shapefile,zarr,test]" '
+            "(the zarr extra requires Python >=3.11)."
+        ) from exc
+    return getattr(numcodecs, name)
+
+
 def _zarr_decompress(compressor, raw):
     """Independent decode of one chunk object's bytes (the zarr oracle codec)."""
     if compressor is None:
         return bytes(raw)
     cid = str(compressor.get("id", "")).lower()
     if cid == "blosc":
-        from numcodecs import Blosc
-
-        return bytes(Blosc().decode(raw))
+        return bytes(_numcodecs_codec("Blosc")().decode(raw))
     if cid == "zlib":
-        from numcodecs import Zlib
-
-        return bytes(Zlib().decode(raw))
+        return bytes(_numcodecs_codec("Zlib")().decode(raw))
     if cid == "zstd":
-        from numcodecs import Zstd
-
-        return bytes(Zstd().decode(raw))
+        return bytes(_numcodecs_codec("Zstd")().decode(raw))
     if cid in ("", "none"):
         return bytes(raw)
     raise ValueError(f"unsupported zarr compressor id {cid!r}")
@@ -460,11 +474,45 @@ def read_parquet(path, expected, decode=None):
         else:
             out[name] = [null_string if c is None else str(c) for c in cells]
     return out, {}
+def read_geotiff(path, expected):
+    """Independent GeoTIFF decode: tifffile for the container, tags parsed here.
+
+    Deliberately NOT the production reader's path. `earthsciio`'s geotiff reader
+    prefers rasterio/GDAL and only falls back to tifffile, so decoding here with
+    tifffile and deriving the axes from the raw IFD tags keeps the oracle an
+    independent implementation rather than a second call into the same code —
+    the same split as the zarr oracle's numcodecs vs the reader's zarr-python.
+    """
+    import tifffile
+
+    with tifffile.TiffFile(path) as tif:
+        page = tif.pages[0]
+        arr = np.asarray(page.asarray(), dtype="float64")
+        tags = {t.name: t.value for t in page.tags.values()}
+
+    scale, tie = tags["ModelPixelScaleTag"], tags["ModelTiepointTag"]
+    sx, sy = float(scale[0]), float(scale[1])
+    # The tiepoint maps raster point (i0, j0) to model point (x0, y0); for these
+    # rasters that is the top-left CORNER, so cell CENTRES sit half a cell in.
+    i0, j0, x0, y0 = float(tie[0]), float(tie[1]), float(tie[3]), float(tie[4])
+    nlat, nlon = arr.shape
+    # Model space is y-up while raster rows run downward: lat DECREASES with row.
+    lon = x0 + (np.arange(nlon, dtype="float64") - i0 + 0.5) * sx
+    lat = y0 - (np.arange(nlat, dtype="float64") - j0 + 0.5) * sy
+
+    nodata = tags.get("GDAL_NODATA")
+    if nodata is not None:
+        sentinel = float(str(nodata).strip().strip("\x00").strip())
+        arr[arr == sentinel] = np.nan
+
+    band = next(iter(expected["variables"]))  # single-band: `Band1`
+    return {band: arr}, {"lon": lon, "lat": lat}
 
 
 READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10,
            "zarr": read_zarr, "shapefile": read_shapefile,
            "parquet": read_parquet}
+           "geotiff": read_geotiff}
 
 
 def _verify_zarr_objects(case) -> list:

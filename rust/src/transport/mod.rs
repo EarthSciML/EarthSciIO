@@ -23,6 +23,18 @@ use std::sync::Arc;
 use crate::auth::AuthResolver;
 use crate::error::Result;
 
+/// `$var` as whole seconds, or `default_secs` when unset or unparsable — the
+/// shared knob-reading for the transports' request timeouts.
+pub(crate) fn env_secs(var: &str, default_secs: u64) -> std::time::Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(default_secs),
+            std::time::Duration::from_secs,
+        )
+}
+
 /// Conditional-GET validators carried from a prior manifest into a fetch. Empty
 /// when there is nothing cached to revalidate against.
 #[derive(Debug, Default, Clone)]
@@ -77,6 +89,21 @@ pub trait Transport: Send + Sync {
         conditional: &Conditional,
         auth: Option<&dyn AuthResolver>,
     ) -> Result<FetchResult>;
+
+    /// [`fetch`](Transport::fetch), plus the sha256 (lowercase hex) of the bytes
+    /// written when the transport hashed them in transit. `None` means the
+    /// caller hashes the staged file itself — the default, so an existing
+    /// transport stays valid unchanged.
+    fn fetch_hashed(
+        &self,
+        resolved_url: &str,
+        dest: &Path,
+        conditional: &Conditional,
+        auth: Option<&dyn AuthResolver>,
+    ) -> Result<(FetchResult, Option<String>)> {
+        self.fetch(resolved_url, dest, conditional, auth)
+            .map(|result| (result, None))
+    }
 }
 
 /// Scheme → transport lookup. Adding a scheme is a registration, never a

@@ -16,7 +16,8 @@
 //! crate, pulling in `geo-types`/`delaunator`/`geo-index`) buy georeferencing
 //! machinery this reader gets from two tags directly — so neither earns its
 //! weight here. The georef tags (`ModelPixelScaleTag` + `ModelTiepointTag`) are
-//! parsed exactly as the Python `tifffile` fallback parses them.
+//! parsed exactly as the Python `tifffile` fallback parses them, and the
+//! `GDAL_NODATA` sentinel maps to `NaN` the same way.
 //!
 //! Compressed / colour-mapped / multi-sample-per-pixel-planar TIFFs are out of
 //! scope on purpose: they land later as extensions to this same reader, a
@@ -36,6 +37,7 @@ const MODEL_PIXEL_SCALE: u16 = 33550; // (sx, sy, sz) model units per pixel
 const MODEL_TIEPOINT: u16 = 33922; // (i, j, k, x, y, z): raster point ↔ model point
 const GEO_KEY_DIRECTORY: u16 = 34735; // GeoKeyDirectoryTag (GTModelTypeGeoKey = 1024)
 const GT_MODEL_TYPE_KEY: u16 = 1024; // 1 = projected, 2 = geographic
+const GDAL_NODATA: u16 = 42113; // GDAL's ASCII no-data sentinel, e.g. "-9999"
 
 /// The active `geotiff` reader: pure-Rust raster decode + tiepoint georef.
 #[derive(Debug, Default, Clone, Copy)]
@@ -124,6 +126,14 @@ fn decode<R: std::io::Read + std::io::Seek>(
     let scale = dec.get_tag_f64_vec(Tag::Unknown(MODEL_PIXEL_SCALE)).ok();
     let tie = dec.get_tag_f64_vec(Tag::Unknown(MODEL_TIEPOINT)).ok();
     let geographic = geokey_value(&mut dec, GT_MODEL_TYPE_KEY) != Some(1);
+    // GDAL_NODATA is ASCII (and conventionally NUL-terminated), so it is parsed
+    // rather than read as a number; an unparseable tag means "no sentinel"
+    // rather than an error, matching the Python and Julia readers.
+    let nodata: Option<f64> = dec
+        .get_tag_ascii_string(Tag::Unknown(GDAL_NODATA))
+        .ok()
+        .and_then(|raw| raw.trim().trim_matches('\0').trim().parse::<f64>().ok())
+        .filter(|v| !v.is_nan());
     let (ydim, xdim) = if geographic { ("lat", "lon") } else { ("y", "x") };
 
     let axes = match (scale.as_deref(), tie.as_deref()) {
@@ -150,11 +160,23 @@ fn decode<R: std::io::Read + std::io::Seek>(
         // De-interleave contiguous (pixel-major) samples: band b is every
         // nbands-th value. Single-band rasters (the fetched DEMs) fall through
         // with stride 1.
-        let data: Vec<f64> = if nbands == 1 {
+        let mut data: Vec<f64> = if nbands == 1 {
             flat.clone()
         } else {
             flat.iter().skip(b).step_by(nbands).copied().collect()
         };
+        // GDAL_NODATA -> NaN, the missing half of the decode contract the Python
+        // and Julia readers have always implemented (spec/conformance.md §3,
+        // "GeoTIFF decode notes"). Compared with `==` on the widened f64, which
+        // is exact for the integral sentinels GDAL writes (-9999, -32768) and
+        // for an F32 sentinel widened from the same bits both sides.
+        if let Some(nd) = nodata {
+            for v in data.iter_mut() {
+                if *v == nd {
+                    *v = f64::NAN;
+                }
+            }
+        }
         out.variables.insert(
             name.clone(),
             NativeField {
@@ -288,6 +310,83 @@ mod tests {
             img.write_data(data).unwrap();
         }
         buf.into_inner()
+    }
+
+    /// `encode_geographic` plus a GDAL_NODATA ASCII tag, NUL-terminated exactly
+    /// as GDAL writes it.
+    fn encode_with_nodata(
+        width: u32,
+        height: u32,
+        data: &[f32],
+        scale: [f64; 3],
+        tie: [f64; 6],
+        nodata: &str,
+    ) -> Vec<u8> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut enc = TiffEncoder::new(&mut buf).unwrap();
+            let mut img = enc
+                .new_image::<colortype::Gray32Float>(width, height)
+                .unwrap();
+            img.encoder()
+                .write_tag(Tag::Unknown(MODEL_PIXEL_SCALE), &scale[..])
+                .unwrap();
+            img.encoder()
+                .write_tag(Tag::Unknown(MODEL_TIEPOINT), &tie[..])
+                .unwrap();
+            img.encoder()
+                .write_tag(
+                    Tag::Unknown(GEO_KEY_DIRECTORY),
+                    &[1u16, 1, 0, 1, GT_MODEL_TYPE_KEY, 0, 1, 2][..],
+                )
+                .unwrap();
+            img.encoder()
+                .write_tag(Tag::Unknown(GDAL_NODATA), nodata)
+                .unwrap();
+            img.write_data(data).unwrap();
+        }
+        buf.into_inner()
+    }
+
+    /// GDAL_NODATA maps to NaN — the decode contract the Python and Julia readers
+    /// have always implemented and this one did not, caught by the
+    /// `landfire-raster-tile` conformance case when it was added (all three
+    /// tracks decode the same committed blob, and only Rust returned -9999).
+    #[test]
+    fn gdal_nodata_sentinel_becomes_nan() {
+        let data = [10.0f32, -9999.0, 30.0, 40.0];
+        let bytes = encode_with_nodata(
+            2,
+            2,
+            &data,
+            [0.5, 0.25, 0.0],
+            [0.0, 0.0, 0.0, -121.5, 40.0, 0.0],
+            "-9999",
+        );
+        let ds = decode(Cursor::new(bytes), &[]).expect("decode");
+        let band = match &ds.variables.get("Band1").expect("Band1").data {
+            ArrayData::F64(v) => v.clone(),
+            _ => panic!("expected f64 band"),
+        };
+        assert_eq!(band[0], 10.0);
+        assert!(band[1].is_nan(), "the sentinel cell must be NaN, got {}", band[1]);
+        assert_eq!(band[2], 30.0);
+        assert_eq!(band[3], 40.0);
+    }
+
+    /// No GDAL_NODATA tag ⇒ nothing is remapped; a raster whose real values
+    /// happen to include -9999 keeps them.
+    #[test]
+    fn without_the_tag_no_value_is_remapped() {
+        let data = [10.0f32, -9999.0, 30.0, 40.0];
+        let bytes = encode_geographic(2, 2, &data, [0.5, 0.25, 0.0], [0.0, 0.0, 0.0, -121.5, 40.0, 0.0]);
+        let ds = decode(Cursor::new(bytes), &[]).expect("decode");
+        let band = match &ds.variables.get("Band1").expect("Band1").data {
+            ArrayData::F64(v) => v.clone(),
+            _ => panic!("expected f64 band"),
+        };
+        assert!(band.iter().all(|v| !v.is_nan()), "no tag ⇒ no NaN mapping");
+        assert_eq!(band[1], -9999.0);
     }
 
     #[test]

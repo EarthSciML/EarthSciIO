@@ -4,7 +4,7 @@ name: Release
 #
 #   rust/   -> crates.io      (earthsciio)
 #   .       -> PyPI           (earthsciio)
-#   julia/  -> General        (EarthSciIO)  -- manual, see the julia-register job
+#   julia/  -> General        (EarthSciIO)  -- via Registrator, see julia-register
 #
 # Everything lives in THIS file on purpose. A release created with GITHUB_TOKEN
 # does not start new workflow runs (GitHub deliberately suppresses that to avoid
@@ -214,34 +214,63 @@ jobs:
           skip-existing: true
 
   # ---------------------------------------------------------------------------
-  # Julia registration is NOT automated, for the same reason it is not automated
-  # in EarthSciAST: the package lives in a subdirectory, and registering a
-  # subdirectory package requires Registrator's `subdir=` argument, which is only
-  # expressible through a comment on a commit. julia-actions/RegisterAction takes
-  # only `token` and `registrator` and cannot express it.
+  # Julia registration. The package lives in a subdirectory, so Registrator needs
+  # its `subdir=` argument, which is only expressible in a registration comment
+  # (julia-actions/RegisterAction reads `subdir` off the workflow_dispatch event
+  # payload rather than an action input, and is unmaintained besides) — so this
+  # job posts the comment itself.
+  #
+  # A comment posted with the default GITHUB_TOKEN comes from `github-actions[bot]`,
+  # and Registrator whitelists exactly that login BEFORE its collaborator check:
+  #
+  #     # Registrator.jl src/commentbot/github_utils.jl:36 and :44
+  #     user == "github-actions[bot]" && return true
+  #
+  # (JuliaRegistries/Registrator.jl#250, "Allow GitHub Actions to trigger the
+  # Registrator GitHub app".) The GITHUB_TOKEN recursion rule that shaped the rest
+  # of this file does NOT apply here: it suppresses new *workflow runs*, and
+  # Registrator is a GitHub App consuming a `commit_comment` webhook. Live proof
+  # of this exact shape — roualdes/bridgestan registers `subdir=julia` from a
+  # github-actions[bot] commit comment.
+  #
+  # The one prerequisite that CI cannot satisfy: the JuliaRegistrator GitHub App
+  # must be installed on the repository. It is.
+  #
+  # Still true and worth knowing: a NEW package (not a new version) sits in
+  # General's 3-day AutoMerge waiting period. EarthSciIO is past that. EarthSciAST
+  # depends on this package and cannot register until this one merges into General.
   # ---------------------------------------------------------------------------
   julia-register:
     needs: [analysis, create-release]
     if: needs.analysis.outputs.release == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      # Creating a commit comment is a write to repository content.
+      contents: write
     steps:
-      - name: Julia registration instructions
+      - name: Trigger JuliaRegistrator
+        uses: peter-evans/commit-comment@v4
+        with:
+          # The tagged release commit, which is what create-release tagged and so
+          # what the registry entry must point at.
+          sha: ${{ github.sha }}
+          # Just the trigger. Registrator treats anything under a `Release
+          # notes:` heading as the registry PR's release notes, so boilerplate
+          # there is worse than no heading at all.
+          body: '@JuliaRegistrator register subdir=julia'
+
+      - name: Note what happens next
         run: |
           VERSION="${{ needs.analysis.outputs.version }}"
           {
-            echo "## Julia registration (manual step)"
+            echo "## Julia registration"
             echo ""
-            echo "EarthSciIO.jl v$VERSION is ready to register. Comment this on"
-            echo "[the release commit](https://github.com/${{ github.repository }}/commit/${{ github.sha }}):"
+            echo "Posted \`@JuliaRegistrator register subdir=julia\` on"
+            echo "[the release commit](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
+            echo "for EarthSciIO.jl v$VERSION. Registrator opens a PR against the"
+            echo "General registry within a minute; AutoMerge takes it from there."
             echo ""
-            echo '```'
-            echo "@JuliaRegistrator register subdir=julia"
-            echo '```'
-            echo ""
-            echo "Requires the JuliaRegistrator GitHub App on the repository, and the"
-            echo "comment must come from someone with write access. A NEW package sits"
-            echo "in a 3-day AutoMerge waiting period in the General registry."
-            echo ""
-            echo "EarthSciAST.jl depends on this package, so it cannot be registered"
-            echo "until this one has merged into General."
+            echo "If no PR appears, check that the JuliaRegistrator GitHub App is"
+            echo "still installed on this repository — that is the one prerequisite"
+            echo "this workflow cannot satisfy for itself."
           } >> "$GITHUB_STEP_SUMMARY"

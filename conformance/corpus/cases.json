@@ -50,6 +50,12 @@
       "file": "cases/moves-rate-table-parquet.json",
       "cache_key": "a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f",
       "blob_path": "cache/v1/blobs/a0/a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f.parquet"
+    },
+    {
+      "id": "landfire-raster-tile",
+      "file": "cases/landfire-raster-tile.json",
+      "cache_key": "f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885",
+      "blob_path": "cache/v1/blobs/f8/f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885.tif"
     }
   ]
 }

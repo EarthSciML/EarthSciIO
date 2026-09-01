@@ -71,6 +71,10 @@ _load_weakdep(:EarthSciIOShapefileExt, "Shapefile")
 # The `parquet` case decodes through the `EarthSciIOParquet2Ext` weakdep
 # extension (`using Parquet2`) — the same bootstrap again.
 _load_weakdep(:EarthSciIOParquet2Ext, "Parquet2")
+# The `geotiff` case decodes through `EarthSciIOTiffImagesExt` (`using
+# TiffImages`), the Julia peer of the Python reader's tifffile backend and the
+# Rust `tiff` crate — same bootstrap again.
+_load_weakdep(:EarthSciIOTiffImagesExt, "TiffImages")
 
 # Row-major (C-order) flatten of a native array whose axes are in file (`dims`)
 # order — matches numpy `.reshape(-1)` on the Python track's arrays.

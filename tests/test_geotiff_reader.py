@@ -1,12 +1,17 @@
 """The active ``geotiff`` reader (gap G3) — raster bands → native lon/lat grid.
 
 The reader is the decode half for the ArcGIS ImageServer ``exportImage`` rasters
-the ESS loaders fetch (LANDFIRE fuel model, USGS 3DEP elevation). There is no
-committed binary GeoTIFF in the conformance corpus yet (``spec/conformance.md``
-§ "format-reserved"), so these tests AUTHOR a small georeferenced fixture with
-``tifffile`` and read it back through the registry reader — exercising band
-decode, the cell-center lon/lat axes derived from the GeoTIFF georef tags, the
-``GDAL_NODATA``→``NaN`` mapping, band selection, and positional band renaming.
+the ESS loaders fetch (LANDFIRE fuel model, USGS 3DEP elevation). These tests
+AUTHOR a small georeferenced fixture with ``tifffile`` and read it back through
+the registry reader — exercising band decode, the cell-center lon/lat axes
+derived from the GeoTIFF georef tags, the ``GDAL_NODATA``→``NaN`` mapping, band
+selection, and positional band renaming.
+
+Single-track by construction: they prove the PYTHON reader against a fixture it
+authors itself. Cross-language equality on a COMMITTED raster is the corpus's
+job — ``landfire-raster-tile`` (``spec/conformance.md``, "GeoTIFF decode
+notes"), which is what caught the Rust reader never having implemented the
+``GDAL_NODATA``→``NaN`` rule these tests assert here.
 """
 
 from __future__ import annotations
@@ -33,7 +38,13 @@ EXP_LAT = np.array([39.75, 39.25, 38.75, 38.25])  # LAT0 - (row + 0.5) * RES
 def _write_geotiff(path, data, *, geographic=True, nodata=NODATA):
     geo_model_type = 2 if geographic else 1  # GTModelTypeGeoKey: 2=geographic
     epsg_key = 2048 if geographic else 3072  # Geographic vs Projected CS key
-    geokeys = (1, 1, 0, 3, 1024, 0, 1, geo_model_type, 1025, 0, 1, 1, epsg_key, 0, 1, 4326)
+    # The CS code must AGREE with the model type. Writing geographic 4326 under
+    # ProjectedCSTypeGeoKey makes a self-contradictory file, and the two backends
+    # then legitimately disagree: rasterio resolves the real CRS (4326 IS
+    # geographic -> lon/lat) while the tifffile fallback trusts
+    # GTModelTypeGeoKey (-> x/y). UTM 10N is a real projected CRS, so both agree.
+    epsg = 4326 if geographic else 32610
+    geokeys = (1, 1, 0, 3, 1024, 0, 1, geo_model_type, 1025, 0, 1, 1, epsg_key, 0, 1, epsg)
     extratags = [
         (33550, "d", 3, (RES, RES, 0.0)),                 # ModelPixelScaleTag
         (33922, "d", 6, (0.0, 0.0, 0.0, LON0, LAT0, 0.0)),  # ModelTiepointTag

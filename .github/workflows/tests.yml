@@ -1,0 +1,109 @@
+name: tests
+
+# The three tracks' UNIT suites. Until this file existed none of them ran on a
+# push: conformance.yml runs only the cross-language corpus gate, and the Rust
+# tests in release.yml's `verify` job run only when the manifests carry an
+# unreleased version — so on an ordinary push nothing executed `pytest`,
+# `cargo test`, or `Pkg.test()` at all.
+#
+# That gap had already cost something. `tests/test_http.py` and
+# `rust/tests/fetch_cache_offline.rs` both sat red on main for days asserting a
+# validation order that fec6875 had deliberately changed, and the Rust one was
+# found only because it blocked a release.
+#
+# Python runs twice, at both ends of the dependency range: everything
+# installed, and nothing optional installed. The lean leg is what keeps `pip
+# install earthsciio` honest.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python unit suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # The FULL extras set, matching conformance.yml: every reader stack
+      # installed, so every test actually runs. The `python-lean` job below
+      # covers the opposite end.
+      - name: Install (all reader stacks)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[netcdf,shapefile,zarr,geotiff,test]"
+      - name: pytest
+        run: pytest -q
+
+  python-lean:
+    name: Python, no optional extras
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # The BASE install: numpy + requests and nothing else. This is what `pip
+      # install earthsciio` gives a user, and it has to work — the cache and
+      # transport core is deliberately independent of every reader stack.
+      #
+      # Everything format-specific must SKIP here, not fail. A test that needs
+      # an extra says so with `@pytest.mark.needs_format` (resolved through the
+      # registry's own `requires` declaration) or a module-level
+      # `pytest.importorskip`. If this job goes red, a test grew a hard
+      # dependency on an optional stack without declaring it.
+      - name: Install (base + test only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: pytest
+        run: pytest -q -rs
+
+  rust:
+    name: Rust unit + integration suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # `--locked` so a drifted Cargo.lock fails here rather than at release
+      # time, which is the same command release.yml's `verify` job runs.
+      - name: cargo test
+        working-directory: rust
+        run: cargo test --locked
+
+  julia:
+    name: Julia unit suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"          # the floor declared in julia/Project.toml
+      - uses: julia-actions/cache@v2
+      # Pkg.test resolves the [targets] test deps, which is what pulls the
+      # weakdeps (Blosc, CodecZstd, Shapefile, TiffImages) the extension tests
+      # need — they are NOT installed by a plain instantiate.
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          project: julia

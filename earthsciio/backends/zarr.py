@@ -339,6 +339,8 @@ class ZarrReader:
     NAME = "zarr"
     FORMATS = ("zarr",)
     EXTENSIONS = ("zarr",)
+    #: zarr-python 3.x; the `zarr` extra (needs Python >=3.11).
+    REQUIRES = (("zarr",),)
 
     #: This reader needs ``(cache, base_url)``, not a single pre-fetched blob path.
     store_backed = True

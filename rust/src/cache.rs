@@ -146,10 +146,13 @@ impl Cache {
     // --- offline ------------------------------------------------------------
 
     fn read_offline(&self, key: &str, url: &str) -> Result<CachedBlob> {
-        let path = self.store.get_blob(key).ok_or_else(|| Error::CacheMiss {
-            url: url.to_string(),
-            key: key.to_string(),
-        })?;
+        let path = self
+            .store
+            .get_blob_hinted(key, &ext_from_url(url))
+            .ok_or_else(|| Error::CacheMiss {
+                url: url.to_string(),
+                key: key.to_string(),
+            })?;
         // A valid entry has a manifest too; treat an entry missing its manifest
         // as a miss rather than returning a blob with no provenance.
         let manifest = self.store.get_meta(key)?.ok_or_else(|| Error::CacheMiss {
@@ -185,7 +188,10 @@ impl Cache {
     /// Return the cached blob only if the validation ladder says `Hit`.
     /// `Revalidate`/`Miss` ⇒ `None` (caller proceeds to download).
     fn try_hit(&self, key: &str, req: &FetchRequest) -> Result<Option<CachedBlob>> {
-        let Some(path) = self.store.get_blob(key) else {
+        let Some(path) = self
+            .store
+            .get_blob_hinted(key, &ext_from_url(req.resolved_url))
+        else {
             return Ok(None);
         };
         let Some(manifest) = self.store.get_meta(key)? else {
@@ -268,9 +274,9 @@ impl Cache {
                 continue;
             };
             let staging = self.store.new_staging()?;
-            match transport.fetch(src, staging.path(), &conditional, auth.as_deref()) {
-                Ok(result) => {
-                    return self.commit_result(key, req, src, result, prior.as_ref(), staging);
+            match transport.fetch_hashed(src, staging.path(), &conditional, auth.as_deref()) {
+                Ok(fetched) => {
+                    return self.commit_result(key, req, src, fetched, prior.as_ref(), staging);
                 }
                 Err(e) => {
                     all_not_found &= e.is_not_found();
@@ -299,18 +305,24 @@ impl Cache {
         key: &str,
         req: &FetchRequest,
         chosen_url: &str,
-        result: FetchResult,
+        // As returned by `fetch_hashed`: the fetch outcome plus the sha256 the
+        // transport hashed in transit (when it did).
+        fetched: (FetchResult, Option<String>),
         prior: Option<&Manifest>,
         staging: StagingFile,
     ) -> Result<CachedBlob> {
+        let (result, sha_in_transit) = fetched;
         match result.status {
             FetchStatus::NotModified => {
                 // 304: the existing blob is still valid. Refresh fetched_at +
                 // validators; the staging file drops unused.
-                let path = self.store.get_blob(key).ok_or_else(|| Error::Integrity {
-                    key: key.to_string(),
-                    detail: "304 Not Modified but no cached blob present".to_string(),
-                })?;
+                let path = self
+                    .store
+                    .get_blob_hinted(key, &ext_from_url(chosen_url))
+                    .ok_or_else(|| Error::Integrity {
+                        key: key.to_string(),
+                        detail: "304 Not Modified but no cached blob present".to_string(),
+                    })?;
                 let mut manifest = prior.cloned().ok_or_else(|| Error::Integrity {
                     key: key.to_string(),
                     detail: "304 Not Modified with no prior manifest".to_string(),
@@ -334,8 +346,14 @@ impl Cache {
                 let bytes = std::fs::metadata(&staged_path)
                     .map_err(|e| Error::io(Some(staged_path.clone()), e))?
                     .len();
-                let sha = sha256_file(&staged_path)
-                    .map_err(|e| Error::io(Some(staged_path.clone()), e))?;
+                // The digest was hashed while the bytes streamed into staging; a
+                // transport that did not hash in transit still gets one here,
+                // from the file.
+                let sha = match sha_in_transit {
+                    Some(sha) => sha,
+                    None => sha256_file(&staged_path)
+                        .map_err(|e| Error::io(Some(staged_path.clone()), e))?,
+                };
 
                 // Loader-declared checksum (none today) is verified before commit.
                 if let Some(expected) = req.expected_checksum {

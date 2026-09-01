@@ -96,6 +96,7 @@ def test_active_readers_registered():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.needs_format("netcdf")
 def test_netcdf_decodes_to_oracle_arrays(offline_cache):
     case = _case("era5-grid-sub-tile")
     blob = offline_cache.fetch(ERA5_URL)
@@ -114,6 +115,7 @@ def test_netcdf_decodes_to_oracle_arrays(offline_cache):
         _assert_numeric(nds[name], spec["data"], f"coord {name}")
 
 
+@pytest.mark.needs_format("netcdf")
 def test_netcdf_time_axis_is_raw_with_calendar(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
@@ -128,6 +130,7 @@ def test_netcdf_time_axis_is_raw_with_calendar(offline_cache):
     assert time.attrs["calendar"] == "gregorian"
 
 
+@pytest.mark.needs_format("netcdf")
 def test_netcdf_variable_selection_keeps_coords(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
@@ -136,6 +139,7 @@ def test_netcdf_variable_selection_keeps_coords(offline_cache):
     assert nds.coord_names() == ["latitude", "longitude", "time"]  # coords always kept
 
 
+@pytest.mark.needs_format("netcdf")
 def test_netcdf_absent_variable_raises(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()

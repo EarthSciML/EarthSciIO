@@ -42,6 +42,41 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex_lower(&hasher.finalize()))
 }
 
+/// A writer that folds every byte it forwards into a sha256, so a transport
+/// can produce the manifest digest while the download streams to the staging
+/// file — no second full read at commit. Only bytes the inner writer accepts
+/// are hashed, so the digest always matches the file content.
+pub(crate) struct Sha256Writer<W> {
+    inner: W,
+    hasher: Sha256,
+}
+
+impl<W: std::io::Write> Sha256Writer<W> {
+    pub(crate) fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    /// The digest of every byte written, as lowercase hex.
+    pub(crate) fn finalize(self) -> String {
+        hex_lower(&self.hasher.finalize())
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for Sha256Writer<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -88,6 +123,16 @@ mod tests {
             cache_key_range(url, 0, 1023),
             cache_key("https://x/y.nc#bytes=0-1023")
         );
+    }
+
+    #[test]
+    fn sha256_writer_matches_whole_buffer_digest() {
+        // The in-transit digest must equal the digest of the final file content.
+        use std::io::Write as _;
+        let mut w = Sha256Writer::new(Vec::new());
+        w.write_all(b"hello-").unwrap();
+        w.write_all(b"bytes").unwrap();
+        assert_eq!(w.finalize(), sha256_hex(b"hello-bytes"));
     }
 
     #[test]

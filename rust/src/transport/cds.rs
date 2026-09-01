@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 
-use super::{Conditional, FetchResult, FetchStatus, Transport};
+use super::{env_secs, Conditional, FetchResult, FetchStatus, Transport};
 use crate::auth::{AuthResolver, StaticHeaderAuth};
 use crate::error::{Error, Result};
+use crate::key::Sha256Writer;
 
 /// The production CDS API v1 endpoint.
 pub const CDS_API_URL: &str = "https://cds.climate.copernicus.eu/api";
@@ -56,9 +57,22 @@ impl CdsTransport {
 
     /// A transport against `base_url` (a trailing slash is trimmed). Used to
     /// point at a mock server in tests, or an alternate CDS-compatible endpoint.
+    ///
+    /// The client's PER-REQUEST timeouts are distinct from the job budget
+    /// ([`timeout`](Self::timeout), which bounds how long a submitted job may
+    /// stay queued): reqwest's blocking DEFAULT is a 30 s total-request
+    /// timeout, which would kill any asset download slower than 30 s — and a
+    /// CDS asset is routinely a multi-GB NetCDF. Same policy and knobs as
+    /// [`super::HttpTransport`]: 30 s to connect, a generous 600 s per
+    /// request, overridable via `EARTHSCIIO_HTTP_CONNECT_TIMEOUT_SECS` /
+    /// `EARTHSCIIO_HTTP_READ_TIMEOUT_SECS` (whole seconds). A caller needing
+    /// full client control uses [`with_client`](Self::with_client), which sets
+    /// none of this.
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         let client = Client::builder()
             .user_agent(concat!("earthsciio/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(env_secs("EARTHSCIIO_HTTP_CONNECT_TIMEOUT_SECS", 30))
+            .timeout(env_secs("EARTHSCIIO_HTTP_READ_TIMEOUT_SECS", 600))
             .build()
             .expect("default reqwest blocking client builds");
         Self::with_client(client, base_url)
@@ -205,8 +219,10 @@ impl CdsTransport {
         Ok(href.to_string())
     }
 
-    /// Stream the asset href into the staging file; returns bytes written.
-    fn download(&self, url: &str, href: &str, dest: &Path) -> Result<u64> {
+    /// Stream the asset href into the staging file; returns bytes written plus
+    /// their sha256, hashed in transit so the cache commit needs no second full
+    /// read of the file.
+    fn download(&self, url: &str, href: &str, dest: &Path) -> Result<(u64, String)> {
         // The href is a CDS-issued (often pre-signed) URL — downloaded without
         // the PRIVATE-TOKEN, matching `cds_api.jl`'s `_download_with_progress`.
         let mut resp = self
@@ -221,14 +237,16 @@ impl CdsTransport {
                 format!("download HTTP {} from {href}", status.as_u16()),
             ));
         }
-        let mut file =
+        let file =
             std::fs::File::create(dest).map_err(|e| Error::io(Some(dest.to_path_buf()), e))?;
+        let mut writer = Sha256Writer::new(file);
         let bytes_written = resp
-            .copy_to(&mut file)
+            .copy_to(&mut writer)
             .map_err(|e| transport_err(url, e.to_string()))?;
-        file.flush()
+        writer
+            .flush()
             .map_err(|e| Error::io(Some(dest.to_path_buf()), e))?;
-        Ok(bytes_written)
+        Ok((bytes_written, writer.finalize()))
     }
 }
 
@@ -247,9 +265,20 @@ impl Transport for CdsTransport {
         &self,
         url: &str,
         dest: &Path,
-        _conditional: &Conditional,
+        conditional: &Conditional,
         auth: Option<&dyn AuthResolver>,
     ) -> Result<FetchResult> {
+        self.fetch_hashed(url, dest, conditional, auth)
+            .map(|(result, _)| result)
+    }
+
+    fn fetch_hashed(
+        &self,
+        url: &str,
+        dest: &Path,
+        _conditional: &Conditional,
+        auth: Option<&dyn AuthResolver>,
+    ) -> Result<(FetchResult, Option<String>)> {
         // CDS regenerates the asset on every request, so conditional GET does
         // not apply — there is nothing to revalidate against.
         let (dataset, request_json) = parse_cds_url(url)?;
@@ -257,14 +286,17 @@ impl Transport for CdsTransport {
 
         let job_id = self.submit(url, &dataset, &request_json, &headers)?;
         let href = self.wait(url, &job_id, &headers)?;
-        let bytes_written = self.download(url, &href, dest)?;
+        let (bytes_written, sha) = self.download(url, &href, dest)?;
 
-        Ok(FetchResult {
-            status: FetchStatus::Downloaded,
-            etag: None,
-            last_modified: None,
-            bytes_written,
-        })
+        Ok((
+            FetchResult {
+                status: FetchStatus::Downloaded,
+                etag: None,
+                last_modified: None,
+                bytes_written,
+            },
+            Some(sha),
+        ))
     }
 }
 

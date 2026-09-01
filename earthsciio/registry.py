@@ -30,6 +30,8 @@ this module only defines the seam and the spec-faithful interfaces they bind to.
 
 from __future__ import annotations
 
+import importlib.util
+
 from typing import (
     Any,
     Callable,
@@ -203,6 +205,21 @@ T = TypeVar("T")
 # --------------------------------------------------------------------------- #
 
 
+def _module_available(module: str) -> bool:
+    """Is ``module`` importable, without importing it?
+
+    ``find_spec`` does the search but not the execution, so probing a heavy
+    optional backend (rasterio pulls GDAL) costs a filesystem walk rather than a
+    module init. It raises rather than returning None when a *parent* package is
+    missing, and can raise ValueError for a half-initialized module, so both are
+    treated as "not available".
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):  # missing parent package, or __spec__ is None
+        return False
+
+
 class RegistryEntry(Generic[T]):
     """One registered backend: its name, factory, status, lookup keys, metadata."""
 
@@ -270,6 +287,16 @@ class Registry(Generic[T]):
         (``extensions``, ``content_types``, ``tracking``, ``notes`` …) is kept
         on the entry. Returns the entry; idempotent if the same factory is
         re-registered (safe under repeated imports).
+
+        ``requires`` declares the third-party modules a backend needs at decode
+        time, as a tuple of ALTERNATIVE GROUPS: every group must be satisfied,
+        and any one module within a group satisfies it. The geotiff reader's
+        ``(("rasterio", "tifffile"),)`` reads "rasterio OR tifffile". Status and
+        availability are deliberately independent axes — an active backend with
+        an uninstalled optional stack stays registered, so asking for it raises
+        the reader's own "install the extra" error rather than
+        :class:`BackendNotRegistered`. Callers that need to know what this
+        environment can actually decode ask :meth:`available`.
         """
         if status not in ("active", "stub"):
             raise ValueError(
@@ -339,6 +366,29 @@ class Registry(Generic[T]):
     def is_stub(self, key: str) -> bool:
         return self.entry(key).status == "stub"
 
+    def missing_requirements(self, key: str) -> List[str]:
+        """The unsatisfied ``requires`` groups for ``key``, as ``"a or b"`` strings.
+
+        Empty when the backend can run here. See :meth:`register` for the shape
+        of ``requires``.
+        """
+        groups = self.entry(key).meta.get("requires") or ()
+        return [
+            " or ".join(group)
+            for group in groups
+            if not any(_module_available(m) for m in group)
+        ]
+
+    def available(self, key: str) -> bool:
+        """Can ``key`` actually decode in THIS environment?
+
+        ``status`` says what the library implements; this says what the installed
+        dependencies permit. A backend that declares no ``requires`` is always
+        available. Registration is not conditioned on this on purpose — see
+        :meth:`register`.
+        """
+        return not self.missing_requirements(key)
+
     def create(self, key: str, *args: Any, **kwargs: Any) -> T:
         """Resolve ``key`` and construct the implementation.
 
@@ -363,6 +413,7 @@ class Registry(Generic[T]):
         return {
             name: {
                 "status": e.status,
+                "available": self.available(e.keys[0]),
                 "keys": list(e.keys),
                 "meta": dict(e.meta),
             }
