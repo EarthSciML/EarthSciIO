@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import pathlib
 import sys
 from typing import Any, Dict, List
@@ -91,10 +92,28 @@ def _encode_field(field: Any) -> Dict[str, Any]:
             values = [bool(x) for x in flat.tolist()]
         else:
             values = [int(x) for x in flat.tolist()]
-        return {"dtype": _dtype_str(flat), "dims": dims, "shape": shape, "data": values}
+        enc = {"dtype": _dtype_str(flat), "dims": dims, "shape": shape, "data": values}
+        return _with_fill_value(enc, field)
     # string column: a plain Python list of str
     values = [str(x) for x in data]
-    return {"dtype": "string", "dims": dims, "shape": [len(values)], "data": values}
+    enc = {"dtype": "string", "dims": dims, "shape": [len(values)], "data": values}
+    return _with_fill_value(enc, field)
+
+
+def _with_fill_value(enc: Dict[str, Any], field: Any) -> Dict[str, Any]:
+    """Carry a surviving fill/missing sentinel into the dump under ONE key.
+
+    ``spec/conformance.md`` §3 pins where each track reports it: Rust has a
+    dedicated ``NativeField.fill_value`` field, Python and Julia carry
+    ``attrs["fill_value"]``. Those are the SAME datum in three spellings, not
+    three decisions, so every dumper normalises to the dump schema's single
+    ``fill_value`` key — otherwise the comparator would read a difference that
+    is not one (or, worse, miss one track dropping the sentinel entirely).
+    """
+    fv = getattr(field, "attrs", {}).get("fill_value")
+    if fv is not None:
+        enc["fill_value"] = float(fv) if isinstance(fv, float) else int(fv)
+    return enc
 
 
 def _encode_coord(field: Any) -> Dict[str, Any]:
@@ -154,6 +173,20 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
             reader_kwargs["member"] = str(dec["member"])
         if dec.get("numeric_columns"):
             reader_kwargs["numeric_columns"] = list(dec["numeric_columns"])
+    elif fmt == "parquet":
+        # Columnar table. `variables` is the loader's PROJECTION and is pushed
+        # into the reader (only those column chunks come off disk); the case's
+        # decode block pins the three decode options — `float_columns` (an
+        # integer measurement, or a column of fixed-decimal TEXT, read as
+        # float64) and the two null gates `null_int` / `null_string`.
+        dec = case["decode"]
+        variables = list(case.get("variables") or [])
+        if dec.get("float_columns") is not None:
+            reader_kwargs["float_columns"] = list(dec["float_columns"])
+        if dec.get("null_int") is not None:
+            reader_kwargs["null_int"] = int(dec["null_int"])
+        if dec.get("null_string") is not None:
+            reader_kwargs["null_string"] = str(dec["null_string"])
     elif fmt == "zarr":
         # Store-backed: the reader is handed (cache, base_url, variables, select).
         # `variables` names the arrays (no .zmetadata to enumerate); `select` (the
@@ -179,11 +212,31 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def selected_ids() -> Optional[set]:
+    """The case ids ``$ESIO_CONFORMANCE_CASES`` restricts this run to, or ``None``.
+
+    A comma-separated list. Every dumper and :mod:`conformance.crosscheck` honour
+    the SAME variable, so a filtered run is still a complete cross-check of the
+    cases it names — it just narrows the corpus. It exists for an environment
+    where one track's backend for some *other* format is missing or too old (a
+    too-old ``zarr``, say): without it, one unrelated broken case makes the whole
+    gate unrunnable and a real divergence elsewhere invisible. Unset ⇒ all cases,
+    which is what CI runs.
+    """
+    raw = os.environ.get("ESIO_CONFORMANCE_CASES", "").strip()
+    if not raw:
+        return None
+    return {c.strip() for c in raw.split(",") if c.strip()}
+
+
 def main(argv: List[str]) -> int:
     index = json.loads((CORPUS / "cases.json").read_text())
+    only = selected_ids()
     cases: Dict[str, Any] = {}
     for entry in index["cases"]:
         case = json.loads((CORPUS / entry["file"]).read_text())
+        if only is not None and case["id"] not in only:
+            continue
         cases[case["id"]] = dump_case(case)
 
     out = {

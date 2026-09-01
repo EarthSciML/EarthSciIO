@@ -113,12 +113,23 @@ fn data_to_json(data: &ArrayData) -> Value {
     }
 }
 
-/// Encode one [`NativeField`] to the dump schema (dtype/dims/shape/data).
+/// Encode one [`NativeField`] to the dump schema (dtype/dims/shape/data), plus
+/// the surviving fill/missing sentinel under the dump's ONE `fill_value` key.
+///
+/// `spec/conformance.md` §3 pins where each track reports that sentinel: Rust
+/// has a dedicated `NativeField::fill_value` field, Python and Julia carry
+/// `attrs["fill_value"]`. Those are the SAME datum in three spellings, not
+/// three decisions, so every dumper normalises to this one key — otherwise the
+/// comparator would read a difference that is not one (or miss one track
+/// dropping the sentinel entirely).
 fn encode_field(f: &NativeField) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("dtype".into(), json!(dtype_str(f.dtype)));
     m.insert("dims".into(), json!(f.dims));
     m.insert("shape".into(), json!(f.shape));
+    if let Some(fv) = f.fill_value {
+        m.insert("fill_value".into(), json!(fv));
+    }
     m.insert("data".into(), data_to_json(&f.data));
     m
 }
@@ -170,6 +181,32 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
 
     let url = case["resolved_url"].as_str().unwrap();
     let mut loader = DataSource::new(case["loader"].as_str().unwrap(), fmt, url);
+    // Columnar table (parquet): `variables` is the loader's PROJECTION, pushed
+    // into the reader so only those column chunks come off disk, and the case's
+    // decode block pins the three decode options — `float_columns` (an integer
+    // measurement, or a column of fixed-decimal TEXT, read as float64) and the
+    // two null gates `null_int` / `null_string`. Both reach the reader the way a
+    // DOCUMENT delivers them: the loader's `variables` + `reader_options`,
+    // resolved by `Reader::configured`.
+    if fmt == "parquet" {
+        if let Some(vars) = case.get("variables").and_then(Value::as_array) {
+            loader = loader.variables(
+                vars.iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>(),
+            );
+        }
+        let mut options = Map::new();
+        if let Some(dec) = case.get("decode") {
+            for k in ["float_columns", "null_int", "null_string"] {
+                match dec.get(k) {
+                    Some(v) if !v.is_null() => {
+                        options.insert(k.to_string(), v.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        loader = loader.reader_options(options);
+    }
     // Store-backed (zarr): name the arrays (no .zmetadata to enumerate) + carry
     // the orthogonal selection that drives lazy chunk fetch.
     if formats.get(fmt).map(|r| r.store_backed()).unwrap_or(false) {
@@ -227,11 +264,28 @@ fn main() {
     let mut active = formats.registered();
     active.sort();
 
+    // `$ESIO_CONFORMANCE_CASES` narrows the corpus to a comma-separated id list,
+    // honoured identically by every dumper and by `crosscheck.py`, so a filtered
+    // run is still a complete cross-check of the cases it names. It exists for an
+    // environment where one track's backend for some OTHER format is missing or
+    // too old: without it a single unrelated broken case makes the gate
+    // unrunnable and a real divergence elsewhere invisible. Unset => every case.
+    let raw = std::env::var("ESIO_CONFORMANCE_CASES").unwrap_or_default();
+    let only: Option<Vec<&str>> = match raw.trim() {
+        "" => None,
+        list => Some(list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect()),
+    };
+
     let index = read_json(&corpus.join("cases.json"));
     let mut cases = Map::new();
     for entry in index["cases"].as_array().expect("cases array") {
         let case = read_json(&corpus.join(entry["file"].as_str().unwrap()));
         let id = case["id"].as_str().unwrap().to_string();
+        if let Some(only) = &only {
+            if !only.contains(&id.as_str()) {
+                continue;
+            }
+        }
         cases.insert(id, dump_case(&corpus, &case, &formats));
     }
 

@@ -22,7 +22,12 @@ Tolerance (``spec/conformance.md`` §4, identical to ``conformance/verify.py``):
     ``atol = 1e-6``, ``rtol = 1e-9`` (libraries differ at the ULP level);
   * raw integer reads, booleans and strings: compared **exactly**;
   * a masked / ``_FillValue`` cell is ``null`` in a dump and compares equal only
-    to ``null`` (the NaN/fill mask must match element-for-element).
+    to ``null`` (the NaN/fill mask must match element-for-element);
+  * a surviving fill/missing SENTINEL (``fill_value``) must agree too — the
+    three tracks spell it differently (Rust's ``NativeField.fill_value`` field,
+    Python's and Julia's ``attrs["fill_value"]``), so the dumpers normalise it
+    to one dump key and this comparator normalises ``-1`` vs ``-1.0`` to one
+    number before diffing (``spec/conformance.md`` §3).
 
 Global gates (all must hold for exit 0):
 
@@ -39,6 +44,7 @@ Spec:   ../spec/conformance.md ; conformance/CROSSLANG.md
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -113,15 +119,26 @@ def load_oracle() -> Dict[str, Dict[str, Any]]:
     the committed corpus. A field is ``{dtype, dims?, shape?, data(flat),
     units?, calendar?}`` — coords carry no dims/shape in the corpus."""
     index = json.loads((CORPUS / "cases.json").read_text())
+    # `$ESIO_CONFORMANCE_CASES` narrows the corpus to a comma-separated id list,
+    # honoured identically by all three dumpers, so a filtered run is still a
+    # complete cross-check of the cases it names. It exists for an environment
+    # where one track's backend for some OTHER format is missing or too old:
+    # without it a single unrelated broken case makes the gate unrunnable and a
+    # real divergence elsewhere invisible. Unset ⇒ every case (what CI runs).
+    raw = os.environ.get("ESIO_CONFORMANCE_CASES", "").strip()
+    only = {c.strip() for c in raw.split(",") if c.strip()} if raw else None
     oracle: Dict[str, Dict[str, Any]] = {}
     for entry in index["cases"]:
         case = json.loads((CORPUS / entry["file"]).read_text())
+        if only is not None and case["id"] not in only:
+            continue
         variables = {}
         for name, spec in case["expected"]["variables"].items():
             variables[name] = {
                 "dtype": spec["dtype"],
                 "dims": spec.get("dims"),
                 "shape": spec.get("shape"),
+                "fill_value": spec.get("fill_value"),
                 "data": _flat(spec["data"]),
             }
         coords = {}
@@ -144,6 +161,33 @@ def load_oracle() -> Dict[str, Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
+def _fill_value(field: Dict[str, Any]) -> Optional[float]:
+    """A field's surviving fill/missing sentinel as one number, or ``None``.
+
+    ``spec/conformance.md`` §3 reports this datum in three spellings — Rust's
+    ``NativeField.fill_value`` field, Python's and Julia's
+    ``attrs["fill_value"]`` — which the three dumpers already normalise to the
+    dump schema's single ``fill_value`` key. What is left here is the numeric
+    normalisation: an integer sentinel arrives as ``-1`` from Python/Julia and
+    ``-1.0`` from Rust (whose slot is an ``f64``), and those ARE the same datum.
+    Comparing the raw JSON would report a difference that is not one.
+    """
+    fv = field.get("fill_value")
+    return None if fv is None else float(fv)
+
+
+def _cmp_fill_value(a: Dict[str, Any], b: Dict[str, Any], label: str,
+                    bname: str) -> List[str]:
+    """Fill-value agreement. A track that DROPS a declared sentinel while another
+    reports it is exactly the failure §3 warns about: invisible until a document
+    reads a fill-bearing integer column and gets a real value where a missing one
+    was meant."""
+    fa, fb = _fill_value(a), _fill_value(b)
+    if fa != fb:
+        return [f"{label}: fill_value {fa!r} != {bname + ' ' if bname else ''}{fb!r}"]
+    return []
+
+
 def _cmp_against_oracle(got: Dict[str, Any], exp: Dict[str, Any], label: str) -> List[str]:
     """One decoded dump field vs an oracle field. dims/shape checked only when the
     oracle pins them (corpus variables do; coords don't)."""
@@ -157,6 +201,7 @@ def _cmp_against_oracle(got: Dict[str, Any], exp: Dict[str, Any], label: str) ->
     for k in ("units", "calendar"):
         if k in exp and str(got.get(k)) != str(exp[k]):
             errs.append(f"{label}: {k} {got.get(k)!r} != oracle {exp[k]!r}")
+    errs += _cmp_fill_value(got, exp, label, "oracle")
     verr = _values_equal(got["data"], exp["data"], exp["dtype"])
     if verr:
         errs.append(f"{label}: {verr}")
@@ -175,6 +220,7 @@ def _cmp_two_fields(a: Dict[str, Any], b: Dict[str, Any], label: str) -> List[st
     for k in ("units", "calendar"):
         if a.get(k) != b.get(k):
             errs.append(f"{label}: {k} {a.get(k)!r} != {b.get(k)!r}")
+    errs += _cmp_fill_value(a, b, label, "")
     verr = _values_equal(a["data"], b["data"], a["dtype"])
     if verr:
         errs.append(f"{label}: {verr}")

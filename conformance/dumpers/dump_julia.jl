@@ -50,6 +50,9 @@ _load_weakdep(:EarthSciIOBloscExt, "Blosc")
 # The `shapefile` case decodes through the `EarthSciIOShapefileExt` weakdep
 # extension (`using Shapefile`) — the same bootstrap as Blosc above.
 _load_weakdep(:EarthSciIOShapefileExt, "Shapefile")
+# The `parquet` case decodes through the `EarthSciIOParquet2Ext` weakdep
+# extension (`using Parquet2`) — the same bootstrap again.
+_load_weakdep(:EarthSciIOParquet2Ext, "Parquet2")
 
 # Row-major (C-order) flatten of a native array whose axes are in file (`dims`)
 # order — matches numpy `.reshape(-1)` on the Python track's arrays.
@@ -62,8 +65,8 @@ function encode_field(field)
     dims = collect(String.(field.dims))
     if eltype(data) <: AbstractString
         vals = Any[String(x) for x in data]
-        return Dict("dtype" => "string", "dims" => dims,
-                    "shape" => [length(vals)], "data" => vals)
+        return _with_fill_value(Dict("dtype" => "string", "dims" => dims,
+                                     "shape" => [length(vals)], "data" => vals), field)
     end
     flat = _corder(data)
     et = eltype(data)
@@ -79,8 +82,22 @@ function encode_field(field)
     else
         error("unexpected numeric eltype $et in field with dims $dims")
     end
-    return Dict("dtype" => dtype, "dims" => dims,
-                "shape" => collect(Int, size(data)), "data" => vals)
+    return _with_fill_value(Dict("dtype" => dtype, "dims" => dims,
+                                 "shape" => collect(Int, size(data)), "data" => vals),
+                            field)
+end
+
+# Carry a surviving fill/missing sentinel into the dump under ONE key.
+# spec/conformance.md §3 pins where each track reports it: Rust has a dedicated
+# `NativeField.fill_value` field, Python and Julia carry `attrs["fill_value"]`.
+# Those are the SAME datum in three spellings, not three decisions, so every
+# dumper normalises to the dump schema's single `fill_value` key — otherwise the
+# comparator would read a difference that is not one (or miss one track dropping
+# the sentinel entirely).
+function _with_fill_value(enc::Dict, field)
+    fv = get(field.attrs, "fill_value", nothing)
+    fv === nothing || (enc["fill_value"] = fv isa AbstractFloat ? Float64(fv) : Int64(fv))
+    return enc
 end
 
 # A coord is a field plus the CF units/calendar it carries (if any).
@@ -138,6 +155,24 @@ function dump_case(corpus, case)
         nc = get(dec, "numeric_columns", nothing)
         nc === nothing || (kw[:numeric_columns] = String.(nc))
         const_provider(cache, url; format = fmt, reader_kwargs = (; kw...))
+    elseif fmt == "parquet"
+        # Columnar table. `variables` is the loader's PROJECTION and is pushed
+        # into the reader (only those column chunks come off disk); the case's
+        # decode block pins the three decode options — `float_columns` (an
+        # integer measurement, or a column of fixed-decimal TEXT, read as
+        # float64) and the two null gates `null_int` / `null_string`.
+        dec = case["decode"]
+        kw = Dict{Symbol,Any}()
+        fc = get(dec, "float_columns", nothing)
+        fc === nothing || (kw[:float_columns] = String.(fc))
+        ni = get(dec, "null_int", nothing)
+        ni === nothing || (kw[:null_int] = Int64(ni))
+        ns = get(dec, "null_string", nothing)
+        ns === nothing || (kw[:null_string] = String(ns))
+        vars = String[String(v) for v in get(case, "variables", String[])]
+        const_provider(cache, url; format = fmt,
+                       variables = isempty(vars) ? nothing : vars,
+                       reader_kwargs = (; kw...))
     elseif fmt == "zarr"
         # Store-backed: `url` is the store base; `variables` names the arrays (no
         # .zmetadata to enumerate); `select` (the orthogonal selection) rides in
@@ -156,13 +191,29 @@ function dump_case(corpus, case)
     )
 end
 
+# The case ids `$ESIO_CONFORMANCE_CASES` restricts this run to, or `nothing`.
+# A comma-separated list, honoured identically by every dumper and by
+# `crosscheck.py`, so a filtered run is still a complete cross-check of the cases
+# it names. It exists for an environment where one track's backend for some
+# OTHER format is missing or too old: without it a single unrelated broken case
+# makes the gate unrunnable and a real divergence elsewhere invisible. Unset ⇒
+# every case, which is what CI runs.
+function selected_ids()
+    raw = strip(get(ENV, "ESIO_CONFORMANCE_CASES", ""))
+    isempty(raw) && return nothing
+    return Set(String[strip(c) for c in split(raw, ",") if !isempty(strip(c))])
+end
+
 function main()
     corpus = normpath(joinpath(@__DIR__, "..", "corpus"))
     index = JSON.parsefile(joinpath(corpus, "cases.json"))
+    only = selected_ids()
     cases = Dict{String,Any}()
     for entry in index["cases"]
         case = JSON.parsefile(joinpath(corpus, entry["file"]))
-        cases[String(case["id"])] = dump_case(corpus, case)
+        id = String(case["id"])
+        only === nothing || id in only || continue
+        cases[id] = dump_case(corpus, case)
     end
     active = sort!([n for n in registered_names(FORMAT_REGISTRY)
                     if status_of(FORMAT_REGISTRY, n) == :active])
