@@ -574,10 +574,18 @@ def _moves_tables_dir():
     import os
 
     env = os.environ.get("EARTHSCIIO_MOVES_SNAPSHOTS")
-    roots = [pathlib.Path(env)] if env else [
-        pathlib.Path(__file__).resolve().parents[3]
-        / "moves.rs" / "characterization" / "snapshots"
-    ]
+    if env:
+        roots = [pathlib.Path(env)]
+    else:
+        # Walk up looking for a `moves.rs` sibling rather than counting
+        # directory levels: this repo is read both from its canonical checkout
+        # and from git worktrees at other depths, and a hardcoded
+        # ``parents[3]`` silently resolves to nothing in one of them — leaving
+        # the test skipped instead of failing.
+        roots = [
+            parent / "moves.rs" / "characterization" / "snapshots"
+            for parent in pathlib.Path(__file__).resolve().parents
+        ]
     for root in roots:
         if (root / "tables").is_dir():
             return root / "tables"

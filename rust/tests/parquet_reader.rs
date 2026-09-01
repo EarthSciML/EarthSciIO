@@ -879,9 +879,19 @@ fn moves_tables_dir() -> Option<PathBuf> {
         let p = PathBuf::from(p);
         return first_tables_dir(&p);
     }
-    let guess = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../moves.rs/characterization/snapshots");
-    first_tables_dir(&guess)
+    // Walk up looking for a `moves.rs` sibling rather than counting directory
+    // levels: this crate is read both from its canonical checkout and from git
+    // worktrees at other depths, and a hardcoded `../../../` silently resolves
+    // to nothing in one of them — leaving the test inert instead of failing.
+    let mut dir: Option<&Path> = Some(Path::new(env!("CARGO_MANIFEST_DIR")));
+    while let Some(d) = dir {
+        let guess = d.join("moves.rs/characterization/snapshots");
+        if guess.is_dir() {
+            return first_tables_dir(&guess);
+        }
+        dir = d.parent();
+    }
+    None
 }
 
 /// The first `<fixture>/tables/` under `root`, or `root` itself if it is one.
