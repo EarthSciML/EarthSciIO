@@ -239,6 +239,44 @@ fn a_uint64_too_large_for_int64_is_an_error() {
     assert!(msg.contains("row 0"), "names the row: {msg}");
 }
 
+/// ...but under `float_columns` there IS a reading, and it must be given.
+///
+/// The `uint64` refusal exists to stop a value wrapping into a NEGATIVE ID —
+/// `spec/conformance.md` §3, "never a wraparound into a negative ID". Under
+/// `float_columns` the document has said the column is a float64 measurement:
+/// the target has no int64 to wrap into, `f64` represents the magnitude fine,
+/// and the Python and Julia tracks both decode it. Rust refused it anyway,
+/// because the range check lived in `cells()` — the decode — rather than in the
+/// integer coercion, so it fired whatever the column was being read AS. Same
+/// shape of bug as `float_columns` promoting a `Binary` column into a field
+/// that then hard-errored (fixed in a30c9e4): an option combination one backend
+/// handles and another errors on.
+#[test]
+fn float_columns_reads_a_uint64_beyond_int64_max() {
+    let dir = tempdir();
+    let path = write_parquet(
+        dir.path(),
+        "bigu.parquet",
+        vec![(
+            "u",
+            Arc::new(UInt64Array::from(vec![Some(1u64), Some(u64::MAX), None])) as ArrayRef,
+        )],
+        Compression::UNCOMPRESSED,
+    );
+    let ds = configured(json!({"float_columns": ["u"]}))
+        .read_native(&path, &[], &Selection::All)
+        .expect("a uint64 declared float64 decodes");
+    assert_eq!(ds.variables["u"].dtype, DType::Float64);
+    let v = f64s(&ds, "u");
+    assert_eq!(v[0], 1.0);
+    assert_eq!(v[1], u64::MAX as f64);
+    assert!(v[2].is_nan(), "a null in a float column is NaN");
+    // The int64 reading of the SAME column is still refused — the range check
+    // moved, it did not disappear.
+    let err = read(&path, &[]).expect_err("still refused as an integer");
+    assert!(format!("{err}").contains("\"u\""));
+}
+
 /// Nested and binary columns have no rank-1 reading. Requesting one by name is
 /// an error (the document named an array it will not get); in read-everything
 /// mode the column is simply not a native field, as the NetCDF reader skips its

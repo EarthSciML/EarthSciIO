@@ -53,7 +53,10 @@
 //! reported — a document that needs them must state them itself.
 //!
 //! A `UInt64` value above `i64::MAX` is an error naming the column and row, not
-//! a wraparound.
+//! a wraparound — when the column is read as an **integer**. Under
+//! [`float_columns`](ParquetReader::float_columns) it is a `float64`
+//! measurement, there is no integer to wrap into, and it decodes (as it does in
+//! the Python and Julia tracks).
 //!
 //! # Null policy
 //!
@@ -446,10 +449,18 @@ fn target_dtype(dt: &DataType, forced_float: bool) -> Option<DType> {
 }
 
 /// One decoded cell, before it is coerced into the column's target [`DType`].
+///
+/// `U` is a `uint64` that has NOT yet been narrowed: whether a value above
+/// `i64::MAX` is an error depends on what the column is being read AS, and that
+/// is the accumulator's business, not the decode's. Reading it as `int64` is
+/// refused (§3: "never a wraparound into a negative ID"); reading it as
+/// `float64` — which is what `float_columns` asks for — is fine, and is what
+/// the Python and Julia tracks do.
 #[derive(Debug, Clone)]
 enum Cell {
     F(f64),
     I(i64),
+    U(u64),
     S(String),
     B(bool),
 }
@@ -478,24 +489,10 @@ fn cells(col: &dyn Array, name: &str, row0: usize) -> Result<Vec<Option<Cell>>> 
         DataType::UInt8 => prim!(UInt8Type, |v| Cell::I(v as i64)),
         DataType::UInt16 => prim!(UInt16Type, |v| Cell::I(v as i64)),
         DataType::UInt32 => prim!(UInt32Type, |v| Cell::I(v as i64)),
-        // The one integer width that does not fit: refuse rather than wrap.
-        DataType::UInt64 => {
-            let a = col.as_primitive::<UInt64Type>();
-            let mut out = Vec::with_capacity(a.len());
-            for (i, v) in a.iter().enumerate() {
-                out.push(match v {
-                    None => None,
-                    Some(u) => Some(Cell::I(i64::try_from(u).map_err(|_| {
-                        fmt_err(format!(
-                            "column {name:?} row {}: uint64 value {u} exceeds the int64 \
-                             native dtype",
-                            row0 + i
-                        ))
-                    })?)),
-                });
-            }
-            Ok(out)
-        }
+        // The one integer width that does not fit an i64. It is carried WIDE and
+        // narrowed by the accumulator, because whether it fits is a question
+        // about the target dtype: `int_cell` refuses it, `Acc::F64` widens it.
+        DataType::UInt64 => prim!(UInt64Type, Cell::U),
 
         DataType::Float16 => prim!(Float16Type, |v| Cell::F(f64::from(v))),
         DataType::Float32 => prim!(Float32Type, |v| Cell::F(v as f64)),
@@ -664,6 +661,9 @@ impl Acc {
                     None => f64::NAN,
                     Some(Cell::F(v)) => v,
                     Some(Cell::I(v)) => v as f64,
+                    // No range check: the document declared this column a
+                    // float64 measurement, and f64 carries the magnitude.
+                    Some(Cell::U(v)) => v as f64,
                     Some(Cell::B(_)) => {
                         return Err(fmt_err(format!(
                             "column {name:?} row {row}: a boolean cell cannot be read as float64"
@@ -733,6 +733,13 @@ impl Acc {
 fn int_cell(cell: Option<Cell>, name: &str, row: usize, null_int: Option<i64>) -> Result<i64> {
     match cell {
         Some(Cell::I(v)) => Ok(v),
+        // The one integer width that does not fit: refuse rather than wrap a
+        // uint64 into a negative ID.
+        Some(Cell::U(u)) => i64::try_from(u).map_err(|_| {
+            fmt_err(format!(
+                "column {name:?} row {row}: uint64 value {u} exceeds the int64 native dtype"
+            ))
+        }),
         Some(_) => Err(fmt_err(format!(
             "column {name:?} row {row}: expected an integer cell"
         ))),
