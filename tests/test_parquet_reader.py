@@ -181,6 +181,30 @@ def test_a_uint64_too_large_for_int64_is_an_error(tmp_path):
     assert "'u'" in str(err.value) and "row 1" in str(err.value)
 
 
+def test_float_columns_reads_a_uint64_beyond_int64_max(tmp_path):
+    """...but under ``float_columns`` there IS a reading, and it is given.
+
+    The refusal above exists to stop a value wrapping into a NEGATIVE ID
+    (``spec/conformance.md`` §3). Once the document has declared the column a
+    float64 measurement there is no integer to wrap into and ``f64`` carries
+    the magnitude, so it decodes. Pinned here because the Rust track put that
+    range check in its *decode* rather than in its integer coercion and so
+    refused a read this track performs — the divergence is only visible from
+    the other side.
+    """
+    path = write(
+        tmp_path,
+        pa.table({"u": pa.array([1, 2 ** 64 - 1, None], type=pa.uint64())}),
+    )
+    ds = read(path, float_columns=["u"])
+    assert ds.variables["u"].data.dtype == np.dtype("float64")
+    assert ds.variables["u"].data[0] == 1.0
+    assert ds.variables["u"].data[1] == float(2 ** 64 - 1)
+    assert np.isnan(ds.variables["u"].data[2])
+    # No surviving sentinel: a float carries its missing values itself.
+    assert "fill_value" not in ds.variables["u"].attrs
+
+
 def test_an_int32_column_that_cannot_hold_its_sentinel_is_an_error(tmp_path):
     """A declared ``null_int`` still has to fit the column's native width."""
     path = write(tmp_path, pa.table({"i": pa.array([1, None], type=pa.int32())}))
