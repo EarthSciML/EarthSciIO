@@ -64,7 +64,7 @@ export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
 export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ShapefileReader,
-       ZarrReader, read_native
+       ParquetReader, ZarrReader, read_native
 export read_store, store_backed, supports_selection, array_shape, reader_option_keys
 export NativeField, NativeDataset, variable_names, coord_names
 
@@ -129,6 +129,16 @@ function _register_defaults()
     # `read_native` errors with an install hint (the Python sibling lazy-imports
     # `pyshp` the same way).
     register!(FORMAT_REGISTRY, "shapefile", ShapefileReader(); status = :active)
+    # parquet (columnar table): every column a rank-1 field over `index` keyed by
+    # its on-disk name, no coords; the dtype is a total function of the parquet
+    # logical type (the netcdf reader's narrow/wide integer split, verbatim),
+    # temporal columns ride as their RAW integer, a null float is NaN and a null
+    # int/string/bool is an error unless `null_int`/`null_string` is declared, and
+    # `variables` is a real projection PUSHDOWN. The decode is supplied by the
+    # `EarthSciIOParquet2Ext` weakdep extension (`using Parquet2`); without it,
+    # `read_native` errors with an install hint (the Python sibling lazy-imports
+    # `pyarrow` the same way).
+    register!(FORMAT_REGISTRY, "parquet", ParquetReader(); status = :active)
     # zarr (active, store-backed): lazy orthogonal chunk selection; blosc decode
     # is supplied by the `EarthSciIOBloscExt` weakdep extension (`using Blosc`).
     register!(FORMAT_REGISTRY, "zarr", ZarrReader(); status = :active)
