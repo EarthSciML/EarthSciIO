@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 9270,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "a8f5a23b3e0fc3697658d18108b77d24fe8f850556f3d7903daccf761407d8cc",
+  "source_loader": "moves",
+  "url": "https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet"
+}

@@ -44,6 +44,12 @@
       "file": "cases/shapefile-polygon-zip.json",
       "cache_key": "97fc34ef836566c29f59ed2ccd308d2a27dd6c3f2f5d687da58145c6ec894628",
       "blob_path": "cache/v1/blobs/97/97fc34ef836566c29f59ed2ccd308d2a27dd6c3f2f5d687da58145c6ec894628.zip"
+    },
+    {
+      "id": "moves-rate-table-parquet",
+      "file": "cases/moves-rate-table-parquet.json",
+      "cache_key": "a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f",
+      "blob_path": "cache/v1/blobs/a0/a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f.parquet"
     }
   ]
 }

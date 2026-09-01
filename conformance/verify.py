@@ -389,8 +389,82 @@ def read_shapefile(path, expected, decode=None):
     return out, {}
 
 
+def read_parquet(path, expected, decode=None):
+    """Reference decode of a Parquet blob — ``spec/conformance.md`` §3.
+
+    Driven by **pyarrow directly**, not through ``earthsciio``: the oracle has to
+    be an independent expression of the contract, or it only proves the reader
+    agrees with itself. The projection is the expected variable set (which is
+    the case's ``variables``), and the target dtype is derived here from the
+    Arrow type + ``float_columns`` rather than read off the expected field.
+    """
+    import pyarrow.parquet as pq
+    import pyarrow.types as pt
+
+    dec = decode or {}
+    forced = set(dec.get("float_columns") or [])
+    null_int = dec.get("null_int")
+    null_string = dec.get("null_string")
+
+    wanted = list(expected["variables"])
+    table = pq.read_table(path, columns=wanted)
+
+    out = {}
+    for name in wanted:
+        col = table.column(name)
+        typ = col.type
+        if pt.is_dictionary(typ):          # a categorical reads as its VALUE type
+            col = col.cast(typ.value_type)
+            typ = col.type
+        if name in forced:
+            kind = "float64"
+        elif pt.is_boolean(typ):
+            kind = "bool"
+        elif pt.is_string(typ) or pt.is_large_string(typ):
+            kind = "string"
+        elif (pt.is_int8(typ) or pt.is_int16(typ) or pt.is_int32(typ)
+              or pt.is_uint8(typ) or pt.is_uint16(typ) or pt.is_date32(typ)
+              or pt.is_time32(typ)):
+            kind = "int32"
+        elif (pt.is_int64(typ) or pt.is_uint32(typ) or pt.is_uint64(typ)
+              or pt.is_date64(typ) or pt.is_time64(typ) or pt.is_timestamp(typ)
+              or pt.is_duration(typ)):
+            kind = "int64"
+        else:                              # floats, decimals, and the Null type
+            kind = "float64"
+
+        # Temporal columns ride as their RAW stored integer (the unit is NOT
+        # applied) — casting is what keeps it; to_pylist alone yields datetimes.
+        if kind in ("int32", "int64") and not (
+            pt.is_integer(typ) or pt.is_null(typ)
+        ):
+            import pyarrow as pa
+            col = col.cast(pa.int32() if kind == "int32" else pa.int64())
+        cells = col.to_pylist()
+
+        if kind == "float64":
+            vals = []
+            for c in cells:
+                if c is None:
+                    vals.append(math.nan)
+                elif isinstance(c, str):   # fixed-decimal TEXT under float_columns
+                    vals.append(math.nan if not c.strip() else float(c.strip()))
+                else:
+                    vals.append(float(c))  # Decimal -> float64 is unscaled/10^scale
+            out[name] = np.array(vals, dtype="f8")
+        elif kind in ("int32", "int64"):
+            out[name] = np.array(
+                [null_int if c is None else int(c) for c in cells], dtype=kind)
+        elif kind == "bool":
+            out[name] = np.array([bool(c) for c in cells], dtype=bool)
+        else:
+            out[name] = [null_string if c is None else str(c) for c in cells]
+    return out, {}
+
+
 READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10,
-           "zarr": read_zarr, "shapefile": read_shapefile}
+           "zarr": read_zarr, "shapefile": read_shapefile,
+           "parquet": read_parquet}
 
 
 def _verify_zarr_objects(case) -> list:
@@ -465,6 +539,11 @@ def verify_case(case_path: pathlib.Path) -> list:
         # shapefile needs the case's decode block (zip member + numeric_columns).
         got, coords = read_shapefile(CORPUS / case["blob_path"], case["expected"],
                                      case.get("decode"))
+    elif case["format"] == "parquet":
+        # parquet needs the case's decode block (float_columns + the two null
+        # gates); the projection is the expected variable set.
+        got, coords = read_parquet(CORPUS / case["blob_path"], case["expected"],
+                                   case.get("decode"))
     else:
         got, coords = reader(CORPUS / case["blob_path"], case["expected"])
     for name, spec in case["expected"]["variables"].items():

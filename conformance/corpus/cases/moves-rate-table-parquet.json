@@ -1,0 +1,376 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "moves-rate-table-parquet",
+  "loader": "moves",
+  "kind": "points",
+  "format": "parquet",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
+  "cache_key": "a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f",
+  "blob_path": "cache/v1/blobs/a0/a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f.parquet",
+  "manifest_path": "cache/v1/meta/a0285c111c81f74f0666d8bb1e5bdcd8411c9ccfaff1ad5b6d7a70d5262b3b5f.json",
+  "content_sha256": "a8f5a23b3e0fc3697658d18108b77d24fe8f850556f3d7903daccf761407d8cc",
+  "bytes": 9270,
+  "select": {
+    "all_rows": true
+  },
+  "decode": {
+    "float_columns": [
+      "meanBaseRate",
+      "modelYearID"
+    ],
+    "null_int": -1,
+    "null_string": "(unknown)",
+    "row_groups": 2,
+    "rows_per_group": 3,
+    "compression": "snappy",
+    "projected_out": [
+      "internalKey",
+      "ignoredNote"
+    ],
+    "no_nested_columns": true,
+    "timestamps_ms_aligned": true,
+    "decimal_scale": 6
+  },
+  "expected": {
+    "variables": {
+      "sourceTypeID": {
+        "dtype": "int32",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          11,
+          21,
+          31,
+          32,
+          52,
+          62
+        ],
+        "fill_value": -1
+      },
+      "roadTypeID": {
+        "dtype": "int32",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          255
+        ],
+        "fill_value": -1
+      },
+      "linkID": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          4294967296,
+          -4294967296,
+          3,
+          4,
+          5,
+          6
+        ],
+        "fill_value": -1
+      },
+      "zoneID": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          4294967295,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "fill_value": -1
+      },
+      "pollutantID": {
+        "dtype": "int32",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          2,
+          3,
+          -1,
+          110,
+          100,
+          31
+        ],
+        "fill_value": -1
+      },
+      "fuelTypeDesc": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          "Gasoline",
+          "(unknown)",
+          "Diesel",
+          "",
+          "Electricity",
+          "Gasoline"
+        ]
+      },
+      "countyName": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          "Cook",
+          "Cook",
+          "DuPage",
+          "(unknown)",
+          "Cook",
+          "DuPage"
+        ]
+      },
+      "isRamp": {
+        "dtype": "bool",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          false,
+          true,
+          false,
+          false,
+          true,
+          true
+        ]
+      },
+      "meanBaseRate": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          261.0,
+          -1.5,
+          0.0,
+          null,
+          1000.0,
+          0.0625
+        ]
+      },
+      "emissionQuant": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          1.5,
+          2.5,
+          -3.25,
+          0.0,
+          10000000000.0,
+          0.125
+        ]
+      },
+      "energyRate": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          3.14159,
+          null,
+          -0.5,
+          6.02214076e+23,
+          0.0,
+          2.5
+        ]
+      },
+      "massFraction": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          0.123456,
+          -9.0,
+          0.03125,
+          1000000.0,
+          0.5,
+          -0.000123
+        ]
+      },
+      "modelYearID": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          1995.0,
+          2000.0,
+          null,
+          2010.0,
+          2020.0,
+          null
+        ]
+      },
+      "startDate": {
+        "dtype": "int32",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          19000,
+          19001,
+          0,
+          -1,
+          19723,
+          12345
+        ],
+        "fill_value": -1
+      },
+      "updateTime": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          1700000000000,
+          0,
+          -5,
+          1,
+          1234567890123,
+          -86400000
+        ],
+        "fill_value": -1
+      },
+      "startTime": {
+        "dtype": "int32",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          0,
+          3600000,
+          43200000,
+          86399999,
+          1000,
+          2000
+        ],
+        "fill_value": -1
+      },
+      "microTime": {
+        "dtype": "int64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          0,
+          1,
+          999999,
+          86399999999,
+          123456,
+          7
+        ],
+        "fill_value": -1
+      },
+      "notApplicable": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          6
+        ],
+        "data": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  },
+  "notes": "MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every track concatenates two batches and the row order across the seam is pinned), snappy-compressed. One column per supported Arrow family: the narrow/wide integer split (uint8 255 read unsigned, uint32 4294967295 not fitting an int32), a categorical EXPANDED to one string per row, float32 widened bit-exactly, Decimal128 as unscaled/10^scale, temporal columns as their RAW stored integer at their stored width (date32/time32[ms] -> int32; timestamp[ms]/time64[us] -> int64), and an all-Null column as float64/all-NaN. Null policy: a float null -> NaN with no surviving sentinel; a declared null_int=-1 fills the integer nulls AND is reported back in fill_value on every int column; null_string fills a text null (and a DICTIONARY null) while a real empty string stays \"\". float_columns does both of its jobs at once \u2014 `meanBaseRate` is fixed-decimal TEXT (blank -> NaN) and `modelYearID` is an integer measurement whose nulls become NaN rather than the sentinel, so no fill_value survives it. `variables` is the PROJECTION: `ignoredNote` (readable) and `internalKey` (binary, no rank-1 reading) are both left out. Deliberately carries NO nested column, ms-aligned timestamps only, and decimals inside Dec64's exact range \u2014 the three Parquet2.jl limits spec/conformance.md \u00a73 records.",
+  "variables": [
+    "sourceTypeID",
+    "roadTypeID",
+    "linkID",
+    "zoneID",
+    "pollutantID",
+    "fuelTypeDesc",
+    "countyName",
+    "isRamp",
+    "meanBaseRate",
+    "emissionQuant",
+    "energyRate",
+    "massFraction",
+    "modelYearID",
+    "startDate",
+    "updateTime",
+    "startTime",
+    "microTime",
+    "notApplicable"
+  ]
+}

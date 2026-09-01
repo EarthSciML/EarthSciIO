@@ -682,6 +682,203 @@ ZARR_BASE_URL = "s3://earthsci-fixtures/isrm-mini.zarr"
 ZARR_SELECT = {"axes": [{"indices": [1]}, {"indices": [1, 4]}, "all"]}
 
 
+# --------------------------------------------------------------------------- #
+# `parquet` — a MOVES-shaped rate table (the columnar cross-language case)
+# --------------------------------------------------------------------------- #
+
+#: `float_columns` for the parquet case: a rate stored as fixed-decimal TEXT
+#: (how the MOVES snapshots keep floats byte-reproducible) and an integer
+#: measurement whose missing cells must be NaN rather than a sentinel.
+PQ_FLOAT_COLUMNS = ["meanBaseRate", "modelYearID"]
+#: The two null gates. Declared, so an integer/string null is substituted
+#: instead of refused — and `null_int` survives into `fill_value`.
+PQ_NULL_INT = -1
+PQ_NULL_STRING = "(unknown)"
+#: 6 rows written as 2 row groups, so every track's decode CONCATENATES two
+#: batches and the row order across the seam is part of what is pinned.
+PQ_ROWS_PER_GROUP = 3
+#: The columns a document asks for. `internalKey` (binary, no rank-1 reading)
+#: and `ignoredNote` (a perfectly readable string column) are deliberately left
+#: out: the projection must narrow the result to exactly this list.
+PQ_PROJECTION = [
+    "sourceTypeID", "roadTypeID", "linkID", "zoneID", "pollutantID",
+    "fuelTypeDesc", "countyName", "isRamp", "meanBaseRate", "emissionQuant",
+    "energyRate", "massFraction", "modelYearID", "startDate", "updateTime",
+    "startTime", "microTime", "notApplicable",
+]
+
+
+def build_parquet_moves() -> tuple[bytes, dict, dict]:
+    """A 6-row MOVES-shaped Parquet rate table + its expected native arrays.
+
+    One column per supported Arrow family that all THREE backends can be asked
+    for, so the case pins ``spec/conformance.md`` §3's "Parquet decode notes"
+    table cross-language rather than per-track: the narrow/wide integer split,
+    a categorical expanded, temporal columns carried as their RAW stored
+    integer, a `Decimal` as unscaled ÷ 10^scale, an all-`Null` column as
+    float64/all-NaN, the null policy and its two declared gates, and
+    ``float_columns`` doing both of its jobs.
+
+    Three shapes are deliberately ABSENT, each because a Parquet2.jl limit
+    recorded in ``spec/conformance.md`` §3 makes it unenforceable across the
+    three tracks rather than because the contract is unclear:
+
+    * **no nested column** — Parquet2.jl cannot OPEN a file that carries one at
+      all, so a shared fixture with a list/struct/map column would decode in
+      two tracks and fail to open in the third. The "unrequested, it is simply
+      not a field" rule stays normative and is exercised per-track
+      (``rust/tests/parquet_reader.rs``, ``julia/test/test_parquet_reader.jl``,
+      ``tests/test_parquet_reader.py``). A **binary** column IS here, because
+      that one Parquet2.jl opens happily — so the unsupported-column rule is
+      pinned cross-language for the case it can be;
+    * **millisecond timestamps only** — Parquet2.jl decodes a timestamp to a
+      `DateTime` before the reader sees it, so a MICROS/NANOS column's raw
+      integer is not recoverable. `updateTime` is `timestamp[ms]`. (A
+      `time64[us]` column IS here: `Dates.Time` is nanosecond-valued, so a
+      sub-second time-of-day survives where a timestamp does not.)
+    * **decimals inside `Dec64`'s exact range** — `massFraction` is
+      `decimal128(18, 6)` with every |unscaled| < 2^53 and scale ≤ 22, where
+      Julia's `Dec64 → Float64` and the other two tracks' `f64(unscaled) /
+      10^scale` are bit-identical.
+
+    Returns ``(blob_bytes, expected, decode)``.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    n = 6
+    # (name, arrow array, expected native dtype, expected native data). The
+    # stored values and the values every track must return sit side by side, so
+    # the fixture and its oracle cannot drift apart.
+    cols: list[tuple[str, object, str, list]] = [
+        # --- the narrow/wide integer split (the NetCDF reader's, verbatim) ---
+        ("sourceTypeID", pa.array([11, 21, 31, 32, 52, 62], pa.int16()),
+         "int32", [11, 21, 31, 32, 52, 62]),
+        # uint8 is narrow -> int32; 255 proves it is read UNSIGNED.
+        ("roadTypeID", pa.array([1, 2, 3, 4, 5, 255], pa.uint8()),
+         "int32", [1, 2, 3, 4, 5, 255]),
+        ("linkID", pa.array([4294967296, -4294967296, 3, 4, 5, 6], pa.int64()),
+         "int64", [4294967296, -4294967296, 3, 4, 5, 6]),
+        # uint32 is WIDE -> int64; 4294967295 does not fit an int32 and proves it.
+        ("zoneID", pa.array([4294967295, 1, 2, 3, 4, 5], pa.uint32()),
+         "int64", [4294967295, 1, 2, 3, 4, 5]),
+        # --- the null policy: an integer null takes the declared sentinel, and
+        # the sentinel is REPORTED BACK in fill_value ---
+        ("pollutantID", pa.array([2, 3, None, 110, 100, 31], pa.int32()),
+         "int32", [2, 3, PQ_NULL_INT, 110, 100, 31]),
+        # --- a text null takes the declared substitute, and is then
+        # indistinguishable from a real cell holding it. Row 3 holds a real
+        # EMPTY string, which is NOT a null and must survive as "" ---
+        ("fuelTypeDesc",
+         pa.array(["Gasoline", None, "Diesel", "", "Electricity", "Gasoline"],
+                  pa.string()),
+         "string", ["Gasoline", PQ_NULL_STRING, "Diesel", "", "Electricity",
+                    "Gasoline"]),
+        # --- a categorical is EXPANDED to one value per row; the key encoding
+        # is storage and never reaches the native array. Its null takes
+        # null_string too (a null key and a key pointing at a null value are the
+        # same null) ---
+        ("countyName",
+         pa.array(["Cook", "Cook", "DuPage", None, "Cook", "DuPage"]).dictionary_encode(),
+         "string", ["Cook", "Cook", "DuPage", PQ_NULL_STRING, "Cook", "DuPage"]),
+        ("isRamp", pa.array([False, True, False, False, True, True], pa.bool_()),
+         "bool", [False, True, False, False, True, True]),
+        # --- float_columns, job 2: floats stored as fixed-decimal TEXT (the
+        # MOVES snapshots' `meanBaseRate`). Trimmed and parsed; an
+        # all-whitespace cell is NaN (the FF10/shapefile blank->NaN rule).
+        # Without the option this column stays `string` ---
+        ("meanBaseRate",
+         pa.array(["261.000000000000", "-1.500000000000", "0.000000000000",
+                   "   ", "1e3", "0.062500000000"], pa.string()),
+         "float64", [261.0, -1.5, 0.0, None, 1000.0, 0.0625]),
+        # --- every float width is float64; 1e10 and 0.125 are exact in binary32
+        # so the widening is bit-exact ---
+        ("emissionQuant",
+         pa.array([1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125], pa.float32()),
+         "float64", [1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125]),
+        # --- a null in a FLOAT column is NaN, and no sentinel survives ---
+        ("energyRate",
+         pa.array([3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5], pa.float64()),
+         "float64", [3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5]),
+        # --- Decimal128 -> float64 as unscaled / 10^scale. Max |unscaled| here
+        # is 1e12 (< 2^53) and the scale is 6 (<= 22), which is exactly the
+        # range where Julia's Dec64 and the other two tracks' division agree
+        # bit for bit ---
+        ("massFraction",
+         pa.array(["0.123456", "-9.000000", "0.031250", "1000000.000000",
+                   "0.500000", "-0.000123"]).cast(pa.decimal128(18, 6)),
+         "float64", [0.123456, -9.0, 0.03125, 1000000.0, 0.5, -0.000123]),
+        # --- float_columns, job 1: an INTEGER column that is really a
+        # measurement. Its nulls become NaN, NOT the declared null_int, and no
+        # fill_value survives — a float carries its missing values itself ---
+        ("modelYearID", pa.array([1995, 2000, None, 2010, 2020, None], pa.int32()),
+         "float64", [1995.0, 2000.0, None, 2010.0, 2020.0, None]),
+        # --- temporal columns ride as their RAW stored integer at their stored
+        # width, undecoded: the unit and any timezone are not applied and not
+        # reported, because an epoch offset -> instant is ESS's job (R3) ---
+        ("startDate", pa.array([19000, 19001, 0, -1, 19723, 12345], pa.date32()),
+         "int32", [19000, 19001, 0, -1, 19723, 12345]),
+        ("updateTime",
+         pa.array([1700000000000, 0, -5, 1, 1234567890123, -86400000],
+                  pa.timestamp("ms")),
+         "int64", [1700000000000, 0, -5, 1, 1234567890123, -86400000]),
+        ("startTime",
+         pa.array([0, 3600000, 43200000, 86399999, 1000, 2000], pa.time32("ms")),
+         "int32", [0, 3600000, 43200000, 86399999, 1000, 2000]),
+        ("microTime",
+         pa.array([0, 1, 999999, 86399999999, 123456, 7], pa.time64("us")),
+         "int64", [0, 1, 999999, 86399999999, 123456, 7]),
+        # --- an all-null column has no type of its own: float64, every cell NaN ---
+        ("notApplicable", pa.array([None] * n, pa.null()),
+         "float64", [None] * n),
+        # --- NOT in the projection. A binary column has no rank-1 reading, so
+        # unrequested it is simply not a field (never an error) ---
+        ("internalKey",
+         pa.array([b"\x00", b"\x01", b"\x02", b"\x03", b"\x04", b"\x05"],
+                  pa.binary()),
+         None, None),
+        # --- NOT in the projection, and perfectly readable: the projection must
+        # narrow the result, not just drop what it could not read ---
+        ("ignoredNote", pa.array(["a", "b", "c", "d", "e", "f"], pa.string()),
+         None, None),
+    ]
+
+    table = pa.table({name: arr for name, arr, _dt, _exp in cols})
+    buf = pa.BufferOutputStream()
+    pq.write_table(table, buf, compression="snappy",
+                   row_group_size=PQ_ROWS_PER_GROUP)
+    data = buf.getvalue().to_pybytes()
+
+    forced = set(PQ_FLOAT_COLUMNS)
+    variables = {}
+    for name, _arr, dtype, values in cols:
+        if name not in PQ_PROJECTION:
+            continue
+        field = {"dtype": dtype, "dims": ["index"], "shape": [n], "data": values}
+        # A NaN-folded float carries no surviving sentinel; a DECLARED integer
+        # sentinel does, and every track reports it (Rust in the NativeField's
+        # own `fill_value`, Python and Julia in `attrs["fill_value"]` — the same
+        # datum in three spellings, normalised by the dumpers).
+        if dtype in ("int32", "int64") and name not in forced:
+            field["fill_value"] = PQ_NULL_INT
+        variables[name] = field
+
+    expected = {"variables": variables}
+    decode = {
+        "float_columns": PQ_FLOAT_COLUMNS,
+        "null_int": PQ_NULL_INT,
+        "null_string": PQ_NULL_STRING,
+        "row_groups": -(-n // PQ_ROWS_PER_GROUP),
+        "rows_per_group": PQ_ROWS_PER_GROUP,
+        "compression": "snappy",
+        "projected_out": ["internalKey", "ignoredNote"],
+        "no_nested_columns": True,
+        "timestamps_ms_aligned": True,
+        "decimal_scale": 6,
+    }
+    return data, expected, decode
+
+
 def _blosc_codec():
     """The pinned numcodecs Blosc codec (matches the .zarray compressor)."""
     import numcodecs
@@ -904,7 +1101,7 @@ def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
 
 
 def emit_case(case_id, *, loader, kind, fmt, transport, store, resolved_url,
-              ext, data, expected, decode, select, notes):
+              ext, data, expected, decode, select, notes, variables=None):
     key = cache_key(resolved_url)
     content_sha = sha256_bytes(data)
     blob_rel = write_blob(key, ext, data)
@@ -939,6 +1136,11 @@ def emit_case(case_id, *, loader, kind, fmt, transport, store, resolved_url,
         "expected": expected,
         "notes": notes,
     }
+    # A single-blob case may still carry `variables`: the parquet reader takes
+    # them as a PROJECTION pushed into the decode (only those column chunks come
+    # off disk), the same field the store-backed zarr cases use to name arrays.
+    if variables is not None:
+        case["variables"] = list(variables)
     write_json(CASES_DIR / f"{case_id}.json", case)
     return key, content_sha, len(data), blob_rel
 
@@ -1058,6 +1260,38 @@ def main() -> None:
                "column forced to float64 by numeric_columns. shape_type/crs_wkt "
                "are one-element `meta` string fields, not field attrs, because "
                "the Rust NativeField has none and equality compares fields."),
+    ))
+
+    pq_data, pq_expected, pq_decode = build_parquet_moves()
+    summary.append(("moves-rate-table-parquet",) + emit_case(
+        "moves-rate-table-parquet",
+        loader="moves", kind="points", fmt="parquet", transport="file",
+        store="local",
+        resolved_url="https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
+        ext="parquet", data=pq_data, expected=pq_expected, decode=pq_decode,
+        select={"all_rows": True}, variables=PQ_PROJECTION,
+        notes=("MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every "
+               "track concatenates two batches and the row order across the seam "
+               "is pinned), snappy-compressed. One column per supported Arrow "
+               "family: the narrow/wide integer split (uint8 255 read unsigned, "
+               "uint32 4294967295 not fitting an int32), a categorical EXPANDED "
+               "to one string per row, float32 widened bit-exactly, Decimal128 "
+               "as unscaled/10^scale, temporal columns as their RAW stored "
+               "integer at their stored width (date32/time32[ms] -> int32; "
+               "timestamp[ms]/time64[us] -> int64), and an all-Null column as "
+               "float64/all-NaN. Null policy: a float null -> NaN with no "
+               "surviving sentinel; a declared null_int=-1 fills the integer "
+               "nulls AND is reported back in fill_value on every int column; "
+               "null_string fills a text null (and a DICTIONARY null) while a "
+               "real empty string stays \"\". float_columns does both of its "
+               "jobs at once — `meanBaseRate` is fixed-decimal TEXT (blank -> "
+               "NaN) and `modelYearID` is an integer measurement whose nulls "
+               "become NaN rather than the sentinel, so no fill_value survives "
+               "it. `variables` is the PROJECTION: `ignoredNote` (readable) and "
+               "`internalKey` (binary, no rank-1 reading) are both left out. "
+               "Deliberately carries NO nested column, ms-aligned timestamps "
+               "only, and decimals inside Dec64's exact range — the three "
+               "Parquet2.jl limits spec/conformance.md §3 records."),
     ))
 
     index = {
