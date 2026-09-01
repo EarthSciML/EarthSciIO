@@ -406,7 +406,17 @@ fn target_dtype(dt: &DataType, forced_float: bool) -> Option<DType> {
             | DataType::Struct(_)
             | DataType::Map(_, _)
             | DataType::Union(_, _)
-            | DataType::RunEndEncoded(_, _) => None,
+            | DataType::RunEndEncoded(_, _)
+            // Binary is unsupported for the same reason nested types are: it has
+            // no rank-1 numeric reading. `float_columns` is a statement about
+            // how to READ a column, not a claim that an opaque blob is a
+            // number — so naming one here must leave it a non-field, exactly as
+            // read-everything mode does, rather than registering an accumulator
+            // that then fails in `cells()`.
+            | DataType::Binary
+            | DataType::LargeBinary
+            | DataType::BinaryView
+            | DataType::FixedSizeBinary(_) => None,
             _ => Some(DType::Float64),
         };
     }

@@ -275,6 +275,43 @@ fn a_nested_column_is_skipped_when_unrequested_and_refused_when_named() {
     assert!(format!("{err}").contains("\"st\""), "{err}");
 }
 
+/// `float_columns` must not promote a binary column into a field. It is a
+/// statement about how to READ a column, not a claim that an opaque blob is a
+/// number — so an unrequested binary column stays a non-field whether or not it
+/// is named, exactly as read-everything mode leaves it.
+///
+/// Regression: the `forced_float` arm listed only the nested types as
+/// unsupported, so a named binary column registered an accumulator and then
+/// hard-errored in `cells()` — an error where the spec says "simply not a
+/// field", and a divergence from the Python track, which refuses binary
+/// regardless of `float_columns`.
+#[test]
+fn float_columns_does_not_promote_a_binary_column_into_a_field() {
+    use arrow_array::BinaryArray;
+    let dir = tempdir();
+    let path = write_parquet(
+        dir.path(),
+        "forced_blob.parquet",
+        vec![
+            ("id", Arc::new(Int64Array::from(vec![7i64, 8])) as ArrayRef),
+            (
+                "blob",
+                Arc::new(BinaryArray::from(vec![&b"x"[..], &b"y"[..]])),
+            ),
+        ],
+        Compression::UNCOMPRESSED,
+    );
+
+    let ds = configured(json!({"float_columns": ["blob"]}))
+        .read_native(&path, &[], &Selection::All)
+        .expect("an unrequested binary column is skipped, not an error");
+    assert_eq!(i64s(&ds, "id"), [7, 8]);
+    assert!(
+        !ds.variables.contains_key("blob"),
+        "binary stays a non-field even when named in float_columns"
+    );
+}
+
 // --------------------------------------------------------------------------- //
 // Null policy
 // --------------------------------------------------------------------------- //
