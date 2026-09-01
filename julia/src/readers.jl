@@ -851,3 +851,309 @@ read_native(::ShapefileReader, path; kwargs...) = error(
     "the shapefile reader needs the Shapefile.jl backend: add `using Shapefile` so " *
     "the EarthSciIOShapefileExt extension supplies the decode (kept a weakdep to " *
     "keep a base EarthSciIO install light, mirroring the Python pyshp-optional path).")
+
+# --- Parquet reader (columnar table) ----------------------------------------
+
+"""
+    _parquet_kind(T, time_exponent=nothing) -> Symbol
+
+The native dtype an on-disk Parquet column maps onto — `:bool`, `:int32`,
+`:int64`, `:float64`, `:string`, or `:unsupported` — keyed by the Julia element
+type the decode backend produces for it (with `missing` already stripped off).
+This function IS spec/conformance.md §3's "Parquet decode notes" table, and it
+lives in the core rather than in the backend so any future Parquet backend
+decodes identically.
+
+The narrow/wide integer split is the [`NetCDFReader`]'s VERBATIM (`Int8`/`Int16`/
+`Int32`/`UInt8`/`UInt16` → int32; `Int64`/`UInt32`/`UInt64` → int64), restated
+here so a MOVES `int32` ID column and a CF `int32` time axis cannot drift apart.
+A temporal column rides as its RAW stored integer at its stored width (`Date32`
+and a millisecond `Time32` are int32; `Date64`/`Time64`/`Timestamp`/`Duration`
+are int64) — the unit and any timezone are NOT applied and NOT reported, the
+same rule a CF time axis gets, because turning an epoch offset into a wall-clock
+instant is ESS's job (Risk R3). `time_exponent` is the parquet `TimeType` unit
+exponent (-3 millis, -6 micros, -9 nanos), the only thing separating a `Time32`
+from a `Time64` once a backend has turned both into a `Dates.Time`.
+
+An all-null column (element type `Missing`) is float64 with every cell `NaN` —
+the one logical type that can represent every cell of it. A nested or binary
+column (`Vector{UInt8}`, `SVector`, `NamedTuple`, …) has no rank-1 reading at
+all and is `:unsupported`.
+"""
+function _parquet_kind(T::Type, time_exponent = nothing)
+    T === Missing && return :float64          # an all-null column: float64, all NaN
+    T === Bool && return :bool                # BEFORE Integer: Bool <: Integer here
+    T <: Union{Int8,Int16,Int32,UInt8,UInt16} && return :int32
+    T <: Union{Int64,UInt32,UInt64} && return :int64
+    T === Date && return :int32               # raw days since 1970-01-01
+    T === Time && return time_exponent == -3 ? :int32 : :int64
+    T === DateTime && return :int64
+    T <: AbstractFloat && return :float64     # Float16/32/64 and the DecFP decimals
+    T <: AbstractString && return :string
+    return :unsupported
+end
+
+"""
+    _assemble_parquet(names, kinds, types, loadcolumn; variables=nothing,
+                      float_columns=nothing, null_int=nothing,
+                      null_string=nothing) -> NativeDataset
+
+Build the parquet [`NativeDataset`] from a backend's per-column metadata plus a
+`loadcolumn(name)` callback that materializes ONE column's cells. The backend
+(Parquet2.jl, via `EarthSciIOParquet2Ext`) supplies only `names` (the on-disk
+column names in file order), `kinds` ([`_parquet_kind`] per column), `types`
+(the backend's element type, for error messages) and the callback; the whole
+decode CONTRACT — projection, the null policy, `float_columns` including
+decimal-TEXT parsing, the int32 range check — lives here, shared with any future
+backend and testable without the weakdep loaded.
+
+`loadcolumn` is called ONLY for the columns that survive the projection, which
+is what makes `variables` a real pushdown rather than a read-then-discard: an
+unread column chunk is never fetched off disk. A cell is `missing` (the null),
+a `Bool`, an `Integer`, a `Real`, or an `AbstractString`.
+"""
+function _assemble_parquet(names::AbstractVector{<:AbstractString},
+                           kinds::AbstractVector{Symbol},
+                           types::AbstractVector,
+                           loadcolumn;
+                           variables = nothing, float_columns = nothing,
+                           null_int = nothing, null_string = nothing)
+    allnames = String[String(n) for n in names]
+    (length(kinds) == length(allnames) && length(types) == length(allnames)) ||
+        throw(ArgumentError("parquet column metadata lengths disagree"))
+
+    # Projection. Resolved against the file's own schema FIRST, so an unknown
+    # name is this reader's error listing what is present, never a silently
+    # missing array (and never the backend's own message).
+    want = nothing
+    if variables !== nothing
+        asked = String[String(v) for v in variables]
+        absent = sort!(unique!(String[v for v in asked if !(v in allnames)]))
+        isempty(absent) || throw(KeyError(
+            "requested variables not in the parquet file: $absent; present: $allnames"))
+        want = Set(asked)
+    end
+    forced = float_columns === nothing ? Set{String}() :
+             Set{String}(String(c) for c in float_columns)
+
+    vars = Dict{String,NativeField}()
+    nrows = -1
+    for (j, name) in enumerate(allnames)
+        want === nothing || name in want || continue
+        kind = kinds[j]
+        if kind === :unsupported
+            # Silently skipping a column the document NAMED would hand back a
+            # dataset missing an array it asked for, so that is an error;
+            # unrequested, it is simply not a native field (the NetCDF reader
+            # skips its non-numeric variables the same way).
+            want === nothing && continue
+            throw(ArgumentError(
+                "column $(repr(name)) decodes as $(types[j]), which has no rank-1 " *
+                "native reading (nested and binary columns are not supported)"))
+        end
+        # `float_columns` is a statement about the SOURCE, so it applies to any
+        # column that can produce a number — decimal text included.
+        dtype = name in forced ? :float64 : kind
+        data = _parquet_column(loadcolumn(name), name, dtype, null_int, null_string)
+        attrs = Dict{String,Any}()
+        # A NaN-folded float carries no surviving sentinel; a DECLARED integer
+        # sentinel does, and is reported back exactly as a CF integer fill is.
+        if null_int !== nothing && (dtype === :int32 || dtype === :int64)
+            attrs["fill_value"] = dtype === :int32 ? Int32(null_int) : Int64(null_int)
+        end
+        vars[name] = NativeField(data, ["index"], attrs)
+        nrows < 0 && (nrows = length(data))
+        length(data) == nrows || throw(ArgumentError(
+            "parquet column $(repr(name)) has $(length(data)) rows, but the table has $nrows"))
+    end
+    return NativeDataset(vars, Dict{String,NativeField}())
+end
+
+# One column's cells coerced into its target native dtype. Row numbers in errors
+# are 0-BASED, so they name the row as the document (and the Rust/Python tracks)
+# count it.
+function _parquet_column(cells, name::AbstractString, dtype::Symbol, null_int, null_string)
+    n = length(cells)
+    if dtype === :float64
+        out = Vector{Float64}(undef, n)
+        for (i, c) in enumerate(cells)
+            out[i] = _parquet_float(c, name, i - 1)
+        end
+        return out
+    elseif dtype === :int64
+        out = Vector{Int64}(undef, n)
+        for (i, c) in enumerate(cells)
+            out[i] = _parquet_int(c, name, i - 1, null_int)
+        end
+        return out
+    elseif dtype === :int32
+        out = Vector{Int32}(undef, n)
+        for (i, c) in enumerate(cells)
+            v = _parquet_int(c, name, i - 1, null_int)
+            typemin(Int32) <= v <= typemax(Int32) || throw(ArgumentError(
+                "column $(repr(name)) row $(i - 1): value $v does not fit the int32 " *
+                "native dtype"))
+            out[i] = v % Int32
+        end
+        return out
+    elseif dtype === :string
+        out = Vector{String}(undef, n)
+        for (i, c) in enumerate(cells)
+            out[i] = _parquet_text(c, name, i - 1, null_string)
+        end
+        return out
+    elseif dtype === :bool
+        out = Vector{Bool}(undef, n)
+        for (i, c) in enumerate(cells)
+            out[i] = _parquet_bool(c, name, i - 1)
+        end
+        return out
+    end
+    throw(ArgumentError("unknown parquet native dtype $(repr(dtype))"))
+end
+
+# A null float is `NaN` — the same fold a CF `_FillValue` gets. A cell of DECIMAL
+# TEXT (the column was declared in `float_columns`) is trimmed and parsed; blank
+# is `NaN`, matching the FF10/shapefile rule; anything else is an error naming
+# the column, the row and the text.
+function _parquet_float(c, name::AbstractString, row::Integer)
+    c === missing && return NaN
+    c isa Bool && throw(ArgumentError(
+        "column $(repr(name)) row $row: a boolean cell cannot be read as float64"))
+    c isa Real && return Float64(c)
+    if c isa AbstractString
+        t = strip(String(c))
+        isempty(t) && return NaN
+        v = tryparse(Float64, t)
+        v === nothing && throw(ArgumentError(
+            "column $(repr(name)) row $row: $(repr(String(c))) is not a float64 " *
+            "(the column is declared in float_columns)"))
+        return v
+    end
+    throw(ArgumentError(
+        "column $(repr(name)) row $row: a $(typeof(c)) cell cannot be read as float64"))
+end
+
+function _parquet_int(c, name::AbstractString, row::Integer, null_int)
+    if c === missing
+        null_int === nothing && throw(_parquet_null_error(name, row, "integer", "null_int"))
+        return Int64(null_int)
+    end
+    if c isa Integer && !(c isa Bool)
+        # The one integer width that does not fit: refuse rather than wrap into a
+        # negative ID.
+        c isa Unsigned && c > typemax(Int64) && throw(ArgumentError(
+            "column $(repr(name)) row $row: uint64 value $c exceeds the int64 native dtype"))
+        return Int64(c)
+    end
+    throw(ArgumentError(
+        "column $(repr(name)) row $row: expected an integer cell, got $(typeof(c))"))
+end
+
+function _parquet_text(c, name::AbstractString, row::Integer, null_string)
+    if c === missing
+        null_string === nothing && throw(_parquet_null_error(name, row, "string", "null_string"))
+        return String(null_string)
+    end
+    c isa AbstractString && return String(c)
+    throw(ArgumentError(
+        "column $(repr(name)) row $row: expected a text cell, got $(typeof(c))"))
+end
+
+function _parquet_bool(c, name::AbstractString, row::Integer)
+    c isa Bool && return c
+    # No sentinel option: a third boolean state is a float64 column.
+    c === missing && throw(ArgumentError(
+        "column $(repr(name)) row $row is null, and a boolean native field has no " *
+        "missing value; declare the column in the `float_columns` reader option " *
+        "if a third state is meant"))
+    throw(ArgumentError(
+        "column $(repr(name)) row $row: expected a boolean cell, got $(typeof(c))"))
+end
+
+# The refusal a null in a type with no missing value gets. It names the way out,
+# because "declare a sentinel" is a decision only the document can make.
+_parquet_null_error(name::AbstractString, row::Integer, kind::AbstractString,
+                    option::AbstractString) = ArgumentError(
+    "column $(repr(name)) row $row is null, and a $kind native field has no missing " *
+    "value; declare the `$option` reader option to substitute one, or list the " *
+    "column in `float_columns` to read it as float64 with NaN")
+
+"""
+    ParquetReader()
+
+The `parquet` format reader — an Apache Parquet file as a **flat table**.
+
+Every column becomes a rank-1 field over `index`, keyed by its **on-disk column
+name**, and a table produces **no coordinates** (like [`CSVReader`] and
+[`ZarrReader`]). `index` has length `num_rows`; a zero-row file still yields
+every column, empty and correctly typed (the schema is in the footer, so an
+empty table is TYPED, not absent — most of a MOVES fixture's ~770 tables are
+empty, and a document binding one must still see the array it named).
+
+Decode is delegated to **Parquet2.jl**, loaded LAZILY via a weakdep extension
+(`EarthSciIOParquet2Ext`, active on `using Parquet2`) — mirroring the shapefile
+reader's `Shapefile.jl` and the Python track's lazy `pyarrow` import. Calling
+`read_native` without `using Parquet2` throws a clear install hint.
+
+**Type mapping** (spec/conformance.md §3, and [`_parquet_kind`]): Parquet carries
+an explicit logical type per column, so the dtype is a total function of it —
+`Boolean`→Bool; `Int8`/`Int16`/`Int32`/`UInt8`/`UInt16`→Int32 and
+`Int64`/`UInt32`/`UInt64`→Int64 (the SAME narrow/wide split as [`NetCDFReader`]);
+floats and `Decimal`→Float64 (unscaled ÷ 10^scale); `Utf8`→String; a
+dictionary-encoded column reads as its VALUE type, expanded to one value per row;
+an all-null column is Float64/all-NaN. **Temporal columns ride as their RAW
+stored integer**, undecoded (`Date32`/millisecond-`Time32`→Int32,
+`Date64`/`Time64`/`Timestamp`→Int64): the unit and any timezone are not applied,
+because an epoch offset → instant is ESS's job (Risk R3). A `uint64` past
+`typemax(Int64)` is an error naming the column and row, never a wraparound.
+Nested and binary columns have no rank-1 reading: naming one in `variables` is an
+error, and unrequested it is simply not a field.
+
+**Null policy.** Nearly every Parquet column is nullable in its schema whether or
+not it holds a null (a table exported from a relational database usually marks
+every column nullable), so nullability cannot pick the dtype. A null in a FLOAT
+column becomes `NaN`; a null in an INTEGER, STRING or BOOLEAN column is an
+ERROR naming the column and the row, because those types have no NaN and any
+default would be a real value silently standing in for a missing one.
+
+`reader_kwargs`: `variables=[...]` is the projection and is PUSHED DOWN — only
+those column chunks are read off disk (these tables are wide and a document
+typically wants three columns); an absent name is an error listing what is
+present. `float_columns=[...]` forces the named columns to Float64 whatever
+their on-disk type — the Parquet twin of [`ShapefileReader`]'s `numeric_columns`
+— and does double duty: an integer column whose missing cells must be `NaN`, AND
+a column of fixed-decimal TEXT (a corpus needing byte-reproducible floats stores
+them as decimal strings; the MOVES snapshots write `meanBaseRate` as
+`"261.000000000000"`), trimmed and parsed, blank→`NaN`, anything else
+unparseable an error naming column/row/text. `null_int=n` substitutes an integer
+sentinel for a null AND reports it back in the field's `attrs["fill_value"]`
+(an integer sentinel cannot be NaN, so it survives exactly as a CF integer fill
+does); `null_string=s` substitutes text, which is then indistinguishable from a
+real cell holding it — which is why the document has to choose it. A boolean has
+no such option.
+
+READER-ONLY (Risk R3): row selection, `record_filter`, `codes` and `extent` are
+esm-spec §8.9 work DOWNSTREAM of the decode (and a whole-file reader never even
+sees a `select`), and there is no name remap and no unit conversion.
+
+!!! note "Two Parquet2.jl backend limits"
+    A file containing a nested (`list`/`struct`/`map`) column cannot be OPENED by
+    Parquet2.jl at all, so such a file errors rather than decoding its readable
+    columns — the one place this track cannot reach the §3 contract's "unrequested,
+    it is simply not a field". And Parquet2.jl decodes a `Timestamp` into a
+    millisecond-resolution `DateTime` before this reader sees it, so the raw
+    integer of a MICROS/NANOS timestamp column is recovered only to millisecond
+    granularity.
+"""
+struct ParquetReader <: Reader end
+
+# The real decode lives in ext/EarthSciIOParquet2Ext.jl, whose method is typed
+# `path::AbstractString` — strictly MORE specific than this untyped-`path`
+# fallback, so when `using Parquet2` is active it wins by dispatch (no method
+# overwrite, which precompilation forbids). This fallback fires only when the
+# backend is absent.
+read_native(::ParquetReader, path; kwargs...) = error(
+    "the parquet reader needs the Parquet2.jl backend: add `using Parquet2` so " *
+    "the EarthSciIOParquet2Ext extension supplies the decode (kept a weakdep to " *
+    "keep a base EarthSciIO install light, mirroring the Shapefile.jl path).")
