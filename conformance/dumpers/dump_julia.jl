@@ -35,7 +35,7 @@ import Pkg
 # populated by `Pkg.instantiate()` already holds every weakdep — and only then
 # with the network, so a fresh depot still works (that fallback is the one step
 # of the run that can reach out).
-function _add_stacked(pkg::String, env::String)
+function _add_offline_first(pkg::String)
     was = get(ENV, "JULIA_PKG_OFFLINE", nothing)
     try
         ENV["JULIA_PKG_OFFLINE"] = "true"
@@ -56,7 +56,7 @@ function _load_weakdep(extname::Symbol, pkg::String)
         _juliaproj = normpath(joinpath(@__DIR__, "..", "..", "julia"))
         _env = mktempdir()
         Pkg.activate(_env; io = devnull)
-        _add_stacked(pkg, _env)
+        _add_offline_first(pkg)
         Pkg.activate(_juliaproj; io = devnull)
         push!(LOAD_PATH, _env)
         @eval import $(Symbol(pkg))
