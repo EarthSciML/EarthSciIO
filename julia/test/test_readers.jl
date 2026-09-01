@@ -110,6 +110,22 @@ end
                     nc = get(dec, "numeric_columns", nothing)
                     nc === nothing || (kw[:numeric_columns] = String.(nc))
                     (; kw...)
+                elseif fmt == "parquet"
+                    # forward the case's PROJECTION (`variables`, pushed into the
+                    # decode) plus `float_columns` and the two null gates — a
+                    # columnar case decodes to a different field set and a
+                    # different dtype without them.
+                    dec = case["decode"]
+                    kw = Dict{Symbol,Any}()
+                    vars = get(case, "variables", nothing)
+                    vars === nothing || (kw[:variables] = String.(vars))
+                    fc = get(dec, "float_columns", nothing)
+                    fc === nothing || (kw[:float_columns] = String.(fc))
+                    ni = get(dec, "null_int", nothing)
+                    ni === nothing || (kw[:null_int] = Int64(ni))
+                    ns = get(dec, "null_string", nothing)
+                    ns === nothing || (kw[:null_string] = String(ns))
+                    (; kw...)
                 else
                     NamedTuple()
                 end
