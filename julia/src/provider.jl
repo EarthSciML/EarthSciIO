@@ -187,7 +187,23 @@ function _load(p::Provider, t; select = nothing)
         "reader $(typeof(reader)) does not support select/pushdown"))
     entry = fetch_blob(p.cache, p.url_for(t);
                        source_loader = p.source_loader, auth_realm = p.auth_realm)
-    nds = read_native(reader, entry.path; p.reader_kwargs...)
+    # PROJECTION PUSHDOWN for a whole-file reader that declares a `variables`
+    # decode option (the `parquet` reader): the loader's `variables` reach the
+    # READER, so only those column chunks come off disk — spec/conformance.md §3
+    # "Projection pushdown" — instead of being applied to an already-decoded
+    # dataset. That is not only a speed matter on a table dozens of columns
+    # wide: a column the document never named must not be able to FAIL the read
+    # (a null-bearing integer column with no `null_int` declared would), which
+    # is what the Python and Rust tracks already do. A reader with no such
+    # option keeps the read-everything-then-`_select` path below.
+    kw = p.reader_kwargs
+    if p.variables !== nothing && !haskey(kw, :variables)
+        opts = reader_option_keys(reader)
+        if opts !== nothing && :variables in opts
+            kw = merge(kw, Dict{Symbol,Any}(:variables => p.variables))
+        end
+    end
+    nds = read_native(reader, entry.path; kw...)
     return p.variables === nothing ? nds : _select(nds, p.variables)
 end
 

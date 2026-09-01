@@ -364,6 +364,36 @@ end
         end
     end
 
+    # The same proof one level up, through the PROVIDER — because that is where
+    # a document's `variables` actually enter. A Provider that read every column
+    # and then selected would decode the poisoned chunk and fail; one that
+    # pushes the projection into the reader never touches it. (The Python and
+    # Rust tracks push it down through the same seam.)
+    @testset "a Provider's variables reach the reader as a projection" begin
+        mktempdir() do dir
+            path = _pq_copy("pushdown", dir)
+            lo, hi = _with_dataset(path) do ds
+                c = Parquet2.Column(Parquet2.RowGroup(ds, 1), "poison")
+                (Parquet2.startindex(c), Parquet2.endindex(c))
+            end
+            bytes = read(path)
+            for i in lo:hi
+                bytes[i] = ~bytes[i]
+            end
+            write(path, bytes)
+
+            cachedir = joinpath(dir, "cache")
+            mkpath(cachedir)
+            provider = const_provider(Cache(LocalStore(cachedir)), "file://" * path;
+                                      format = "parquet", variables = ["keep"])
+            nds = with_logger(NullLogger()) do
+                materialize(provider)
+            end
+            @test variable_names(nds) == ["keep"]
+            @test nds["keep"].data == collect(Int64, 0:511)
+        end
+    end
+
     @testset "a non-parquet blob is an error, not a crash" begin
         mktempdir() do dir
             path = joinpath(dir, "not.parquet")
