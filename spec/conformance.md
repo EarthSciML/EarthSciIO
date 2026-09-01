@@ -231,6 +231,26 @@ then indistinguishable from a real cell holding the same text — which is why t
 document has to choose it. A boolean has no such option; declare the column in
 `float_columns` if a third state is genuinely meant.
 
+**Where `fill_value` is reported is per-track, and normative.** The three
+`NativeField` types are not the same shape: Rust's carries a dedicated
+`fill_value: Option<f64>` field, while the Python and Julia ones carry only
+`data` / `dims` / `attrs`. A reader therefore reports the surviving `null_int`
+sentinel:
+
+| track | location |
+|---|---|
+| Rust | the `fill_value` field |
+| Python | `attrs["fill_value"]` |
+| Julia | `attrs["fill_value"]` |
+
+These are the *same* datum in three spellings, not three decisions. A track
+whose `NativeField` grows a real `fill_value` slot later should move to it and
+this table should change with it; what must never happen is one track reporting
+the sentinel where another silently drops it, because that difference is
+invisible until a document reads a fill-bearing integer column and gets a real
+value where a missing one was meant. A cross-language corpus case comparing
+these dumps has to normalise the three spellings to one before diffing.
+
 #### `float_columns`, and floats stored as text
 
 `float_columns` forces the named columns to `float64` whatever their on-disk
