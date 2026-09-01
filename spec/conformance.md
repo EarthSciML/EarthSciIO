@@ -264,11 +264,14 @@ track that silently dropped the sentinel now fails the gate.
 
 #### Backend limits that a corpus case must route around
 
-Every track hits the contract above through a third-party decoder, and two of
+Every track hits the contract above through a third-party decoder, and one of
 those decoders cannot reach all of it. These are **known, permitted
 divergences** — recorded so a cross-language corpus case does not encode a
 difference it cannot fix, and so nobody "fixes" a track into disagreeing with
-its own library:
+its own library. A backend defect that produces a *wrong number* rather than a
+gap is **not** on this list: that gets compensated for in the track (see the
+FLBA decimal below), because a silently wrong value is never a permitted
+divergence.
 
 - **Julia cannot open a file that carries a nested column at all.** Parquet2.jl
   builds a `Column` for every schema node when the file is opened, so a file
