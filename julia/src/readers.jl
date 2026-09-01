@@ -958,8 +958,12 @@ function _assemble_parquet(names::AbstractVector{<:AbstractString},
         attrs = Dict{String,Any}()
         # A NaN-folded float carries no surviving sentinel; a DECLARED integer
         # sentinel does, and is reported back exactly as a CF integer fill is.
+        # `attrs["fill_value"]` is the spelling because [`NativeField`] has no
+        # `fill_value` slot of its own — the same place the Python track reports
+        # it, and one `Int64` for both integer widths so the two agree on the
+        # value's type as well as the number.
         if null_int !== nothing && (dtype === :int32 || dtype === :int64)
-            attrs["fill_value"] = dtype === :int32 ? Int32(null_int) : Int64(null_int)
+            attrs["fill_value"] = Int64(null_int)
         end
         vars[name] = NativeField(data, ["index"], attrs)
         nrows < 0 && (nrows = length(data))
@@ -1137,14 +1141,18 @@ READER-ONLY (Risk R3): row selection, `record_filter`, `codes` and `extent` are
 esm-spec §8.9 work DOWNSTREAM of the decode (and a whole-file reader never even
 sees a `select`), and there is no name remap and no unit conversion.
 
-!!! note "Two Parquet2.jl backend limits"
+!!! note "Three Parquet2.jl backend limits"
     A file containing a nested (`list`/`struct`/`map`) column cannot be OPENED by
     Parquet2.jl at all, so such a file errors rather than decoding its readable
     columns — the one place this track cannot reach the §3 contract's "unrequested,
-    it is simply not a field". And Parquet2.jl decodes a `Timestamp` into a
+    it is simply not a field". Parquet2.jl decodes a `Timestamp` into a
     millisecond-resolution `DateTime` before this reader sees it, so the raw
     integer of a MICROS/NANOS timestamp column is recovered only to millisecond
-    granularity.
+    granularity. And it decodes a `Decimal` into a `Dec64` (16 significant decimal
+    digits) during page decode, so a wider `Decimal128`/`Decimal256` cannot be read
+    here at the full precision the Rust and Python tracks get from the unscaled
+    integer; within binary64's exact range the three agree bit for bit (see
+    `ext/EarthSciIOParquet2Ext.jl`).
 """
 struct ParquetReader <: Reader end
 

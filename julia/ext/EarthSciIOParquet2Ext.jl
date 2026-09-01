@@ -61,6 +61,21 @@ function _rawconv(pt, name::AbstractString)
     return nothing
 end
 
+# A DECIMAL column needs no conversion here: Parquet2 decodes it into a `Dec64`,
+# which is `<: AbstractFloat`, so the core's `Float64(::Real)` fold turns it into
+# the unscaled value ÷ 10^scale that §3 asks for.
+#
+# The Rust and Python tracks spell that arithmetic out as
+# `f64(unscaled) / 10.0^scale`, and this IS the same number, not a "better" one:
+# for `|unscaled| < 2^53` and `scale <= 22` both operands of their division are
+# exact in binary64, so IEEE division returns the correctly-rounded quotient —
+# which is precisely what a correctly-rounded decimal → binary64 conversion
+# returns. Outside that range the two can differ by an ulp, but so can either
+# from the true value, and Parquet2's own `Dec64` (16 significant decimal digits)
+# has already bounded the fidelity: the unscaled integer is consumed during page
+# decode and never reaches this extension, so a wider `Decimal128`/`Decimal256`
+# cannot be read here at full precision by any arithmetic.
+
 """
     read_native(::ParquetReader, path; variables=nothing, float_columns=nothing,
                 null_int=nothing, null_string=nothing) -> NativeDataset

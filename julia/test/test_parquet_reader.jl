@@ -177,6 +177,16 @@ end
             sprint(showerror, e)
         end
         @test err !== nothing && occursin("blob", err)
+
+        # `float_columns` is a statement about how to READ a column, not a claim
+        # that an opaque blob is a number: an unrequested binary column stays a
+        # NON-FIELD even when named there, rather than registering a field that
+        # then hard-errors. (The Rust track shipped that bug and fixed it in
+        # `a30c9e4`; the core checks `:unsupported` BEFORE the forced-float
+        # override, so this track cannot grow it.)
+        ds = read_native(ParquetReader(), _pq("binary"); float_columns = ["blob"])
+        @test variable_names(ds) == ["id"]
+        @test ds["id"].data == Int64[7, 8]
     end
 
     # Parquet2.jl builds a column for every schema node when it opens the footer,
@@ -233,7 +243,7 @@ end
         @test ds["i"].attrs["fill_value"] == -9
         @test eltype(ds["i32"].data) == Int32
         @test ds["i32"].data == Int32[1, -9, 3]
-        @test ds["i32"].attrs["fill_value"] === Int32(-9)
+        @test ds["i32"].attrs["fill_value"] === Int64(-9)   # one spelling, both widths
         @test ds["s"].data == ["a", "NA", "c"]
 
         # A boolean has no such option: a third state is a float64 column.
