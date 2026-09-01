@@ -351,6 +351,11 @@ end
     end
 
     @testset "variables select columns; an unknown name is refused" begin
+        # An EMPTY list is "every column", not "no columns" — the same reading
+        # the Python and Rust tracks give it (spec/conformance.md §3).
+        every = read_native(ParquetReader(), _pq("empty"); variables = String[])
+        @test variable_names(every) == ["code", "id", "val"]
+
         ds = read_native(ParquetReader(), _pq("types"); variables = ["s", "i64"])
         @test variable_names(ds) == ["i64", "s"]
         @test ds["i64"].data == Int64[100, -200, 300]
@@ -435,6 +440,13 @@ end
             end
             @test variable_names(nds) == ["keep"]
             @test nds["keep"].data == collect(Int64, 0:511)
+
+            # ...and an EMPTY `variables` on the Provider is "every variable",
+            # not "no variables" — it used to select nothing at all.
+            all_p = const_provider(Cache(LocalStore(cachedir)),
+                                   "file://" * _pq("empty");
+                                   format = "parquet", variables = String[])
+            @test variable_names(materialize(all_p)) == ["code", "id", "val"]
         end
     end
 

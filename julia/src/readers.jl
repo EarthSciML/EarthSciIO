@@ -925,8 +925,11 @@ function _assemble_parquet(names::AbstractVector{<:AbstractString},
     # Projection. Resolved against the file's own schema FIRST, so an unknown
     # name is this reader's error listing what is present, never a silently
     # missing array (and never the backend's own message).
+    # An EMPTY `variables` reads every column (spec/conformance.md §3), the same
+    # as passing none at all — never "no columns", which is what a bare
+    # `Set()` would have meant.
     want = nothing
-    if variables !== nothing
+    if variables !== nothing && !isempty(variables)
         asked = String[String(v) for v in variables]
         absent = sort!(unique!(String[v for v in asked if !(v in allnames)]))
         isempty(absent) || throw(KeyError(

@@ -196,15 +196,21 @@ function _load(p::Provider, t; select = nothing)
     # (a null-bearing integer column with no `null_int` declared would), which
     # is what the Python and Rust tracks already do. A reader with no such
     # option keeps the read-everything-then-`_select` path below.
+    #
+    # An EMPTY `variables` means "every variable", NOT "no variables"
+    # (spec/conformance.md §3; the Python and Rust tracks both test the list for
+    # emptiness before using it). Normalised once here so the pushdown and the
+    # `_select` below agree — an empty list used to hand back an empty dataset.
+    wanted = (p.variables === nothing || isempty(p.variables)) ? nothing : p.variables
     kw = p.reader_kwargs
-    if p.variables !== nothing && !haskey(kw, :variables)
+    if wanted !== nothing && !haskey(kw, :variables)
         opts = reader_option_keys(reader)
         if opts !== nothing && :variables in opts
-            kw = merge(kw, Dict{Symbol,Any}(:variables => p.variables))
+            kw = merge(kw, Dict{Symbol,Any}(:variables => wanted))
         end
     end
     nds = read_native(reader, entry.path; kw...)
-    return p.variables === nothing ? nds : _select(nds, p.variables)
+    return wanted === nothing ? nds : _select(nds, wanted)
 end
 
 """
