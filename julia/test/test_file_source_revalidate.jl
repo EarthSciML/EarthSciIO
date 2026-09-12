@@ -299,3 +299,136 @@ end
     mkpath(sub)
     @test !file_source_is_current(sub, mfor(b"whatever"))
 end
+
+# --- a source this host cannot READ is not a source that changed -------------
+
+# Can this process be locked out of a directory by permissions? Root cannot, and
+# neither can Windows, so the abstention tests below have nothing to stand on
+# there. Asked empirically rather than via geteuid: the question is whether the
+# lockout WORKS, not who we are.
+function _can_be_locked_out()
+    Sys.iswindows() && return false
+    dir = mktempdir()
+    inner = joinpath(dir, "d")
+    mkdir(inner)
+    write(joinpath(inner, "probe"), b"x")
+    chmod(inner, 0o000)
+    blocked = try
+        !isfile(joinpath(inner, "probe"))
+    catch
+        true
+    finally
+        chmod(inner, 0o755)
+    end
+    return blocked
+end
+
+@testset "rung 0 abstains on a source it cannot read" begin
+    # Warming a cache where /corpus is mounted and reading it where it is not is
+    # an ordinary HPC shape, and it used to work: the entry was served warm. The
+    # first cut of this rung turned every `stat` failure into a re-ingest, which
+    # turned that shape into a hard error. Only a genuine "no such file" is
+    # evidence of a deletion; "permission denied" is evidence of nothing at all.
+    if !_can_be_locked_out()
+        @test_skip "needs a POSIX unprivileged user to make a directory unreadable"
+    else
+        dir = mktempdir()
+        corpus = joinpath(dir, "corpus")
+        mkdir(corpus)
+        src = joinpath(corpus, "x.nc")
+        write(src, b"warm-corpus")
+        url = string("file://", src)
+        root = mktempdir()
+
+        with_counting_file() do counter
+            c = Cache(LocalStore(root); offline = false)
+            @test fetch_blob(c, url).status == :downloaded
+            @test counter.n == 1
+
+            chmod(corpus, 0o000)     # the closest a test gets to "not mounted"
+            try
+                e = fetch_blob(c, url)
+                @test e.status == :hit
+                @test read(e.path) == b"warm-corpus"
+                @test counter.n == 1     # nothing re-ingested: nothing was learned
+            finally
+                chmod(corpus, 0o755)
+            end
+        end
+    end
+end
+
+@testset "only a genuine absence reads as missing" begin
+    mfor(body) = Manifest("file:///corpus/x.csv", nothing, nothing,
+                          bytes2hex(sha256(body)), length(body),
+                          "2026-01-01T00:00:00Z", nothing, nothing)
+    dir = mktempdir()
+    body = b"corpus"
+    present = joinpath(dir, "present.nc")
+    write(present, body)
+    m = mfor(body)
+
+    @test EarthSciIO.file_source_state(present, m) === EarthSciIO.SOURCE_CURRENT
+    @test EarthSciIO.file_source_state(joinpath(dir, "gone.nc"), m) ===
+          EarthSciIO.SOURCE_MISSING
+    # A directory standing where the corpus was is the report's "pointed at a
+    # path that is not there any more" shape.
+    @test EarthSciIO.file_source_state(dir, m) === EarthSciIO.SOURCE_MISSING
+    # A path *under a file* is a broken path, not a deletion: this host may
+    # simply have the wrong mount.
+    @test EarthSciIO.file_source_state(joinpath(present, "deeper.nc"), m) ===
+          EarthSciIO.SOURCE_UNKNOWN
+
+    if _can_be_locked_out()
+        locked = joinpath(dir, "locked")
+        mkdir(locked)
+        hidden = joinpath(locked, "x.nc")
+        write(hidden, body)
+        chmod(locked, 0o000)
+        state = try
+            EarthSciIO.file_source_state(hidden, m)
+        finally
+            chmod(locked, 0o755)
+        end
+        @test state === EarthSciIO.SOURCE_UNKNOWN
+    end
+end
+
+# --- the fingerprint memo ----------------------------------------------------
+
+@testset "an unchanged source is read once, not once per call" begin
+    # `fetch_blob` is called per TICK on this track (Provider keeps no
+    # decoded-file buffer), so hashing on every call made rung 0 cost the whole
+    # corpus per tick. A digest is kept against the (size, mtime) it was computed
+    # for and reused while both hold.
+    dir = mktempdir()
+    src = joinpath(dir, "x.nc")
+    body = rand(UInt8, 4096)
+    write(src, body)
+    m = Manifest("file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
+                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+
+    rev = EarthSciIO.SourceRevalidator()
+    for _ in 1:25
+        @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
+    end
+    @test rev.full_reads == 1     # 24 of the 25 calls came from the memo
+end
+
+@testset "the memo is dropped when the source changes" begin
+    dir = mktempdir()
+    src = joinpath(dir, "x.csv")
+    body = b"year,value\n2016,1.0\n"
+    write(src, body)
+    m = Manifest("file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
+                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+
+    rev = EarthSciIO.SourceRevalidator()
+    @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
+    # Same length, different bytes — only the mtime betrays it, which is exactly
+    # the case the memo has to get right.
+    sleep(0.05)
+    write(src, b"year,value\n2016,9.0\n")
+    @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_REPLACED
+    @test rev.full_reads == 2
+end

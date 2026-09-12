@@ -27,7 +27,25 @@ use std::sync::Arc;
 
 use earthsciio::auth::AuthResolver;
 use earthsciio::transport::{Conditional, FetchResult, FetchStatus, FileTransport, Transport};
-use earthsciio::{Cache, FetchRequest, Result};
+use earthsciio::{
+    sha256_hex, Cache, FetchRequest, Manifest, Result, SourceState, MANIFEST_SCHEMA,
+};
+
+/// The manifest a cache would have written when it ingested `body` from `src` —
+/// the record rung 0 judges the source against.
+fn manifest_for(src: &Path, body: &[u8]) -> Manifest {
+    Manifest {
+        auth_realm: None,
+        bytes: body.len() as u64,
+        etag: None,
+        fetched_at: "2026-01-01T00:00:00Z".to_string(),
+        last_modified: None,
+        schema: MANIFEST_SCHEMA.to_string(),
+        sha256_content: sha256_hex(body),
+        source_loader: None,
+        url: format!("file://{}", src.display()),
+    }
+}
 
 /// The `file` transport, counting the fetches that actually reach it. A cache
 /// hit never gets here, so the counter is the difference between "served warm"
@@ -361,4 +379,211 @@ fn blob_integrity_verification_alone_never_sees_a_replaced_source() {
     // Rung 0 is the check that asks the source. Same cache root, same key.
     let fixed = counting_cache(&root, &counter);
     assert_eq!(served(&fixed, &url), b"new-and-longer");
+}
+
+// --- 9. a source this host cannot READ is not a source that changed ----------
+
+/// Rung 0 answers `Unknown`, not "stale", when the path cannot be consulted.
+///
+/// Warming a cache where `/corpus` is mounted and reading it where it is not is
+/// an ordinary HPC shape, and it used to work: the entry was served warm. The
+/// first cut of this rung turned every `stat` failure into a re-ingest, which
+/// turned that shape into a hard `AllMirrorsFailed`. Only a genuine `NotFound`
+/// is evidence of a deletion; "permission denied" is evidence of nothing.
+#[test]
+fn unreadable_source_abstains_and_serves_the_warm_entry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let corpus = tmp.path().join("corpus");
+    std::fs::create_dir(&corpus).unwrap();
+    let src = corpus.join("x.nc");
+    let url = format!("file://{}", src.display());
+    let counter = Arc::new(AtomicUsize::new(0));
+    let cache = counting_cache(&tmp.path().join("cache"), &counter);
+
+    let body = b"warm-corpus".to_vec();
+    std::fs::write(&src, &body).unwrap();
+    assert_eq!(served(&cache, &url), body);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    // Make the path untraversable — the closest a test can get to "that
+    // filesystem is not mounted on this node".
+    std::fs::set_permissions(&corpus, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| served(&cache, &url)));
+    std::fs::set_permissions(&corpus, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(
+        out.expect("an unreadable source must not turn a warm entry into an error"),
+        body
+    );
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "nothing was re-ingested: rung 0 learned nothing and said so"
+    );
+}
+
+/// The classification itself, on the three error shapes that matter.
+#[test]
+fn only_a_genuine_absence_reads_as_missing() {
+    use std::os::unix::fs::PermissionsExt;
+    use earthsciio::file_source_state;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let body = b"corpus".to_vec();
+    let present = tmp.path().join("present.nc");
+    std::fs::write(&present, &body).unwrap();
+    let m = manifest_for(&present, &body);
+
+    assert_eq!(file_source_state(&present, &m), SourceState::Current);
+    assert_eq!(
+        file_source_state(&tmp.path().join("gone.nc"), &m),
+        SourceState::Missing
+    );
+
+    // A path *under a file* (ENOTDIR) is a broken path, not a deletion: this
+    // host may simply have the wrong mount.
+    assert_eq!(
+        file_source_state(&present.join("deeper.nc"), &m),
+        SourceState::Unknown
+    );
+
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    let hidden = locked.join("x.nc");
+    std::fs::write(&hidden, &body).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let state = file_source_state(&hidden, &m);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(state, SourceState::Unknown);
+}
+
+// --- 10. a missing canonical with mirrors is not a per-read re-download ------
+
+/// A `file://` canonical plus a working mirror must still produce cache HITS.
+///
+/// The manifest records the canonical URL whichever candidate served the bytes,
+/// so rung 0 stats a canonical that was never there, finds nothing, and — if it
+/// treated that as stale — would re-download from the mirror on every single
+/// read, for ever, never once hitting. Measured before the fix: 3 fetches for 3
+/// reads. The replaced-in-place protection is NOT given up here; only the
+/// "canonical absent" verdict is, and only when mirrors were supplied.
+#[test]
+fn a_missing_canonical_with_mirrors_still_hits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let canonical = tmp.path().join("never-mounted.nc");
+    let canonical_url = format!("file://{}", canonical.display());
+    let mem_fetches = Arc::new(AtomicUsize::new(0));
+    let body = b"bytes-from-the-mirror".to_vec();
+
+    let cache = Cache::builder()
+        .data_dir(tmp.path().join("cache"))
+        .offline(false)
+        .register_transport(Arc::new(FileTransport::new()))
+        .register_transport(Arc::new(CountingMem {
+            body: body.clone(),
+            fetches: mem_fetches.clone(),
+        }))
+        .build()
+        .unwrap();
+
+    let mirrors = ["mem://mirror/x.nc"];
+    for i in 0..3 {
+        let blob = cache
+            .fetch(&FetchRequest::new(&canonical_url).mirrors(&mirrors))
+            .unwrap();
+        assert_eq!(std::fs::read(&blob.path).unwrap(), body, "read {i}");
+    }
+    assert_eq!(
+        mem_fetches.load(Ordering::SeqCst),
+        1,
+        "the mirror must be downloaded ONCE, not once per read"
+    );
+}
+
+/// …but a canonical that is really there and really changed is still caught,
+/// mirrors or no mirrors. The abstention above is scoped to *absence*.
+#[test]
+fn mirrors_do_not_excuse_a_replaced_canonical() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("x.nc");
+    let url = format!("file://{}", src.display());
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mem_fetches = Arc::new(AtomicUsize::new(0));
+
+    let cache = Cache::builder()
+        .data_dir(tmp.path().join("cache"))
+        .offline(false)
+        .register_transport(Arc::new(CountingFile {
+            inner: FileTransport::new(),
+            fetches: counter.clone(),
+        }))
+        .register_transport(Arc::new(CountingMem {
+            body: b"mirror".to_vec(),
+            fetches: mem_fetches.clone(),
+        }))
+        .build()
+        .unwrap();
+
+    let mirrors = ["mem://mirror/x.nc"];
+    let fetch = |c: &Cache| -> Vec<u8> {
+        let blob = c
+            .fetch(&FetchRequest::new(&url).mirrors(&mirrors))
+            .unwrap();
+        std::fs::read(&blob.path).unwrap()
+    };
+
+    std::fs::write(&src, b"year,value\n2016,1.0\n").unwrap();
+    assert_eq!(fetch(&cache), b"year,value\n2016,1.0\n".to_vec());
+    std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap(); // same length
+    assert_eq!(fetch(&cache), b"year,value\n2016,9.0\n".to_vec());
+    assert_eq!(mem_fetches.load(Ordering::SeqCst), 0, "canonical served both");
+}
+
+// --- 11. the fingerprint memo -----------------------------------------------
+
+/// Rung 0 reads each unchanged source ONCE per process, not once per call.
+///
+/// `fetch` is called per TICK on the record-selective read paths, so hashing on
+/// every call made the rung cost the whole corpus per tick. A digest is kept
+/// against the `(length, mtime)` it was computed for and reused while both hold.
+#[test]
+fn an_unchanged_source_is_hashed_once_not_once_per_read() {
+    use earthsciio::SourceRevalidator;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("x.nc");
+    let body = vec![b'a'; 4096];
+    std::fs::write(&src, &body).unwrap();
+    let m = manifest_for(&src, &body);
+
+    let rev = SourceRevalidator::new();
+    for _ in 0..25 {
+        assert_eq!(rev.state(&src, &m), SourceState::Current);
+    }
+    assert_eq!(rev.full_reads(), 1, "24 of the 25 reads came from the memo");
+}
+
+/// The memo must not outlive the fingerprint it was taken under: a replacement
+/// changes the mtime, and the digest is recomputed.
+#[test]
+fn the_memo_is_dropped_when_the_source_changes() {
+    use earthsciio::SourceRevalidator;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("x.nc");
+    let body = b"year,value\n2016,1.0\n".to_vec();
+    std::fs::write(&src, &body).unwrap();
+    let m = manifest_for(&src, &body);
+
+    let rev = SourceRevalidator::new();
+    assert_eq!(rev.state(&src, &m), SourceState::Current);
+
+    // Same length, different bytes — only the mtime betrays it, which is
+    // exactly the case the memo has to get right.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap();
+    assert_eq!(rev.state(&src, &m), SourceState::Replaced);
+    assert_eq!(rev.full_reads(), 2);
 }

@@ -360,3 +360,193 @@ def test_file_source_is_current_table(tmp_path):
     sub = tmp_path / "subdir"
     sub.mkdir()
     assert not file_source_is_current(sub, _manifest_for(b"whatever"))
+
+
+# --------------------------------------------------------------------------- #
+# 7. a source this host cannot READ is not a source that changed.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses a 0o000 directory")
+def test_unreadable_source_abstains_and_serves_the_warm_entry(cache_root, tmp_path):
+    """Rung 0 answers UNKNOWN, not "stale", when the path cannot be consulted.
+
+    Warming a cache where ``/corpus`` is mounted and reading it where it is not
+    is an ordinary HPC shape, and it used to work: the entry was served warm.
+    The first cut of this rung turned every ``stat`` failure into a re-ingest,
+    which turned that shape into a hard :class:`FetchError`. Only a genuine
+    "no such file" is evidence of a deletion; "permission denied" is evidence of
+    nothing at all.
+    """
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    src = corpus / "x.nc"
+    src.write_bytes(b"warm-corpus")
+    url = _file_url(src)
+
+    c = Cache(root=cache_root)
+    assert c.fetch(url).status == "downloaded"
+
+    corpus.chmod(0o000)  # the closest a test gets to "that mount is not here"
+    try:
+        entry = c.fetch(url)
+        assert entry.status == "hit"
+        assert entry.path.read_bytes() == b"warm-corpus"
+    finally:
+        corpus.chmod(0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root traverses a 0o000 directory")
+def test_only_a_genuine_absence_reads_as_missing(tmp_path):
+    """The classification itself, on the three error shapes that matter."""
+    from earthsciio.validate import CURRENT, MISSING, UNKNOWN, file_source_state
+
+    body = b"corpus"
+    present = tmp_path / "present.nc"
+    present.write_bytes(body)
+    m = _manifest_for(body)
+
+    assert file_source_state(present, m) == CURRENT
+    assert file_source_state(tmp_path / "gone.nc", m) == MISSING
+
+    # A path *under a file* (ENOTDIR) is a broken path, not a deletion: this
+    # host may simply have the wrong mount.
+    assert file_source_state(present / "deeper.nc", m) == UNKNOWN
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    hidden = locked / "x.nc"
+    hidden.write_bytes(body)
+    locked.chmod(0o000)
+    try:
+        assert file_source_state(hidden, m) == UNKNOWN
+    finally:
+        locked.chmod(0o755)
+
+
+# --------------------------------------------------------------------------- #
+# 8. a missing canonical with mirrors is not a per-read re-download.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def mem_mirror():
+    """The ``mem://`` transport above, registered and its counter zeroed.
+
+    It has no local file anywhere, which is the point: it stands in for the
+    remote mirror that actually served a blob whose canonical URL is ``file://``.
+    """
+    transport_registry.register("mem", MemTransport, keys=["mem"], status="active")
+    MemTransport.calls = 0
+    return MemTransport
+
+
+def test_missing_canonical_with_mirrors_still_hits(cache_root, tmp_path, mem_mirror):
+    """A ``file://`` canonical plus a working mirror must still produce HITS.
+
+    The manifest records the canonical URL whichever candidate served the bytes
+    (``Cache._commit``), so rung 0 stats a canonical that was never there, finds
+    nothing, and — if it treated that as stale — would re-download from the
+    mirror on every single read, for ever, never once hitting. Measured before
+    the fix: 3 fetches for 3 reads.
+    """
+    canonical = _file_url(tmp_path / "never-mounted.nc")
+    c = Cache(root=cache_root)
+    for i in range(3):
+        entry = c.fetch(canonical, mirrors=["mem://mirror/x.nc"])
+        assert entry.path.read_bytes() == mem_mirror.BODY, f"read {i}"
+    assert mem_mirror.calls == 1, "the mirror is downloaded ONCE, not once per read"
+
+
+def test_mirrors_do_not_excuse_a_replaced_canonical(cache_root, tmp_path, mem_mirror):
+    """The abstention above is scoped to *absence*.
+
+    A canonical that is really there and really changed is still caught, mirrors
+    or no mirrors — otherwise configuring a mirror would silently switch the fix
+    off.
+    """
+    src = tmp_path / "x.csv"
+    src.write_bytes(b"year,value\n2016,1.0\n")
+    url = _file_url(src)
+    c = Cache(root=cache_root)
+
+    assert c.fetch(url, mirrors=["mem://mirror/x.nc"]).path.read_bytes() == (
+        b"year,value\n2016,1.0\n"
+    )
+    src.write_bytes(b"year,value\n2016,9.0\n")  # same length
+    assert c.fetch(url, mirrors=["mem://mirror/x.nc"]).path.read_bytes() == (
+        b"year,value\n2016,9.0\n"
+    )
+    assert mem_mirror.calls == 0, "the canonical served both reads"
+
+
+# --------------------------------------------------------------------------- #
+# 9. the fingerprint memo.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_unchanged_source_is_read_once_not_once_per_call(tmp_path):
+    """Rung 0 reads each unchanged source ONCE per process, not once per call.
+
+    ``fetch`` is called per TICK on the record-selective read paths
+    (``Provider._file_for`` skips the decoded-file buffer whenever a ``select``
+    is passed), so hashing on every call made the rung cost the whole corpus per
+    tick. A digest is kept against the ``(size, mtime)`` it was computed for and
+    reused while both hold.
+    """
+    from earthsciio.validate import CURRENT, SourceRevalidator
+
+    src = tmp_path / "x.nc"
+    body = b"a" * 4096
+    src.write_bytes(body)
+    m = _manifest_for(body)
+
+    rev = SourceRevalidator()
+    for _ in range(25):
+        assert rev.state(src, m) == CURRENT
+    assert rev.full_reads == 1, "24 of the 25 calls came from the memo"
+
+
+def test_the_memo_is_dropped_when_the_source_changes(tmp_path):
+    """A replacement changes the mtime, so the digest is recomputed."""
+    import time
+
+    from earthsciio.validate import CURRENT, REPLACED, SourceRevalidator
+
+    src = tmp_path / "x.csv"
+    body = b"year,value\n2016,1.0\n"
+    src.write_bytes(body)
+    m = _manifest_for(body)
+
+    rev = SourceRevalidator()
+    assert rev.state(src, m) == CURRENT
+
+    # Same length, different bytes — only the mtime betrays it, which is exactly
+    # the case the memo has to get right.
+    time.sleep(0.01)
+    src.write_bytes(b"year,value\n2016,9.0\n")
+    assert rev.state(src, m) == REPLACED
+    assert rev.full_reads == 2
+
+
+def test_the_memo_does_not_keep_a_stale_entry_alive_across_a_re_ingest(
+    cache_root, tmp_path, fetches
+):
+    """The memo remembers the SOURCE digest, not the manifest's.
+
+    So it stays right after a re-ingest rewrites the manifest: the next read
+    compares the remembered digest against the NEW manifest and says "current"
+    without a second read, rather than re-ingesting for ever.
+    """
+    src = tmp_path / "x.csv"
+    src.write_bytes(b"year,value\n2016,1.0\n")
+    url = _file_url(src)
+    c = Cache(root=cache_root)
+
+    assert c.fetch(url).status == "downloaded"
+    src.write_bytes(b"year,value\n2016,9.0\n")  # same length, different bytes
+    assert c.fetch(url).status == "downloaded"  # caught, re-ingested
+    before = fetches["n"]
+    assert c.fetch(url).status == "hit"  # and settled
+    assert c.fetch(url).status == "hit"
+    assert fetches["n"] == before, "settled means settled: no further re-ingest"

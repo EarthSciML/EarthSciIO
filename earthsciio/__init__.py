@@ -55,7 +55,12 @@ from .config import (
     resolve_revalidate_file,
 )
 from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
-from .validate import Temporal, file_source_is_current
+from .validate import (
+    Temporal,
+    SourceRevalidator,
+    file_source_is_current,
+    file_source_state,
+)
 from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
 from .cache import Cache, CacheEntry
 from .native import NativeDataset, NativeField
@@ -162,6 +167,8 @@ __all__ = [
     "resolve_revalidate_file",
     "REVALIDATE_FILE_ENV",
     "file_source_is_current",
+    "file_source_state",
+    "SourceRevalidator",
     # auth
     "AuthRegistry",
     "AuthResolver",

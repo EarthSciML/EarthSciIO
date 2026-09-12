@@ -12,9 +12,11 @@
 //!
 //! Step 2's "valid" has one rung the pure ladder cannot supply: a `file://`
 //! entry is rechecked against the file it was ingested from
-//! ([`validate::file_source_is_current`], `spec/cache-format.md` §4 rung 0), so
-//! a local file replaced in place is re-ingested instead of served forever from
-//! its warm entry (`EarthSciML/EarthSciAST#293`).
+//! ([`validate::SourceRevalidator`], `spec/cache-format.md` §4 rung 0), so a
+//! local file replaced in place is re-ingested instead of served forever from
+//! its warm entry (`EarthSciML/EarthSciAST#293`). The rung distinguishes a
+//! *replaced* source from a *missing* one from a source this host simply
+//! cannot read, and only the first two send the entry back for a re-ingest.
 //!
 //! Offline (`spec/offline-mode.md`): no transport is constructed; presence +
 //! stored `sha256_content` is the only check; a miss raises [`Error::CacheMiss`].
@@ -37,7 +39,7 @@ use crate::transport::{
     CdsTransport, Conditional, FetchResult, FetchStatus, FileTransport, HttpTransport, S3Transport,
     Transport, TransportRegistry,
 };
-use crate::validate::{self, CacheDecision, Temporal};
+use crate::validate::{self, CacheDecision, SourceState, Temporal};
 
 /// A resolved cache entry: the blob path plus its manifest.
 #[derive(Debug, Clone)]
@@ -113,6 +115,9 @@ pub struct Cache {
     offline: bool,
     verify_on_read: bool,
     revalidate_file_sources: bool,
+    /// Rung 0's `(length, mtime)` memo, so a per-tick read loop hashes each
+    /// unchanged source once per process rather than once per call.
+    revalidator: validate::SourceRevalidator,
 }
 
 impl Cache {
@@ -218,11 +223,30 @@ impl Cache {
                 // (EarthSciML/EarthSciAST#293).
                 if self.revalidate_file_sources {
                     if let Some(src) = local_source_path(req.resolved_url) {
-                        if !validate::file_source_is_current(&src, &manifest) {
-                            // Re-ingest. A source that is GONE lands here too,
-                            // and then fails in the transport — which is the
-                            // point: absent must not read as a stale hit.
-                            return Ok(None);
+                        match self.revalidator.state(&src, &manifest) {
+                            // Provably the file we ingested. Serve it.
+                            SourceState::Current => {}
+                            // A different file at the same path. Re-ingest —
+                            // this is the whole point of the rung.
+                            SourceState::Replaced => return Ok(None),
+                            // Nothing at the path. Re-ingest so the transport
+                            // raises the real absence: absent must not read as
+                            // a stale hit. UNLESS mirrors were supplied — then
+                            // the blob may well have come from one of them (the
+                            // manifest records the canonical URL either way,
+                            // `commit_result`), and re-ingesting would mean a
+                            // fresh mirror download on every single read, for
+                            // ever, with no hit in between. Serving the warm
+                            // entry is the lesser of those.
+                            SourceState::Missing if req.mirrors.is_empty() => return Ok(None),
+                            SourceState::Missing => {}
+                            // We could not read the path at all — no
+                            // permission, an unmounted filesystem. That is not
+                            // evidence the bytes changed, so rung 0 abstains
+                            // and the ladder's verdict stands. Warming a cache
+                            // where the corpus is visible and reading it where
+                            // it is not must not be a hard failure.
+                            SourceState::Unknown => {}
                         }
                     }
                 }
@@ -463,7 +487,10 @@ fn scheme_of(url: &str) -> Result<&str> {
 /// (`spec/cache-format.md` §3), so the entry is judged against the source it
 /// claims to be. The usual `nei2016` shape has it the other way round anyway: a
 /// remote canonical with a `file://${EARTHSCIDATADIR}` mirror, which this
-/// declines and leaves to the ladder.
+/// declines and leaves to the ladder. When the canonical IS the `file://` URL
+/// and mirrors are configured, a missing canonical is not proof of anything
+/// about the blob (a mirror may have served it), so `try_hit` abstains there
+/// rather than re-download from the mirror on every read.
 fn local_source_path(url: &str) -> Option<PathBuf> {
     if !scheme_of(url).is_ok_and(|s| s.eq_ignore_ascii_case("file")) {
         return None;
@@ -550,7 +577,9 @@ impl CacheBuilder {
     /// Turning it off restores the behaviour of
     /// `EarthSciML/EarthSciAST#293`: a local file replaced in place is served
     /// from the warm entry forever, silently and greenly. Do it only for a
-    /// corpus known to be immutable, and only to save the one extra read.
+    /// corpus known to be immutable, and only to save the one extra read — the
+    /// `(length, mtime)` memo on [`validate::SourceRevalidator`] already means
+    /// that read is paid once per file per process, not once per call.
     pub fn revalidate_file_sources(mut self, revalidate: bool) -> Self {
         self.revalidate_file_sources = Some(revalidate);
         self
@@ -628,6 +657,7 @@ impl CacheBuilder {
             revalidate_file_sources: validate::revalidate_file_sources(
                 self.revalidate_file_sources,
             ),
+            revalidator: validate::SourceRevalidator::new(),
         })
     }
 }
@@ -667,8 +697,12 @@ mod tests {
         );
         // The transport's own mapping is the arbiter: a URL it cannot turn
         // into a path is one it could never have ingested from either, so
-        // cache and transport agree by construction.
-        assert_eq!(local_source_path("FILE:///corpus/x.csv"), None);
+        // cache and transport agree by construction. Both are case-insensitive
+        // on the scheme, as Python's `urlsplit` mapping is.
+        assert_eq!(
+            local_source_path("FILE:///corpus/x.csv"),
+            Some(PathBuf::from("/corpus/x.csv"))
+        );
         assert_eq!(local_source_path("https://x/y.nc"), None);
         assert_eq!(local_source_path("s3://bucket/key"), None);
         assert_eq!(local_source_path("no-scheme"), None);

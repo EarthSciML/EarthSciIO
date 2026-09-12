@@ -71,3 +71,42 @@ end
     end
     _assert_single_intact(root, url, payload)
 end
+
+# A STALE source is the other half of the same contract. The fast path has every
+# racer fail rung 0 at the same instant; if the lock path then took presence and
+# `want_revalidate` at face value, all N would re-copy the file — correct bytes,
+# N times the work, and a direct contradiction of "exactly one download".
+# Measured before the under-lock re-check: 4 of 4 processes re-ingested.
+@testset "concurrency — a replaced source is re-ingested ONCE, not N times" begin
+    src = string(tempname(), ".nc")
+    write(src, rand(UInt8, 1_048_576))
+    root = mktempdir()
+    url = string("file://", src)
+
+    # Warm the entry, then replace the source with a same-length, different-bytes
+    # file: the case a size check waves through, and the one rung 0 exists for.
+    warm = Cache(LocalStore(root); offline = false)
+    @test fetch_blob(warm, url).status == :downloaded
+    payload = rand(UInt8, 1_048_576)
+    write(src, payload)
+
+    np = 4
+    proj = dirname(Base.active_project())
+    pids = addprocs(np; exeflags = `--project=$proj`)
+    try
+        Distributed.@everywhere using EarthSciIO
+        start_at = time() + 2.0
+        statuses = pmap(1:np) do _
+            while time() < start_at
+                sleep(0.005)
+            end
+            c = Cache(LocalStore(root); offline = false)
+            string(fetch_blob(c, url).status)
+        end
+        @test count(==("downloaded"), statuses) == 1
+        @test count(==("hit"), statuses) == np - 1
+    finally
+        rmprocs(pids)
+    end
+    _assert_single_intact(root, url, payload)   # and the NEW bytes won
+end

@@ -17,9 +17,11 @@ The fetch algorithm is ``spec/cache-format.md`` §6:
 
 Step 1's "valid" has one rung the pure ladder cannot supply: a ``file://`` entry
 is rechecked against the file it was ingested from
-(:func:`~earthsciio.validate.file_source_is_current`, ``spec/cache-format.md``
+(:class:`~earthsciio.validate.SourceRevalidator`, ``spec/cache-format.md``
 §4.1), so a local file replaced in place is re-ingested instead of served
-forever from its warm entry (EarthSciML/EarthSciAST#293).
+forever from its warm entry (EarthSciML/EarthSciAST#293). The rung distinguishes
+a *replaced* source from a *missing* one from a source this host simply cannot
+read, and only the first two send the entry back for a re-ingest.
 
 **Offline mode** (``spec/offline-mode.md``) short-circuits everything: no
 transport is ever constructed, the store is consulted directly, and a missing
@@ -106,7 +108,10 @@ class Cache:
         falsey. Turning it off restores the behaviour of
         EarthSciML/EarthSciAST#293 — a local file replaced in place is served
         from the warm entry forever, silently and greenly — so do it only for a
-        corpus known to be immutable, and only to save the one extra read.
+        corpus known to be immutable, and only to save the one extra read. The
+        ``(size, mtime)`` memo on
+        :class:`~earthsciio.validate.SourceRevalidator` already means that read
+        is paid once per file per process, not once per call.
     """
 
     def __init__(
@@ -127,6 +132,9 @@ class Cache:
         self.auth = coerce_auth(auth)
         self.verify = verify
         self.revalidate_file = resolve_revalidate_file(revalidate_file)
+        # Rung 0's (size, mtime) memo, so a per-tick read loop reads each
+        # unchanged source once per process rather than once per call.
+        self._revalidator = validate.SourceRevalidator()
 
     # ----------------------------------------------------------------- fetch
     def fetch(
@@ -154,13 +162,13 @@ class Cache:
             return self._read_offline(resolved_url, key)
 
         # 1. Hit without a lock (atomic rename makes this safe).
-        hit = self._try_hit(resolved_url, key, temporal, expected_checksum)
+        hit = self._try_hit(resolved_url, key, temporal, expected_checksum, mirrors)
         if hit is not None:
             return hit
 
         # 2. Lock, re-check, download.
         with self.store.lock(key):
-            hit = self._try_hit(resolved_url, key, temporal, expected_checksum)
+            hit = self._try_hit(resolved_url, key, temporal, expected_checksum, mirrors)
             if hit is not None:
                 return hit
             return self._download(
@@ -180,7 +188,7 @@ class Cache:
 
     # ------------------------------------------------------------- hit check
     def _try_hit(
-        self, resolved_url, key, temporal, expected_checksum
+        self, resolved_url, key, temporal, expected_checksum, mirrors=()
     ) -> Optional[CacheEntry]:
         blob = self.store.get_blob(key)
         if blob is None:
@@ -198,13 +206,30 @@ class Cache:
         # entry (EarthSciML/EarthSciAST#293).
         if self.revalidate_file:
             source = local_source_path(resolved_url)
-            if source is not None and not validate.file_source_is_current(
-                source, manifest
-            ):
-                # Re-ingest. A source that is GONE lands here too, and then fails
-                # in the transport — which is the point: absent must not read as
-                # a stale hit.
-                return None
+            if source is not None:
+                state = self._revalidator.state(source, manifest)
+                if state == validate.REPLACED:
+                    # A different file at the same path. Re-ingest — this is the
+                    # whole point of the rung.
+                    return None
+                if state == validate.MISSING and not mirrors:
+                    # Nothing at the path. Re-ingest so the transport raises the
+                    # real absence: absent must not read as a stale hit.
+                    return None
+                # state is CURRENT (provably the file we ingested), MISSING with
+                # mirrors, or UNKNOWN — all served.
+                #
+                # MISSING with mirrors: the blob may well have come from one of
+                # them, since the manifest records the canonical URL whichever
+                # candidate served it (``_commit``). Re-ingesting would mean a
+                # fresh mirror download on every single read, for ever, with no
+                # hit in between; serving the warm entry is the lesser of those.
+                #
+                # UNKNOWN: the path could not be read at all — no permission, an
+                # unmounted filesystem. That is not evidence the bytes changed,
+                # so rung 0 abstains and the ladder's verdict stands. Warming a
+                # cache where the corpus is visible and reading it where it is
+                # not must not be a hard failure.
         if self.verify:
             self._verify_blob(blob, manifest, key)
         return CacheEntry(key, blob, manifest, HIT)
@@ -361,7 +386,10 @@ def local_source_path(resolved_url: str) -> Optional[str]:
     (``spec/cache-format.md`` §3), so the entry is judged against the source it
     claims to be. The usual ``nei2016`` shape is the other way round anyway: a
     remote canonical with a ``file://${EARTHSCIDATADIR}`` mirror, which this
-    declines and leaves to the ladder.
+    declines and leaves to the ladder. When the canonical IS the ``file://`` URL
+    and mirrors are configured, a missing canonical is not proof of anything
+    about the blob (a mirror may have served it), so :meth:`Cache._try_hit`
+    abstains there rather than re-download from the mirror on every read.
     """
     try:
         if scheme_of(resolved_url) != "file":

@@ -46,7 +46,7 @@ export Transport, Store, Reader, Writer
 
 # cache + store + transport
 export Cache, CacheEntry, fetch_blob, cache_key, datadir, is_offline
-export file_source_is_current, env_revalidate_file
+export file_source_is_current, file_source_state, env_revalidate_file
 export Store, LocalStore, S3Store, make_store
 export Manifest, OutputManifest, TimeShardRecord
 export write_output_manifest, read_output_manifest

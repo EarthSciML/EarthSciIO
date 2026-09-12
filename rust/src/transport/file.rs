@@ -63,8 +63,15 @@ impl Transport for FileTransport {
 /// the one it re-ingests.
 pub fn file_url_to_path(url: &str) -> Result<PathBuf> {
     let expanded = expand_datadir(url);
+    // Case-insensitive on the scheme, matching Python's `urlsplit`-based
+    // mapping (which lowercases it) and this crate's own `scheme_of`. Without
+    // it `FILE://x` is a path to the transport but not to `scheme_of`, and the
+    // cache's rung 0 would decline to recheck a URL the transport would happily
+    // read.
     let rest = expanded
-        .strip_prefix("file://")
+        .get(..7)
+        .filter(|p| p.eq_ignore_ascii_case("file://"))
+        .map(|_| &expanded[7..])
         .ok_or_else(|| Error::BadUrl {
             url: url.to_string(),
             detail: "not a file:// URL".to_string(),
