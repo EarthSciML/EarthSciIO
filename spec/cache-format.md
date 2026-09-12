@@ -98,6 +98,10 @@ and owned here, consistent with the ESS schema's stated intent.
 A cache **hit** requires the blob to be present **and valid**. Validity is
 decided in this order (first applicable wins):
 
+0. **Local source recheck** — for a `file://` source, compare the file the URL
+   names against the manifest that was written when it was ingested. See
+   [§4.1](#41-local-file-sources-are-rechecked-against-their-source); it is a
+   separate rung because it is the only one that can consult the source itself.
 1. **Content hash** — if a loader-declared checksum exists (none today; future
    `source.checksums` schema field), verify `sha256(blob)` against it. Strongest.
 2. **Declared immutability** — a static loader (no `temporal`) or a closed past
@@ -117,14 +121,69 @@ against an S3-backed store paid a round-trip to learn nothing. Measured on a
 read, and dominated the wall clock of runs whose data was already on disk.
 
 In **offline mode** (see [offline-mode.md](offline-mode.md)) none of the network
-steps run: presence + stored `sha256_content` is the only check.
+steps run: presence + stored `sha256_content` is the only check. Rung 0 does not
+run offline either — offline trades freshness for hermeticity by design
+([offline-mode.md §3](offline-mode.md#3-conditional-get--ttl-revalidation-is-suppressed)),
+and there is no transport left to re-ingest with.
 
 - **Integrity**: `sha256_content` is always computed and stored on fetch.
   Re-verification on read is cheap and **off by default, on for CI/conformance**.
+  Note what it is: it hashes the **cached blob** against its own manifest —
+  cache-internal consistency, the copy against the record of the copy. It cannot
+  see a replaced source, which is what §4.1 is for; the two are different
+  questions and both are worth asking.
 - **Invalidation**: bump `v1/` to invalidate everything; delete a single blob on
   hash mismatch; a `cache clear [--loader X] [--before T]` utility (core-track).
+  One entry is invalidated by hand by deleting its `meta/<key>.json`: every
+  blob has a sibling manifest (§3), and an entry without one is not a valid
+  entry, so it re-fetches. `key` is `sha256` of the resolved URL, so
+  `printf %s "<resolved url>" | sha256sum` names the file.
 
 ---
+
+### 4.1 Local `file://` sources are rechecked against their source
+
+Rules 1-4 all ask whether a **remote** source may have changed, and answer with
+validators, a declaration, or a heuristic. A `file://` source needs none of
+that: the truth is a `stat` away.
+
+Before serving a warm `file://` entry an implementation **MUST** compare the
+named file against the manifest:
+
+| on disk | verdict |
+|---|---|
+| missing, unreadable, or not a regular file | **re-ingest** (the transport then reports the real absence) |
+| length != `bytes` | **re-ingest** |
+| length == `bytes` but `sha256(file)` != `sha256_content` | **re-ingest** |
+| length == `bytes` and hash matches | **hit** — serve the cached blob, re-ingest nothing |
+
+The hash is required, not optional: a size-only check waves through every
+equal-length edit (a float re-encode, a corrected value, a different scenario
+year). Nothing new is stored — `bytes` and `sha256_content` are already in every
+manifest (§3), so this is **not** a format change and a cache written by an
+implementation that predates the rung revalidates correctly.
+
+**Why the rung exists.** The key is `sha256(resolved_url)` (§1), so a local file
+replaced **in place** keeps its key, and rules 1-4 can only ever call it a hit:
+a local file carries no ETag and no `Last-Modified`, and a source with no
+`temporal` is *declared* immutable by rule 2. The entry therefore outlives the
+file it was made from, silently. Reported in
+[EarthSciML/EarthSciAST#293](https://github.com/EarthSciML/EarthSciAST/issues/293):
+a 2.8 GB snapshot corpus was replaced at the same paths, every already-read URL
+kept returning the old corpus, and a test suite stayed green against a corpus
+that no longer existed — including after the data path was pointed at a
+directory that does not exist. The failure is directional: an *unresolvable*
+source is a hard error, a *stale* one was green.
+
+**Cost.** One extra read of the source, paid only for `file://` entries that
+were about to be served — i.e. bounded by the bytes the caller was already about
+to read. `EARTHSCI_REVALIDATE_FILE=0` (`0`/`false`/`no`/`off`) turns the rung
+off for a corpus known to be immutable; any other value, including an
+unparseable one, leaves it **on**.
+
+> **Track status.** Implemented in the Rust track. The Python and Julia tracks
+> still implement rules 1-4 only and are to follow; until they do, a `file://` corpus
+> replaced in place is stale for them.
 
 ## 5. `$EARTHSCIDATADIR` resolution
 

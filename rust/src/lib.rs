@@ -178,4 +178,4 @@ pub type DataLoader = DataSource;
 #[deprecated(since = "0.1.2", note = "renamed to `SourceTemporal`")]
 pub type LoaderTemporal = SourceTemporal;
 #[cfg(not(target_arch = "wasm32"))]
-pub use validate::{CacheDecision, Temporal};
+pub use validate::{file_source_is_current, CacheDecision, Temporal, REVALIDATE_FILE_ENV};

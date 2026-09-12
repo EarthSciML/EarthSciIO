@@ -3,15 +3,24 @@
 //! A cache **hit** requires the blob to be present **and valid**. Validity is
 //! decided in this order (first applicable wins):
 //!
+//! 0. **Local source recheck** — a `file://` source is compared against the
+//!    file it was ingested from ([`file_source_is_current`]). Rules 1-3 are all
+//!    about a source that can only be consulted over the network; a local file
+//!    has an exact truth sitting on disk.
 //! 1. **Content hash** — a loader-declared checksum (none today) beats everything.
 //! 2. **Conditional GET** — stored `etag`/`last_modified` ⇒ revalidate over the
 //!    network (`If-None-Match` / `If-Modified-Since`).
 //! 3. **TTL from `temporal`** — a closed past period is immutable; an incomplete
 //!    period has a short TTL; a static loader (no `temporal`) is immutable.
 //!
+//! Rung 0 lives here as its own function rather than inside [`decide`] because
+//! it needs the filesystem, and [`decide`] is pure; `cache::try_hit` applies it
+//! to the entries [`decide`] has already called a hit.
+//!
 //! Offline mode short-circuits all of this to presence + stored hash; that path
 //! lives in `cache` and never calls [`decide`].
 
+use std::path::Path;
 use std::time::Duration;
 
 use time::format_description::well_known::Rfc3339;
@@ -128,6 +137,87 @@ pub fn decide_at(
     }
 }
 
+/// Environment variable that turns the `file://` source recheck
+/// ([`file_source_is_current`]) **off**. Set it to `0`/`false`/`no`/`off`.
+///
+/// The recheck is ON by default and that default is the fix for
+/// `EarthSciML/EarthSciAST#293`; this exists only for a caller who knows its
+/// local corpus is immutable and does not want to pay one extra read of the
+/// bytes it is about to read anyway. Any other value (including an unparseable
+/// one) leaves the recheck ON — a typo in a knob must not silently restore a
+/// silent-staleness bug.
+pub const REVALIDATE_FILE_ENV: &str = "EARTHSCI_REVALIDATE_FILE";
+
+/// Resolve whether `file://` sources are rechecked: the explicit argument wins,
+/// otherwise [`REVALIDATE_FILE_ENV`], otherwise `true`.
+pub fn revalidate_file_sources(explicit: Option<bool>) -> bool {
+    match explicit {
+        Some(v) => v,
+        None => std::env::var(REVALIDATE_FILE_ENV)
+            .map(|s| !is_falsey(&s))
+            .unwrap_or(true),
+    }
+}
+
+/// The only values that switch the recheck off (case-insensitive, trimmed).
+fn is_falsey(s: &str) -> bool {
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
+/// Rung 0: is the `file://` source behind a cached entry still the file that
+/// was ingested into it?
+///
+/// The cache is keyed by the resolved URL, so a local file replaced **in place**
+/// keeps the same key and every later read is served the bytes of the file that
+/// used to be there. Nothing above catches it: a `file://` source has no ETag
+/// and no `Last-Modified`, and a source with no `temporal` is declared
+/// immutable (rule 2), so [`decide`] answers `Hit` forever. That is
+/// `EarthSciML/EarthSciAST#293`, where a snapshot corpus was replaced at the
+/// same paths and a test suite stayed green against the corpus that no longer
+/// existed — the manifest recorded 371 bytes while the file on disk was 363.
+///
+/// Note what this is NOT. `Cache::verify_on_read` hashes the **cached blob**
+/// against the manifest; it compares the copy with the record of the copy, so
+/// it passes with flying colours while the file the copy was made from has been
+/// replaced. This compares the **source** with that record — the check whose
+/// absence the issue reports.
+///
+/// The manifest already carries everything needed, so this is not a cache-format
+/// change:
+///
+/// * source missing, unreadable, or not a regular file ⇒ **not current** (the
+///   caller re-ingests, and the transport then raises the real error instead of
+///   the cache serving a ghost);
+/// * on-disk length != `manifest.bytes` ⇒ **not current**, no hashing;
+/// * `sha256(source)` != `manifest.sha256_content` ⇒ **not current**. Size alone
+///   would not do: a float re-encode, a different simulation year, or any edit
+///   that preserves the length is exactly the case a size check waves through;
+/// * otherwise **current** — serve the warm blob, re-ingest nothing.
+///
+/// Cost is one read of the source. It is paid only for `file://` entries, and
+/// only for entries that were about to be served, i.e. it is bounded by the
+/// bytes the caller was already about to read. [`REVALIDATE_FILE_ENV`] turns it
+/// off for a caller that would rather have the staleness than the read.
+pub fn file_source_is_current(source: &Path, manifest: &Manifest) -> bool {
+    let Ok(meta) = std::fs::metadata(source) else {
+        // Gone, or unreadable. Either way this entry must not be served: the
+        // report's sharpest case is a corpus DELETED outright while the suite
+        // kept passing.
+        return false;
+    };
+    if !meta.is_file() || meta.len() != manifest.bytes {
+        return false;
+    }
+    match crate::key::sha256_file(source) {
+        Ok(sha) => sha.eq_ignore_ascii_case(&manifest.sha256_content),
+        // Unreadable half-way through ⇒ re-ingest and let the transport speak.
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +310,89 @@ mod tests {
             decide_at(&m, Some(&temporal), None, t("2026-06-26T02:00:00Z")),
             CacheDecision::Miss
         );
+    }
+
+    // --- rung 0: the file:// source recheck (EarthSciML/EarthSciAST#293) ------
+
+    /// A manifest describing `body` as the ingested bytes.
+    fn file_manifest(body: &[u8]) -> Manifest {
+        Manifest {
+            auth_realm: None,
+            bytes: body.len() as u64,
+            etag: None,
+            fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            last_modified: None,
+            schema: crate::manifest::MANIFEST_SCHEMA.to_string(),
+            sha256_content: crate::key::sha256_hex(body),
+            source_loader: None,
+            url: "file:///corpus/x.csv".to_string(),
+        }
+    }
+
+    #[test]
+    fn unchanged_source_is_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("x.csv");
+        std::fs::write(&src, b"year,value\n2016,1.0\n").unwrap();
+        let m = file_manifest(b"year,value\n2016,1.0\n");
+        assert!(file_source_is_current(&src, &m));
+    }
+
+    #[test]
+    fn replaced_source_of_different_length_is_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("x.csv");
+        let m = file_manifest(b"371-bytes-worth-of-old-corpus");
+        std::fs::write(&src, b"363-bytes-worth").unwrap();
+        assert!(!file_source_is_current(&src, &m));
+    }
+
+    /// The half a size check waves through: same length, different bytes — a
+    /// float re-encode, a different simulation year, a corrected code.
+    #[test]
+    fn replaced_source_of_equal_length_is_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("x.csv");
+        let m = file_manifest(b"year,value\n2016,1.0\n");
+        std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&src).unwrap().len(),
+            m.bytes,
+            "the point of this test is that the LENGTH still matches"
+        );
+        assert!(!file_source_is_current(&src, &m));
+    }
+
+    #[test]
+    fn deleted_source_is_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("gone.csv");
+        let m = file_manifest(b"whatever");
+        assert!(!file_source_is_current(&src, &m));
+    }
+
+    /// A path that resolves to a directory (the report's "pointed at a path
+    /// that is not there any more" shape) is not a source to serve from.
+    #[test]
+    fn directory_in_place_of_source_is_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("subdir");
+        std::fs::create_dir(&src).unwrap();
+        let m = file_manifest(b"whatever");
+        assert!(!file_source_is_current(&src, &m));
+    }
+
+    #[test]
+    fn revalidation_is_on_by_default_and_only_explicit_falsey_disables_it() {
+        assert!(revalidate_file_sources(Some(true)));
+        assert!(!revalidate_file_sources(Some(false)));
+        for v in ["0", "false", "NO", " off "] {
+            assert!(is_falsey(v), "{v:?} should disable the recheck");
+        }
+        // Anything else — including a typo — keeps the recheck ON.
+        for v in ["1", "true", "yes", "", "offf", "maybe"] {
+            assert!(!is_falsey(v), "{v:?} must NOT disable the recheck");
+        }
     }
 
     #[test]

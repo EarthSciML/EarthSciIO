@@ -12,7 +12,7 @@ mod s3;
 pub use cds::{
     build_cds_url, cds_api_key, cds_auth, parse_cds_url, CdsTransport, CDS_API_URL, CDS_REALM,
 };
-pub use file::FileTransport;
+pub use file::{file_url_to_path, FileTransport};
 pub use http::HttpTransport;
 pub use s3::{resolve_region, s3_https_url, S3Transport, DEFAULT_S3_REGION};
 

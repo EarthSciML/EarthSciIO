@@ -55,7 +55,13 @@ impl Transport for FileTransport {
 /// Handles `file:///abs/path` (empty authority) and `file://host/abs/path`
 /// (authority dropped). The path is taken literally after expansion — no
 /// percent-decoding (the resolved URLs the cache produces are not encoded).
-fn file_url_to_path(url: &str) -> Result<PathBuf> {
+///
+/// Public because the cache needs the SAME path this transport would read in
+/// order to recheck a warm entry against its source
+/// (`validate::file_source_is_current`). Two spellings of that mapping would be
+/// a bug generator: the cache would revalidate against a different file than
+/// the one it re-ingests.
+pub fn file_url_to_path(url: &str) -> Result<PathBuf> {
     let expanded = expand_datadir(url);
     let rest = expanded
         .strip_prefix("file://")
