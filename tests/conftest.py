@@ -2,7 +2,8 @@
 
 The whole suite is **hermetic**: the autouse fixture clears the ambient
 environment knobs (``EARTHSCIDATADIR`` / ``EARTHSCI_OFFLINE`` / ``EARTHSCI_LIVE``
-plus the CDS knobs ``CDSAPI_KEY`` / ``CDSAPI_URL``) so a test's behavior never
+``EARTHSCI_REVALIDATE_FILE`` plus the CDS knobs ``CDSAPI_KEY`` / ``CDSAPI_URL``)
+so a test's behavior never
 depends on the refinery's environment, and offline tests never accidentally see
 a leaked datadir or credential. Tests that exercise those knobs set them
 explicitly via ``monkeypatch``.
@@ -29,6 +30,7 @@ def _hermetic_env(monkeypatch):
         "EARTHSCIDATADIR",
         "EARTHSCI_OFFLINE",
         "EARTHSCI_LIVE",
+        "EARTHSCI_REVALIDATE_FILE",
         "CDSAPI_KEY",
         "CDSAPI_URL",
     ):

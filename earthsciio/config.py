@@ -7,6 +7,8 @@ These are the few process-wide knobs the spec pins:
   inode quota cannot absorb many small NetCDF slices — Risk R6, a hard rule).
 * Offline-mode enabling (``spec/offline-mode.md`` §1) — ``offline=True`` **or**
   ``EARTHSCI_OFFLINE`` truthy; the explicit argument wins over the environment.
+* The ``file://`` source recheck (``spec/cache-format.md`` §4.1) — on unless
+  ``EARTHSCI_REVALIDATE_FILE`` is explicitly falsey.
 * The cache-format version directory (``v1``); bumping it invalidates the whole
   cache by changing one path segment.
 """
@@ -23,6 +25,15 @@ from typing import Optional
 CACHE_FORMAT_VERSION = "v1"
 
 _TRUTHY = {"1", "true", "yes", "on"}
+
+#: Environment variable that turns the ``file://`` source recheck OFF
+#: (``spec/cache-format.md`` §4.1).
+REVALIDATE_FILE_ENV = "EARTHSCI_REVALIDATE_FILE"
+
+#: The only values that disable the recheck. Note this is NOT ``not _TRUTHY``:
+#: the recheck defaults to ON, so only an explicit denial switches it off and a
+#: typo leaves the protection in place.
+_FALSEY = {"0", "false", "no", "off"}
 
 
 def default_cache_root() -> pathlib.Path:
@@ -85,6 +96,31 @@ def resolve_offline(explicit: Optional[bool] = None) -> bool:
     if explicit is not None:
         return bool(explicit)
     return env_offline()
+
+
+def env_revalidate_file() -> bool:
+    """Whether ``$EARTHSCI_REVALIDATE_FILE`` leaves the recheck on (default yes).
+
+    Only ``0``/``false``/``no``/``off`` (case-insensitive, trimmed) switch it
+    off. Anything else — including an unparseable value — leaves it **on**: a
+    typo in a knob must not silently restore a silent-staleness bug.
+    """
+    raw = os.environ.get(REVALIDATE_FILE_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _FALSEY
+
+
+def resolve_revalidate_file(explicit: Optional[bool] = None) -> bool:
+    """Resolve the effective ``file://`` recheck flag.
+
+    ``explicit`` of ``True``/``False`` wins; ``None`` consults
+    :data:`REVALIDATE_FILE_ENV`. Same sentinel discipline as
+    :func:`resolve_offline`.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    return env_revalidate_file()
 
 
 def expand_datadir(template: str, cache_root: os.PathLike) -> str:

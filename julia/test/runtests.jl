@@ -10,6 +10,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
 @testset "EarthSciIO — Julia track: cache + transport + store + readers + provider" begin
     # component (a): cache / transport / store
     include("test_cache.jl")
+    include("test_file_source_revalidate.jl")   # rung 0: the file:// source recheck
     include("test_registries.jl")
     include("test_conformance.jl")   # defines CORPUS; checks 1, 2, 5
     include("test_http.jl")

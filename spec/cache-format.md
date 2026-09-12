@@ -163,6 +163,13 @@ year). Nothing new is stored — `bytes` and `sha256_content` are already in eve
 manifest (§3), so this is **not** a format change and a cache written by an
 implementation that predates the rung revalidates correctly.
 
+An entry with **no manifest** has nothing to compare against, so rung 0 abstains
+and the implementation's existing manifest-less-entry behaviour stands (Rust and
+Python treat it as a miss; Julia serves on presence alone). Forcing a re-ingest
+there would not be a freshness check at all — it would break §6, since the blob
+is committed before its manifest is written and a racing peer legitimately sees
+that state for an instant.
+
 **Why the rung exists.** The key is `sha256(resolved_url)` (§1), so a local file
 replaced **in place** keeps its key, and rules 1-4 can only ever call it a hit:
 a local file carries no ETag and no `Last-Modified`, and a source with no
@@ -181,9 +188,20 @@ to read. `EARTHSCI_REVALIDATE_FILE=0` (`0`/`false`/`no`/`off`) turns the rung
 off for a corpus known to be immutable; any other value, including an
 unparseable one, leaves it **on**.
 
-> **Track status.** Implemented in the Rust track. The Python and Julia tracks
-> still implement rules 1-4 only and are to follow; until they do, a `file://` corpus
-> replaced in place is stale for them.
+Every track honours `EARTHSCI_REVALIDATE_FILE` identically, and each also takes
+a programmatic override that wins over it:
+
+| track | programmatic opt-out |
+|---|---|
+| Rust | `Cache::builder().revalidate_file_sources(false)` |
+| Python | `Cache(..., revalidate_file=False)` |
+| Julia | `Cache(store; revalidate_file = false)` |
+
+> **Track status.** Implemented in **all three tracks** (Rust, Python, Julia),
+> which is the point: one track refusing a stale `file://` corpus while another
+> serves it would be worse than either behaviour on its own.
+
+---
 
 ## 5. `$EARTHSCIDATADIR` resolution
 

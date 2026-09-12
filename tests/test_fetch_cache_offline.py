@@ -70,10 +70,18 @@ def test_second_fetch_is_a_hit_without_redownload(cache_root, tmp_path):
     url = _file_url(src)
     c = Cache(root=cache_root)
     assert c.fetch(url).status == "downloaded"
-    src.write_bytes(b"MUTATED-SOURCE")  # a static-loader hit must not re-copy
+    # An UNCHANGED source is a hit: ``status`` is the proof that nothing was
+    # re-copied (a re-ingest would say "downloaded").
+    #
+    # This used to mutate the source here and assert the ORIGINAL bytes came
+    # back — i.e. it asserted the stale serve of EarthSciML/EarthSciAST#293 as
+    # if it were the contract. A ``file://`` entry is now rechecked against its
+    # source before it is served (``spec/cache-format.md`` §4.1); what happens
+    # when the source really does change is
+    # ``tests/test_file_source_revalidate.py``.
     entry = c.fetch(url)
     assert entry.status == "hit"
-    assert entry.path.read_bytes() == data  # original bytes, not the mutation
+    assert entry.path.read_bytes() == data
 
 
 # --------------------------------------------------------------------------- #
@@ -157,9 +165,15 @@ def test_ttl_stale_incomplete_period_refetches(cache_root, tmp_path):
 
 
 def test_ttl_fresh_incomplete_period_is_a_hit(cache_root, tmp_path):
+    # The TTL rung is the subject, so the ``file://`` source recheck (§4.1 rung
+    # 0) is held out deliberately: that is what lets the mutated source below
+    # still prove "the cached bytes came back, nothing was re-copied". With the
+    # recheck on — the default everywhere else — a mutated local source is
+    # re-ingested, which is ``tests/test_file_source_revalidate.py``'s subject,
+    # not this test's.
     src, data = _src(tmp_path)
     url = _file_url(src)
-    c = Cache(root=cache_root)
+    c = Cache(root=cache_root, revalidate_file=False)
     c.fetch(url, temporal=Temporal.incomplete(3600))
     src.write_bytes(b"changed")
     entry = c.fetch(url, temporal=Temporal.incomplete(3600))

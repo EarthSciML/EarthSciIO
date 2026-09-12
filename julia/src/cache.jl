@@ -44,6 +44,20 @@ function env_offline()
     return v in ("1", "true", "yes")
 end
 
+"""True unless `EARTHSCI_REVALIDATE_FILE` is an explicit denial (`0`/`false`/
+`no`/`off`).
+
+The `file://` source recheck (spec/cache-format.md §4.1) is ON by default — that
+default IS the fix for EarthSciML/EarthSciAST#293 — so unlike `env_offline` this
+reads the knob the other way round: anything that is not an explicit denial,
+including an unparseable value, leaves the recheck on. A typo in a knob must not
+silently restore a silent-staleness bug."""
+function env_revalidate_file()
+    v = lowercase(strip(get(ENV, "EARTHSCI_REVALIDATE_FILE", "")))
+    isempty(v) && return true
+    return !(v in ("0", "false", "no", "off"))
+end
+
 # --- cache key (spec/cache-format.md §1) ------------------------------------
 
 """
@@ -92,24 +106,36 @@ end
 # --- Cache ------------------------------------------------------------------
 
 """
-    Cache(store::Store; offline=nothing, auth=nothing, verify=false)
-    Cache(; store="local", root=datadir(), offline=nothing, auth=nothing, verify=false)
+    Cache(store::Store; offline=nothing, auth=nothing, verify=false, revalidate_file=nothing)
+    Cache(; store="local", root=datadir(), offline=nothing, auth=nothing, verify=false,
+          revalidate_file=nothing)
 
 The content-addressed cache. `offline=nothing` reads `EARTHSCI_OFFLINE` from the
 environment; an explicit `offline` argument wins. `auth` is a resolver or a
 realm→resolver map. `verify=true` re-checks `sha256_content` on every read (off
-by default, on for CI/conformance)."""
+by default, on for CI/conformance) — that is the CACHED BLOB against its own
+manifest, cache-internal consistency, NOT the `file://` source recheck.
+
+`revalidate_file=nothing` reads `EARTHSCI_REVALIDATE_FILE` and leaves the
+`file://` source recheck ON unless the knob is an explicit denial (spec §4.1).
+Turning it off restores the behaviour of EarthSciML/EarthSciAST#293: a local file
+replaced in place is served from the warm entry forever, silently and greenly. Do
+it only for a corpus known to be immutable, and only to save the one extra
+read."""
 struct Cache
     store::Store
     offline::Bool
     auth::Any
     verify::Bool
+    revalidate_file::Bool
 end
 
 function Cache(store::Store; offline::Union{Bool,Nothing} = nothing,
-              auth = nothing, verify::Bool = false)
+              auth = nothing, verify::Bool = false,
+              revalidate_file::Union{Bool,Nothing} = nothing)
     off = offline === nothing ? env_offline() : offline
-    return Cache(store, off, auth, verify)
+    rev = revalidate_file === nothing ? env_revalidate_file() : revalidate_file
+    return Cache(store, off, auth, verify, rev)
 end
 
 function Cache(; store::AbstractString = "local", root::AbstractString = datadir(),
@@ -179,12 +205,34 @@ end
 # Online: present blobs are immutable by default (closed past period / static
 # loader); a finite TTL or `revalidate` sends us to the lock path to conditional-
 # GET. A corrupt present blob raises IntegrityError (it is not a silent miss).
+#
+# Rung 0 (spec/cache-format.md §4.1) is the one exception to "immutable by
+# default": a `file://` source is sitting right there, so ask it instead of
+# guessing. "Immutable by default" is exactly how a corpus replaced in place kept
+# being served from a warm entry (EarthSciML/EarthSciAST#293). Offline keeps the
+# old behaviour on purpose — it trades freshness for hermeticity by design
+# (spec/offline-mode.md §3) and has no transport left to re-ingest with.
 function _valid_fast(c::Cache, url, key, bp, ttl, revalidate)
     if c.offline
         c.verify && _verify_integrity(c, url, key, bp)
         return true
     end
     revalidate && return false
+    if c.revalidate_file
+        src = _local_source_path(url)
+        if src !== nothing
+            meta = get_meta(c.store, key)
+            # A manifest-less blob ABSTAINS rather than re-ingesting: there is
+            # nothing to judge the source against, and that state is the commit
+            # race (put_blob! lands before put_meta!, so a peer legitimately sees
+            # a blob with no manifest for an instant). Forcing a download there
+            # would break the "N racing fetchers ⇒ exactly ONE download"
+            # contract of spec §6 — measured: 3 of 4 processes re-downloaded.
+            # A source that is GONE still lands below and fails in the
+            # transport: absent must not read as a stale hit.
+            meta !== nothing && !file_source_is_current(src, meta) && return false
+        end
+    end
     if ttl !== nothing
         meta = get_meta(c.store, key)
         if meta !== nothing
@@ -194,6 +242,68 @@ function _valid_fast(c::Cache, url, key, bp, ttl, revalidate)
     end
     c.verify && _verify_integrity(c, url, key, bp)
     return true
+end
+
+"""The local path a `file://` URL names, or `nothing` for every other scheme.
+
+Goes through the transport's own [`file_url_to_path`] so the file the cache
+rechecks is exactly the file the transport would re-read; two spellings of that
+mapping would be a bug generator. It is the CANONICAL url — the one the manifest
+records (spec §3) — so the entry is judged against the source it claims to be."""
+function _local_source_path(url::AbstractString)
+    startswith(url, "file://") || return nothing
+    try
+        return file_url_to_path(url)
+    catch
+        return nothing
+    end
+end
+
+"""
+    file_source_is_current(source, manifest) -> Bool
+
+Rung 0 (spec/cache-format.md §4.1): is the `file://` source behind a cached entry
+still the file that was ingested into it?
+
+The cache is keyed by the resolved URL, so a local file replaced IN PLACE keeps
+the same key and every later read is served the bytes of the file that used to be
+there. Nothing else catches it: a `file://` source has no ETag and no
+`Last-Modified`, and a present blob is immutable by default, so the entry
+outlives the file it was copied from. That is EarthSciML/EarthSciAST#293, where a
+snapshot corpus was replaced at the same paths and a test suite stayed green
+against a corpus that no longer existed — the manifest recorded 371 bytes while
+the file on disk was 363.
+
+Note what this is NOT: `verify=true` hashes the CACHED BLOB against the manifest,
+comparing the copy with the record of the copy, so it passes with flying colours
+while the file the copy was made from has been replaced. This compares the
+SOURCE with that record.
+
+The manifest already carries everything needed, so this is not a cache-format
+change:
+
+  * source missing, unreadable, or not a regular file ⇒ not current (the caller
+    re-ingests, and the transport then raises the real error);
+  * on-disk size != `manifest.bytes` ⇒ not current, WITHOUT hashing;
+  * `sha256(source)` != `manifest.sha256_content` ⇒ not current. Size alone would
+    not do: a float re-encode, a different scenario year, or any edit that
+    preserves the length is exactly what a size check waves through;
+  * otherwise current — serve the cached blob, re-ingest nothing.
+"""
+function file_source_is_current(source::AbstractString, m::Manifest)
+    st = try
+        stat(source)
+    catch
+        return false
+    end
+    (isfile(st) && st.size == m.bytes) || return false
+    got = try
+        bytes2hex(open(sha256, source))
+    catch
+        # Unreadable half-way through ⇒ re-ingest and let the transport speak.
+        return false
+    end
+    return lowercase(got) == lowercase(m.sha256_content)
 end
 
 function _verify_integrity(c::Cache, url, key, bp)

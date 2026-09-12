@@ -15,9 +15,17 @@ The fetch algorithm is ``spec/cache-format.md`` §6:
    have just filled it), download to ``tmp/<uuid>.part``, verify, atomically
    rename into ``blobs/``, then write the manifest.
 
+Step 1's "valid" has one rung the pure ladder cannot supply: a ``file://`` entry
+is rechecked against the file it was ingested from
+(:func:`~earthsciio.validate.file_source_is_current`, ``spec/cache-format.md``
+§4.1), so a local file replaced in place is re-ingested instead of served
+forever from its warm entry (EarthSciML/EarthSciAST#293).
+
 **Offline mode** (``spec/offline-mode.md``) short-circuits everything: no
 transport is ever constructed, the store is consulted directly, and a missing
-blob raises :class:`~earthsciio.errors.CacheMiss`.
+blob raises :class:`~earthsciio.errors.CacheMiss`. Rung 0 does not run there
+either — offline trades freshness for hermeticity by design
+(``spec/offline-mode.md`` §3), and there is no transport left to re-ingest with.
 
 **Mirror failover** behind the ESS ``open_with_fallback`` seam: pass
 ``mirrors=[...]`` and the canonical URL is tried first, then each mirror in
@@ -35,11 +43,11 @@ from typing import List, Optional, Sequence
 from . import validate
 from .auth import coerce_auth
 from .cachekey import cache_key, sha256_file
-from .config import resolve_offline
+from .config import resolve_offline, resolve_revalidate_file
 from .errors import CacheMiss, FetchError, IntegrityError, TransportError
 from .manifest import Manifest, utc_now_rfc3339
 from .registry import store_registry, transport_registry
-from .transport import NOT_MODIFIED, ext_from_url, scheme_of
+from .transport import NOT_MODIFIED, ext_from_url, file_url_to_path, scheme_of
 
 #: :attr:`CacheEntry.status` values.
 HIT = "hit"
@@ -88,7 +96,17 @@ class Cache:
         of resolvers, or a ``{realm: resolver}`` dict; ``None`` means no auth.
     verify:
         Re-verify ``sha256`` + byte-length on every read (off by default, on for
-        CI/conformance per ``spec/cache-format.md`` §4).
+        CI/conformance per ``spec/cache-format.md`` §4). This checks the **cached
+        blob** against its own manifest — cache-internal consistency. It is NOT
+        the ``file://`` source recheck; see ``revalidate_file``.
+    revalidate_file:
+        Recheck a ``file://`` entry against the file it was ingested from before
+        serving it (``spec/cache-format.md`` §4.1). ``None`` (default) consults
+        ``$EARTHSCI_REVALIDATE_FILE``, which leaves it **on** unless explicitly
+        falsey. Turning it off restores the behaviour of
+        EarthSciML/EarthSciAST#293 — a local file replaced in place is served
+        from the warm entry forever, silently and greenly — so do it only for a
+        corpus known to be immutable, and only to save the one extra read.
     """
 
     def __init__(
@@ -100,6 +118,7 @@ class Cache:
         offline: Optional[bool] = None,
         auth=None,
         verify: bool = False,
+        revalidate_file: Optional[bool] = None,
     ) -> None:
         if store is None:
             store = store_registry.create(store_name, root=root)
@@ -107,6 +126,7 @@ class Cache:
         self.offline = resolve_offline(offline)
         self.auth = coerce_auth(auth)
         self.verify = verify
+        self.revalidate_file = resolve_revalidate_file(revalidate_file)
 
     # ----------------------------------------------------------------- fetch
     def fetch(
@@ -134,13 +154,13 @@ class Cache:
             return self._read_offline(resolved_url, key)
 
         # 1. Hit without a lock (atomic rename makes this safe).
-        hit = self._try_hit(key, temporal, expected_checksum)
+        hit = self._try_hit(resolved_url, key, temporal, expected_checksum)
         if hit is not None:
             return hit
 
         # 2. Lock, re-check, download.
         with self.store.lock(key):
-            hit = self._try_hit(key, temporal, expected_checksum)
+            hit = self._try_hit(resolved_url, key, temporal, expected_checksum)
             if hit is not None:
                 return hit
             return self._download(
@@ -159,7 +179,9 @@ class Cache:
         return CacheEntry(key, blob, manifest, HIT)
 
     # ------------------------------------------------------------- hit check
-    def _try_hit(self, key, temporal, expected_checksum) -> Optional[CacheEntry]:
+    def _try_hit(
+        self, resolved_url, key, temporal, expected_checksum
+    ) -> Optional[CacheEntry]:
         blob = self.store.get_blob(key)
         if blob is None:
             return None
@@ -168,6 +190,21 @@ class Cache:
             return None  # blob without manifest ⇒ treat as miss, re-fetch
         if validate.decide(manifest, temporal, expected_checksum) != validate.HIT:
             return None  # revalidate / miss ⇒ fall through to the download path
+        # Rung 0 (spec/cache-format.md §4.1): the ladder above asks whether a
+        # REMOTE source may have changed. A file:// source is sitting right
+        # there, so ask it instead of guessing — the rungs above can only ever
+        # answer "immutable" for one (no ETag, no Last-Modified, no temporal),
+        # which is how a corpus replaced in place kept being served from a warm
+        # entry (EarthSciML/EarthSciAST#293).
+        if self.revalidate_file:
+            source = local_source_path(resolved_url)
+            if source is not None and not validate.file_source_is_current(
+                source, manifest
+            ):
+                # Re-ingest. A source that is GONE lands here too, and then fails
+                # in the transport — which is the point: absent must not read as
+                # a stale hit.
+                return None
         if self.verify:
             self._verify_blob(blob, manifest, key)
         return CacheEntry(key, blob, manifest, HIT)
@@ -309,6 +346,29 @@ class Cache:
                 f"sha256 mismatch for cached blob (key={key})",
                 key=key, expected=manifest.sha256_content, actual=digest,
             )
+
+
+def local_source_path(resolved_url: str) -> Optional[str]:
+    """The local path a ``file://`` URL names, or ``None`` for any other scheme.
+
+    It goes through the transport's own :func:`~earthsciio.transport.file_url_to_path`
+    (``${EARTHSCIDATADIR}`` expansion and all) so the file the cache rechecks is
+    exactly the file the transport would re-read; two spellings of that mapping
+    would be a bug generator. A URL this cannot map is ``None``: no recheck, and
+    the entry is served as before.
+
+    It is the CANONICAL url, never a mirror — the same URL the manifest records
+    (``spec/cache-format.md`` §3), so the entry is judged against the source it
+    claims to be. The usual ``nei2016`` shape is the other way round anyway: a
+    remote canonical with a ``file://${EARTHSCIDATADIR}`` mirror, which this
+    declines and leaves to the ladder.
+    """
+    try:
+        if scheme_of(resolved_url) != "file":
+            return None
+        return file_url_to_path(resolved_url)
+    except ValueError:
+        return None
 
 
 def _safe_unlink(path) -> None:

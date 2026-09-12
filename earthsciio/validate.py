@@ -4,6 +4,13 @@ Ports the Rust ``validate::decide``. Given a stored manifest plus the loader's
 :class:`Temporal` freshness policy, decide **hit / revalidate / miss** in this
 order (first applicable wins, ``spec/cache-format.md`` §4):
 
+0. **local source recheck** — a ``file://`` source is compared against the file
+   it was ingested from (:func:`file_source_is_current`). Rules 1-4 are all
+   about a source that can only be consulted over the network; a local file has
+   an exact truth sitting on disk. It is a separate function rather than a rung
+   inside :func:`decide` because it touches the filesystem and ``decide`` is
+   pure; :class:`~earthsciio.cache.Cache` applies it to the entries ``decide``
+   has already called a hit.
 1. **content hash** — if a loader-declared checksum exists, compare it to
    ``manifest.sha256_content``. Strongest. (No loader declares one today; this is
    the future ``source.checksums`` hook.)
@@ -31,10 +38,13 @@ takes an injectable ``now`` so TTL tests are deterministic.
 from __future__ import annotations
 
 import datetime as _dt
+import os
+import stat as _stat
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
 
+from .cachekey import sha256_file
 from .manifest import Manifest, parse_rfc3339
 
 #: The three possible verdicts (mirrors Rust ``CacheDecision``).
@@ -144,3 +154,53 @@ def decide(
         return REVALIDATE
     # 4. TTL from temporal (incomplete period, no validators)
     return HIT if is_fresh(manifest.fetched_at, temporal.ttl, now) else MISS
+
+
+def file_source_is_current(source: os.PathLike, manifest: Manifest) -> bool:
+    """Rung 0: is the ``file://`` source behind a cached entry still that file?
+
+    The cache is keyed by the resolved URL, so a local file replaced **in
+    place** keeps the same key and every later read is served the bytes of the
+    file that used to be there. Nothing in :func:`decide` catches it: a
+    ``file://`` source has no ETag and no ``Last-Modified``, and a source with
+    no ``temporal`` is *declared* immutable by rule 2, so ``decide`` answers
+    :data:`HIT` forever. That is `EarthSciML/EarthSciAST#293
+    <https://github.com/EarthSciML/EarthSciAST/issues/293>`_, where a snapshot
+    corpus was replaced at the same paths and a test suite stayed green against
+    a corpus that no longer existed — the manifest recorded 371 bytes while the
+    file on disk was 363.
+
+    Note what this is NOT. ``Cache(verify=True)`` hashes the **cached blob**
+    against the manifest: it compares the copy with the record of the copy, so
+    it passes with flying colours while the file the copy was made from has been
+    replaced. This compares the **source** with that record.
+
+    The manifest already carries everything needed, so this is not a
+    cache-format change:
+
+    * source missing, unreadable, or not a regular file → not current (the
+      caller re-ingests, and the transport then raises the real error instead of
+      the cache serving a ghost);
+    * on-disk length != ``manifest.bytes`` → not current, **without hashing**;
+    * ``sha256(source)`` != ``manifest.sha256_content`` → not current. Size alone
+      would not do: a float re-encode, a different scenario year, or any edit
+      that preserves the length is exactly what a size check waves through;
+    * otherwise current — serve the cached blob, re-ingest nothing.
+    """
+    try:
+        st = os.stat(source)
+    except OSError:
+        # Gone, or unreadable. Either way this entry must not be served: the
+        # report's sharpest case is a corpus DELETED outright while the suite
+        # kept passing.
+        return False
+    if not _stat.S_ISREG(st.st_mode):
+        return False
+    if st.st_size != manifest.bytes:
+        return False
+    try:
+        digest = sha256_file(source)
+    except OSError:
+        # Unreadable half-way through ⇒ re-ingest and let the transport speak.
+        return False
+    return digest.lower() == (manifest.sha256_content or "").lower()
