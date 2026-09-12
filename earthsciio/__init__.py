@@ -48,12 +48,19 @@ from .registry import (
 from .cachekey import cache_key, range_keyed_url, sha256_bytes, sha256_file
 from .config import (
     CACHE_FORMAT_VERSION,
+    REVALIDATE_FILE_ENV,
     default_cache_root,
     resolve_cache_root,
     resolve_offline,
+    resolve_revalidate_file,
 )
 from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
-from .validate import Temporal
+from .validate import (
+    Temporal,
+    SourceRevalidator,
+    file_source_is_current,
+    file_source_state,
+)
 from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
 from .cache import Cache, CacheEntry
 from .native import NativeDataset, NativeField
@@ -157,6 +164,11 @@ __all__ = [
     "resolve_cache_root",
     "default_cache_root",
     "resolve_offline",
+    "resolve_revalidate_file",
+    "REVALIDATE_FILE_ENV",
+    "file_source_is_current",
+    "file_source_state",
+    "SourceRevalidator",
     # auth
     "AuthRegistry",
     "AuthResolver",

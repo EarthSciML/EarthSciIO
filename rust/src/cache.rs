@@ -10,8 +10,19 @@
 //!    may have just filled it), download to a `tmp/<uuid>.part` staging file,
 //!    verify, **atomically rename** into `blobs/`, then write the manifest.
 //!
+//! Step 2's "valid" has one rung the pure ladder cannot supply: a `file://`
+//! entry is rechecked against the file it was ingested from
+//! ([`validate::SourceRevalidator`], `spec/cache-format.md` §4 rung 0), so a
+//! local file replaced in place is re-ingested instead of served forever from
+//! its warm entry (`EarthSciML/EarthSciAST#293`). The rung distinguishes a
+//! *replaced* source from a *missing* one from a source this host simply
+//! cannot read, and only the first two send the entry back for a re-ingest.
+//!
 //! Offline (`spec/offline-mode.md`): no transport is constructed; presence +
 //! stored `sha256_content` is the only check; a miss raises [`Error::CacheMiss`].
+//! Rung 0 does not run there either — offline trades freshness for hermeticity
+//! by design (`spec/offline-mode.md` §3), and there is no transport left to
+//! re-ingest with.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,7 +39,7 @@ use crate::transport::{
     CdsTransport, Conditional, FetchResult, FetchStatus, FileTransport, HttpTransport, S3Transport,
     Transport, TransportRegistry,
 };
-use crate::validate::{self, CacheDecision, Temporal};
+use crate::validate::{self, CacheDecision, SourceState, Temporal};
 
 /// A resolved cache entry: the blob path plus its manifest.
 #[derive(Debug, Clone)]
@@ -103,6 +114,10 @@ pub struct Cache {
     auth: AuthRegistry,
     offline: bool,
     verify_on_read: bool,
+    revalidate_file_sources: bool,
+    /// Rung 0's `(length, mtime)` memo, so a per-tick read loop hashes each
+    /// unchanged source once per process rather than once per call.
+    revalidator: validate::SourceRevalidator,
 }
 
 impl Cache {
@@ -199,6 +214,42 @@ impl Cache {
         };
         match validate::decide(&manifest, req.temporal.as_ref(), req.expected_checksum) {
             CacheDecision::Hit => {
+                // Rung 0 (`spec/cache-format.md` §4): the ladder above asks
+                // whether a REMOTE source may have changed. A `file://` source
+                // is sitting right there, so ask it instead of guessing — the
+                // rungs above can only ever answer "immutable" for one (no
+                // ETag, no Last-Modified, no `temporal`), which is how a corpus
+                // replaced in place kept being served from a warm entry
+                // (EarthSciML/EarthSciAST#293).
+                if self.revalidate_file_sources {
+                    if let Some(src) = local_source_path(req.resolved_url) {
+                        match self.revalidator.state(&src, &manifest) {
+                            // Provably the file we ingested. Serve it.
+                            SourceState::Current => {}
+                            // A different file at the same path. Re-ingest —
+                            // this is the whole point of the rung.
+                            SourceState::Replaced => return Ok(None),
+                            // Nothing at the path. Re-ingest so the transport
+                            // raises the real absence: absent must not read as
+                            // a stale hit. UNLESS mirrors were supplied — then
+                            // the blob may well have come from one of them (the
+                            // manifest records the canonical URL either way,
+                            // `commit_result`), and re-ingesting would mean a
+                            // fresh mirror download on every single read, for
+                            // ever, with no hit in between. Serving the warm
+                            // entry is the lesser of those.
+                            SourceState::Missing if req.mirrors.is_empty() => return Ok(None),
+                            SourceState::Missing => {}
+                            // We could not read the path at all — no
+                            // permission, an unmounted filesystem. That is not
+                            // evidence the bytes changed, so rung 0 abstains
+                            // and the ladder's verdict stands. Warming a cache
+                            // where the corpus is visible and reading it where
+                            // it is not must not be a hard failure.
+                            SourceState::Unknown => {}
+                        }
+                    }
+                }
                 if self.verify_on_read {
                     self.verify_integrity(key, &path, &manifest)?;
                 }
@@ -424,6 +475,29 @@ fn scheme_of(url: &str) -> Result<&str> {
     }
 }
 
+/// The local path a `file://` URL names, or `None` for every other scheme —
+/// the cache's handle on rung 0 of the validation ladder.
+///
+/// It goes through the transport's own `file_url_to_path` (`${EARTHSCIDATADIR}`
+/// expansion and all) so the file the cache rechecks is exactly the file the
+/// transport would re-read. A URL this cannot map is `None`: no recheck, and the
+/// entry is served as before.
+///
+/// It is the CANONICAL url, never a mirror — the same URL the manifest records
+/// (`spec/cache-format.md` §3), so the entry is judged against the source it
+/// claims to be. The usual `nei2016` shape has it the other way round anyway: a
+/// remote canonical with a `file://${EARTHSCIDATADIR}` mirror, which this
+/// declines and leaves to the ladder. When the canonical IS the `file://` URL
+/// and mirrors are configured, a missing canonical is not proof of anything
+/// about the blob (a mirror may have served it), so `try_hit` abstains there
+/// rather than re-download from the mirror on every read.
+fn local_source_path(url: &str) -> Option<PathBuf> {
+    if !scheme_of(url).is_ok_and(|s| s.eq_ignore_ascii_case("file")) {
+        return None;
+    }
+    crate::transport::file_url_to_path(url).ok()
+}
+
 /// Pick a debug-only extension from a URL (query/fragment stripped). Empty when
 /// there is no clean alphanumeric suffix — lookups never depend on it.
 fn ext_from_url(url: &str) -> String {
@@ -452,6 +526,7 @@ pub struct CacheBuilder {
     auth: AuthRegistry,
     offline: Option<bool>,
     verify_on_read: bool,
+    revalidate_file_sources: Option<bool>,
 }
 
 impl CacheBuilder {
@@ -468,6 +543,7 @@ impl CacheBuilder {
             auth: AuthRegistry::new(),
             offline: None,
             verify_on_read: false,
+            revalidate_file_sources: None,
         }
     }
 
@@ -485,8 +561,27 @@ impl CacheBuilder {
     }
 
     /// Re-verify `sha256_content` on read (off by default, on for CI/conformance).
+    ///
+    /// This checks the **cached blob** against its own manifest — cache-internal
+    /// consistency. It is NOT the `file://` source recheck; see
+    /// [`revalidate_file_sources`](CacheBuilder::revalidate_file_sources).
     pub fn verify_on_read(mut self, verify: bool) -> Self {
         self.verify_on_read = verify;
+        self
+    }
+
+    /// Recheck a `file://` entry against the file it was ingested from before
+    /// serving it (`spec/cache-format.md` §4 rung 0). **On by default**;
+    /// `EARTHSCI_REVALIDATE_FILE=0` is the environment spelling.
+    ///
+    /// Turning it off restores the behaviour of
+    /// `EarthSciML/EarthSciAST#293`: a local file replaced in place is served
+    /// from the warm entry forever, silently and greenly. Do it only for a
+    /// corpus known to be immutable, and only to save the one extra read — the
+    /// `(length, mtime)` memo on [`validate::SourceRevalidator`] already means
+    /// that read is paid once per file per process, not once per call.
+    pub fn revalidate_file_sources(mut self, revalidate: bool) -> Self {
+        self.revalidate_file_sources = Some(revalidate);
         self
     }
 
@@ -559,6 +654,10 @@ impl CacheBuilder {
             auth: self.auth,
             offline,
             verify_on_read: self.verify_on_read,
+            revalidate_file_sources: validate::revalidate_file_sources(
+                self.revalidate_file_sources,
+            ),
+            revalidator: validate::SourceRevalidator::new(),
         })
     }
 }
@@ -588,6 +687,25 @@ mod tests {
         assert_eq!(ext_from_url("https://x/y/data.NC4"), "nc4");
         assert_eq!(ext_from_url("https://x/y/no-extension"), "");
         assert_eq!(ext_from_url("https://x/.hidden"), ""); // empty stem ⇒ no ext
+    }
+
+    #[test]
+    fn only_file_urls_have_a_local_source() {
+        assert_eq!(
+            local_source_path("file:///corpus/x.csv"),
+            Some(PathBuf::from("/corpus/x.csv"))
+        );
+        // The transport's own mapping is the arbiter: a URL it cannot turn
+        // into a path is one it could never have ingested from either, so
+        // cache and transport agree by construction. Both are case-insensitive
+        // on the scheme, as Python's `urlsplit` mapping is.
+        assert_eq!(
+            local_source_path("FILE:///corpus/x.csv"),
+            Some(PathBuf::from("/corpus/x.csv"))
+        );
+        assert_eq!(local_source_path("https://x/y.nc"), None);
+        assert_eq!(local_source_path("s3://bucket/key"), None);
+        assert_eq!(local_source_path("no-scheme"), None);
     }
 
     #[test]

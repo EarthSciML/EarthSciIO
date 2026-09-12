@@ -55,10 +55,23 @@ impl Transport for FileTransport {
 /// Handles `file:///abs/path` (empty authority) and `file://host/abs/path`
 /// (authority dropped). The path is taken literally after expansion — no
 /// percent-decoding (the resolved URLs the cache produces are not encoded).
-fn file_url_to_path(url: &str) -> Result<PathBuf> {
+///
+/// Public because the cache needs the SAME path this transport would read in
+/// order to recheck a warm entry against its source
+/// (`validate::file_source_is_current`). Two spellings of that mapping would be
+/// a bug generator: the cache would revalidate against a different file than
+/// the one it re-ingests.
+pub fn file_url_to_path(url: &str) -> Result<PathBuf> {
     let expanded = expand_datadir(url);
+    // Case-insensitive on the scheme, matching Python's `urlsplit`-based
+    // mapping (which lowercases it) and this crate's own `scheme_of`. Without
+    // it `FILE://x` is a path to the transport but not to `scheme_of`, and the
+    // cache's rung 0 would decline to recheck a URL the transport would happily
+    // read.
     let rest = expanded
-        .strip_prefix("file://")
+        .get(..7)
+        .filter(|p| p.eq_ignore_ascii_case("file://"))
+        .map(|_| &expanded[7..])
         .ok_or_else(|| Error::BadUrl {
             url: url.to_string(),
             detail: "not a file:// URL".to_string(),

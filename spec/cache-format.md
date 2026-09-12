@@ -98,6 +98,12 @@ and owned here, consistent with the ESS schema's stated intent.
 A cache **hit** requires the blob to be present **and valid**. Validity is
 decided in this order (first applicable wins):
 
+0. **Local source recheck** — for a `file://` source, compare the file the URL
+   names against the manifest that was written when it was ingested, yielding
+   `current` / `replaced` / `missing` / `unknown`. See
+   [§4.1](#41-local-file-sources-are-rechecked-against-their-source); it is a
+   separate rung because it is the only one that can consult the source itself,
+   and the only one that can answer "I could not tell".
 1. **Content hash** — if a loader-declared checksum exists (none today; future
    `source.checksums` schema field), verify `sha256(blob)` against it. Strongest.
 2. **Declared immutability** — a static loader (no `temporal`) or a closed past
@@ -117,12 +123,135 @@ against an S3-backed store paid a round-trip to learn nothing. Measured on a
 read, and dominated the wall clock of runs whose data was already on disk.
 
 In **offline mode** (see [offline-mode.md](offline-mode.md)) none of the network
-steps run: presence + stored `sha256_content` is the only check.
+steps run: presence + stored `sha256_content` is the only check. Rung 0 does not
+run offline either — offline trades freshness for hermeticity by design
+([offline-mode.md §3](offline-mode.md#3-conditional-get--ttl-revalidation-is-suppressed)),
+and there is no transport left to re-ingest with.
 
 - **Integrity**: `sha256_content` is always computed and stored on fetch.
   Re-verification on read is cheap and **off by default, on for CI/conformance**.
+  Note what it is: it hashes the **cached blob** against its own manifest —
+  cache-internal consistency, the copy against the record of the copy. It cannot
+  see a replaced source, which is what §4.1 is for; the two are different
+  questions and both are worth asking.
 - **Invalidation**: bump `v1/` to invalidate everything; delete a single blob on
   hash mismatch; a `cache clear [--loader X] [--before T]` utility (core-track).
+  One entry is invalidated by hand by deleting **both** its `blobs/<key>[.ext]`
+  and its `meta/<key>.json`. Deleting only the manifest is NOT enough: a
+  manifest-less blob is a miss in Rust and Python but is served on presence
+  alone in Julia (§4.1), so the entry would survive in one track and not the
+  others. `key` is `sha256` of the resolved URL, so
+  `printf %s "<resolved url>" | sha256sum` names both files.
+
+---
+
+### 4.1 Local `file://` sources are rechecked against their source
+
+Rules 1-4 all ask whether a **remote** source may have changed, and answer with
+validators, a declaration, or a heuristic. A `file://` source needs none of
+that: the truth is a `stat` away.
+
+Before serving a warm `file://` entry an implementation **MUST** compare the
+named file against the manifest, unless the operator has explicitly turned the
+rung off (`EARTHSCI_REVALIDATE_FILE`, or the per-track argument below — both
+documented under *Cost*):
+
+| on disk | state | verdict |
+|---|---|---|
+| nothing there, or not a regular file | `missing` | **re-ingest** (the transport then reports the real absence) — but see *mirrors* below |
+| cannot be read at all (no permission, not mounted here, I/O error) | `unknown` | **abstain** — serve as the ladder above decided |
+| length != `bytes` | `replaced` | **re-ingest** |
+| length == `bytes` but `sha256(file)` != `sha256_content` | `replaced` | **re-ingest** |
+| length == `bytes` and hash matches | `current` | **hit** — serve the cached blob, re-ingest nothing |
+
+Four states, not a boolean. *Gone*, *changed* and *cannot tell from here* are
+different facts and the caller acts differently on each.
+
+**`unknown` abstains** because a path this host cannot read is not evidence that
+the bytes changed. Only a genuine "no such file" is a deletion; a permission
+error, a path component that is not a directory, or a filesystem that is not
+mounted on this node says nothing about the source. Treating those as stale
+turns an ordinary warm-the-cache-here, read-it-there setup into a hard fetch
+error, which is a worse failure than the one rung 0 exists to prevent — and
+unlike staleness it is loud, so it cannot even be traded for safety.
+
+**`missing` with mirrors configured also abstains.** The manifest records the
+canonical URL whichever candidate actually served the bytes (§3), so when the
+canonical is a `file://` URL that was never present on this host, a `missing`
+verdict is not about the blob at all — the blob came from a mirror. Re-ingesting
+there means a fresh mirror download on *every* read, for ever, with no hit in
+between. A canonical that IS present and HAS changed is still `replaced` and is
+still re-ingested, mirrors or no mirrors: configuring a mirror must not silently
+switch the rung off. (Julia's `fetch_blob` takes no mirrors, so the case cannot
+arise there.)
+
+The hash is required, not optional: a size-only check waves through every
+equal-length edit (a float re-encode, a corrected value, a different scenario
+year). Nothing new is stored — `bytes` and `sha256_content` are already in every
+manifest (§3), so this is **not** a format change and a cache written by an
+implementation that predates the rung revalidates correctly.
+
+An entry with **no manifest** has nothing to compare against, so rung 0 abstains
+and the implementation's existing manifest-less-entry behaviour stands (Rust and
+Python treat it as a miss; Julia serves on presence alone — which is why manual
+invalidation in §4 says to delete the blob too, not just the manifest). Forcing
+a re-ingest there would not be a freshness check at all — it would break §6,
+since the blob is committed before its manifest is written and a racing peer
+legitimately sees that state for an instant.
+
+**Why the rung exists.** The key is `sha256(resolved_url)` (§1), so a local file
+replaced **in place** keeps its key, and rules 1-4 can only ever call it a hit:
+a local file carries no ETag and no `Last-Modified`, and a source with no
+`temporal` is *declared* immutable by rule 2. The entry therefore outlives the
+file it was made from, silently. Reported in
+[EarthSciML/EarthSciAST#293](https://github.com/EarthSciML/EarthSciAST/issues/293):
+a 2.8 GB snapshot corpus was replaced at the same paths, every already-read URL
+kept returning the old corpus, and a test suite stayed green against a corpus
+that no longer existed — including after the data path was pointed at a
+directory that does not exist. The failure is directional: an *unresolvable*
+source is a hard error, a *stale* one was green.
+
+**Cost.** One read of the source — and a warm hit previously read **zero** bytes,
+so this is not free and must not be described as bounded by what the caller was
+going to read anyway. It is also not once per file: on the record-selective read
+paths a fetch happens per *tick* (Python's `Provider._file_for` skips the
+decoded-file buffer whenever a `select` is passed; the Julia provider keeps no
+such buffer at all), so a naive implementation re-hashes the whole corpus for
+every tick of a run. Measured, hot page cache: ~1.3 s per 512 MiB, against
+~0.2 ms for the same warm hit with the rung off.
+
+An implementation **SHOULD** therefore memoise the digest against the
+`(length, mtime)` the source had when it was computed, and reuse it while both
+are unchanged — the bargain `make`, `ninja` and `rsync` strike. All three tracks
+do, on the cache object, so the memo dies with the process: a fresh run always
+pays one real read per file and what is removed is the *repeat* read within a
+run. The trade is that a replacement preserving both length and mtime, in
+process, after the file was already read once, is missed until the cache object
+is dropped.
+
+`EARTHSCI_REVALIDATE_FILE=0` (`0`/`false`/`no`/`off`) turns the rung off
+entirely for a corpus known to be immutable; any other value, including an
+unparseable one, leaves it **on**.
+
+Every track honours `EARTHSCI_REVALIDATE_FILE` identically, and each also takes
+a programmatic override that wins over it:
+
+| track | programmatic opt-out |
+|---|---|
+| Rust | `Cache::builder().revalidate_file_sources(false)` |
+| Python | `Cache(..., revalidate_file=False)` |
+| Julia | `Cache(store; revalidate_file = false)` |
+
+**Rung 0 runs under the lock too.** §6 requires N racing fetchers of one URL to
+produce exactly **one** download, and a replaced source is a race like any other:
+every racer fails rung 0 at the same instant, and if the lock path then trusts
+"present, and we already decided to revalidate", all N re-ingest. The re-check
+after the lock is acquired is what collapses that back to one — measured on 4
+processes over a replaced 8 MiB source: 4 re-ingests without it, 1 with.
+
+> **Track status.** Implemented in **all three tracks** (Rust, Python, Julia),
+> which is the point: one track refusing a stale `file://` corpus while another
+> serves it would be worse than either behaviour on its own.
 
 ---
 

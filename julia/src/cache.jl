@@ -44,6 +44,20 @@ function env_offline()
     return v in ("1", "true", "yes")
 end
 
+"""True unless `EARTHSCI_REVALIDATE_FILE` is an explicit denial (`0`/`false`/
+`no`/`off`).
+
+The `file://` source recheck (spec/cache-format.md §4.1) is ON by default — that
+default IS the fix for EarthSciML/EarthSciAST#293 — so unlike `env_offline` this
+reads the knob the other way round: anything that is not an explicit denial,
+including an unparseable value, leaves the recheck on. A typo in a knob must not
+silently restore a silent-staleness bug."""
+function env_revalidate_file()
+    v = lowercase(strip(get(ENV, "EARTHSCI_REVALIDATE_FILE", "")))
+    isempty(v) && return true
+    return !(v in ("0", "false", "no", "off"))
+end
+
 # --- cache key (spec/cache-format.md §1) ------------------------------------
 
 """
@@ -89,27 +103,222 @@ function _age_seconds(fetched_at::AbstractString)
     end
 end
 
+"""The local path a `file://` URL names, or `nothing` for every other scheme.
+
+Goes through the transport's own [`file_url_to_path`] so the file the cache
+rechecks is exactly the file the transport would re-read; two spellings of that
+mapping would be a bug generator. It is the CANONICAL url — the one the manifest
+records (spec §3) — so the entry is judged against the source it claims to be."""
+function _local_source_path(url::AbstractString)
+    startswith(url, "file://") || return nothing
+    try
+        return file_url_to_path(url)
+    catch
+        return nothing
+    end
+end
+
+# --- rung 0 (spec/cache-format.md §4.1) --------------------------------------
+
+# What rung 0 learned about the `file://` source behind a cached entry. A Bool
+# cannot carry this: "the corpus was deleted", "the corpus was replaced" and
+# "this host cannot read the corpus" are three different facts, and only the
+# first two are grounds to re-ingest.
+const SOURCE_CURRENT  = :current    # byte-for-byte the file the manifest records
+const SOURCE_REPLACED = :replaced   # present, and a different file
+const SOURCE_MISSING  = :missing    # nothing there, or not a regular file
+const SOURCE_UNKNOWN  = :unknown    # could not be read at all; nothing learned
+
+"""`stat` the source and classify what came back.
+
+The split that matters is "no such file" (the corpus is gone — the report's
+sharpest case, and it must stay a loud error) against every other failure (no
+permission, a path component that is not a directory, an I/O error — this host
+cannot see the corpus, which is not evidence that it changed). Warming a cache
+where `/corpus` is mounted and reading it where it is not must not be a hard
+failure. Returns `(stat, nothing)` or `(nothing, verdict)`."""
+function _stat_source(source::AbstractString)
+    st = try
+        stat(source)
+    catch e
+        # `stat` throws only on a path it cannot walk at all (ENOTDIR, EACCES on
+        # a parent); a plain absence comes back as a zero `StatStruct`.
+        return nothing, (e isa Base.IOError && e.code == Base.UV_ENOENT) ?
+                        SOURCE_MISSING : SOURCE_UNKNOWN
+    end
+    if !ispath(st)
+        # Julia's `stat` reports "not there" for a genuine absence AND for a
+        # path it could not walk (ENOTDIR), swallowing the errno that separates
+        # them — so ask the parent, which is what the errno would have told us.
+        # A parent that is not a directory means the path is broken (this host
+        # may have the wrong mount): nothing was learned. A parent that is a
+        # directory, or is itself absent, means the file really is gone — the
+        # report's "pointed at a data path that does not exist" — and that must
+        # stay a loud error.
+        parent = dirname(source)
+        broken = try
+            !isempty(parent) && ispath(parent) && !isdir(parent)
+        catch
+            false
+        end
+        return nothing, broken ? SOURCE_UNKNOWN : SOURCE_MISSING
+    end
+    # A directory standing where the corpus used to be is the report's "pointed
+    # at a path that is not there any more" shape.
+    isfile(st) || return nothing, SOURCE_MISSING
+    return st, nothing
+end
+
+"""Rung 0's `(size, mtime)` memo.
+
+Hashing the source on every `fetch_blob` is what rung 0 costs, and this track
+calls `fetch_blob` **per tick**: `Provider` keeps no decoded-file buffer (see
+`_file_for`), so a 2.8 GB corpus would be re-hashed for every tick of a run.
+
+A digest is therefore remembered against the `(size, mtime)` the source had when
+it was computed, and reused while both are unchanged — the same bargain `make`,
+`ninja` and `rsync` strike. The memo lives on the [`Cache`] and dies with it, so
+a fresh process always pays one real read per file; what it removes is the
+*repeat* read within a run.
+
+What it can miss: a replacement preserving both the size and the mtime, in
+process, after the file was already read once. The window is one `Cache`
+lifetime."""
+mutable struct SourceRevalidator
+    seen::Dict{String,Tuple{Int,Float64,String}}   # path => (size, mtime, sha)
+    lock::ReentrantLock
+    full_reads::Int
+end
+SourceRevalidator() = SourceRevalidator(Dict{String,Tuple{Int,Float64,String}}(),
+                                        ReentrantLock(), 0)
+
+# How many fingerprints one revalidator remembers before dropping the lot. A
+# read loop touches a handful of files; this only stops an unbounded walk from
+# growing the map without limit.
+const SOURCE_MEMO_CAP = 512
+
+"""
+    source_state(rev, source, manifest) -> Symbol
+
+Rung 0: the state of `source` relative to `manifest`, reusing a remembered
+digest when the source's `(size, mtime)` is unchanged."""
+function source_state(rev::SourceRevalidator, source::AbstractString, m::Manifest)
+    st, verdict = _stat_source(source)
+    verdict === nothing || return verdict
+    # A different size is a different file, and no read is needed to say so.
+    # This is the cheap half of the check and every track keeps it.
+    st.size == m.bytes || return SOURCE_REPLACED
+    fingerprint = (Int(st.size), Float64(st.mtime))
+    remembered = lock(rev.lock) do
+        get(rev.seen, String(source), nothing)
+    end
+    if remembered !== nothing && remembered[1] == fingerprint[1] &&
+       remembered[2] == fingerprint[2]
+        return _source_verdict(remembered[3], m)
+    end
+    got = try
+        bytes2hex(open(sha256, source))
+    catch
+        # It survived `stat` but not `open`: still "cannot tell".
+        return SOURCE_UNKNOWN
+    end
+    lock(rev.lock) do
+        rev.full_reads += 1
+        # Crude but sufficient: the memo is an optimisation, so dropping all of
+        # it costs one re-read per live file rather than needing an LRU.
+        length(rev.seen) >= SOURCE_MEMO_CAP && empty!(rev.seen)
+        rev.seen[String(source)] = (fingerprint[1], fingerprint[2], got)
+    end
+    return _source_verdict(got, m)
+end
+
+_source_verdict(sha, m::Manifest) =
+    lowercase(sha) == lowercase(m.sha256_content) ? SOURCE_CURRENT : SOURCE_REPLACED
+
+"""
+    file_source_state(source, manifest) -> Symbol
+
+Rung 0 without a memo (spec/cache-format.md §4.1): is the `file://` source behind
+a cached entry still the file that was ingested into it?
+
+The cache is keyed by the resolved URL, so a local file replaced IN PLACE keeps
+the same key and every later read is served the bytes of the file that used to be
+there. Nothing else catches it: a `file://` source has no ETag and no
+`Last-Modified`, and a present blob is immutable by default, so the entry
+outlives the file it was copied from. That is EarthSciML/EarthSciAST#293, where a
+snapshot corpus was replaced at the same paths and a test suite stayed green
+against a corpus that no longer existed — the manifest recorded 371 bytes while
+the file on disk was 363.
+
+Note what this is NOT: `verify=true` hashes the CACHED BLOB against the manifest,
+comparing the copy with the record of the copy, so it passes with flying colours
+while the file the copy was made from has been replaced. This compares the
+SOURCE with that record.
+
+The manifest already carries everything needed, so this is not a cache-format
+change:
+
+  * nothing at the path, or not a regular file ⇒ [`SOURCE_MISSING`];
+  * the path cannot be read at all ⇒ [`SOURCE_UNKNOWN`], and rung 0 abstains
+    rather than claim a change it did not observe;
+  * on-disk size != `manifest.bytes` ⇒ [`SOURCE_REPLACED`], WITHOUT hashing;
+  * `sha256(source)` != `manifest.sha256_content` ⇒ [`SOURCE_REPLACED`]. Size
+    alone would not do: a float re-encode, a different scenario year, or any edit
+    that preserves the size is exactly what a size check waves through;
+  * otherwise [`SOURCE_CURRENT`] — serve the cached blob, re-ingest nothing.
+
+A [`Cache`] calls [`source_state`] instead, which is this with a `(size, mtime)`
+memo in front of the read."""
+file_source_state(source::AbstractString, m::Manifest) =
+    source_state(SourceRevalidator(), source, m)
+
+"""
+    file_source_is_current(source, manifest) -> Bool
+
+Rung 0 as a yes/no: is the source PROVABLY the file that was ingested? Only
+[`SOURCE_CURRENT`] is `true`. The cache does not use this — the difference
+between [`SOURCE_MISSING`], [`SOURCE_REPLACED`] and [`SOURCE_UNKNOWN`] is exactly
+what it acts on — but it is the honest predicate for a caller that just wants the
+question answered."""
+file_source_is_current(source::AbstractString, m::Manifest) =
+    file_source_state(source, m) === SOURCE_CURRENT
+
 # --- Cache ------------------------------------------------------------------
 
 """
-    Cache(store::Store; offline=nothing, auth=nothing, verify=false)
-    Cache(; store="local", root=datadir(), offline=nothing, auth=nothing, verify=false)
+    Cache(store::Store; offline=nothing, auth=nothing, verify=false, revalidate_file=nothing)
+    Cache(; store="local", root=datadir(), offline=nothing, auth=nothing, verify=false,
+          revalidate_file=nothing)
 
 The content-addressed cache. `offline=nothing` reads `EARTHSCI_OFFLINE` from the
 environment; an explicit `offline` argument wins. `auth` is a resolver or a
 realm→resolver map. `verify=true` re-checks `sha256_content` on every read (off
-by default, on for CI/conformance)."""
+by default, on for CI/conformance) — that is the CACHED BLOB against its own
+manifest, cache-internal consistency, NOT the `file://` source recheck.
+
+`revalidate_file=nothing` reads `EARTHSCI_REVALIDATE_FILE` and leaves the
+`file://` source recheck ON unless the knob is an explicit denial (spec §4.1).
+Turning it off restores the behaviour of EarthSciML/EarthSciAST#293: a local file
+replaced in place is served from the warm entry forever, silently and greenly. Do
+it only for a corpus known to be immutable, and only to save the one extra
+read."""
 struct Cache
     store::Store
     offline::Bool
     auth::Any
     verify::Bool
+    revalidate_file::Bool
+    # Rung 0's (size, mtime) memo, so a per-tick read loop reads each unchanged
+    # source once per Cache rather than once per fetch_blob.
+    revalidator::SourceRevalidator
 end
 
 function Cache(store::Store; offline::Union{Bool,Nothing} = nothing,
-              auth = nothing, verify::Bool = false)
+              auth = nothing, verify::Bool = false,
+              revalidate_file::Union{Bool,Nothing} = nothing)
     off = offline === nothing ? env_offline() : offline
-    return Cache(store, off, auth, verify)
+    rev = revalidate_file === nothing ? env_revalidate_file() : revalidate_file
+    return Cache(store, off, auth, verify, rev, SourceRevalidator())
 end
 
 function Cache(; store::AbstractString = "local", root::AbstractString = datadir(),
@@ -172,25 +381,57 @@ function fetch_blob(c::Cache, resolved_url::AbstractString;
     # short-circuit. If it is absent, we are filling a miss (and a blob that
     # appears under the lock means a peer filled it: reuse it).
     return _locked_fetch(c, resolved_url, key, source_loader, auth_realm, present,
-                         store_read)
+                         store_read, ttl, revalidate)
 end
 
 # Validity for the lock-free fast path. Offline: presence (+ optional integrity).
 # Online: present blobs are immutable by default (closed past period / static
 # loader); a finite TTL or `revalidate` sends us to the lock path to conditional-
 # GET. A corrupt present blob raises IntegrityError (it is not a silent miss).
+#
+# Rung 0 (spec/cache-format.md §4.1) is the one exception to "immutable by
+# default": a `file://` source is sitting right there, so ask it instead of
+# guessing. "Immutable by default" is exactly how a corpus replaced in place kept
+# being served from a warm entry (EarthSciML/EarthSciAST#293). Offline keeps the
+# old behaviour on purpose — it trades freshness for hermeticity by design
+# (spec/offline-mode.md §3) and has no transport left to re-ingest with.
 function _valid_fast(c::Cache, url, key, bp, ttl, revalidate)
     if c.offline
         c.verify && _verify_integrity(c, url, key, bp)
         return true
     end
     revalidate && return false
-    if ttl !== nothing
-        meta = get_meta(c.store, key)
-        if meta !== nothing
-            age = _age_seconds(meta.fetched_at)
-            age !== nothing && age > ttl && return false
+    # One read of the manifest serves both rungs below.
+    #
+    # A manifest-less blob ABSTAINS from both rather than re-ingesting: there is
+    # nothing to judge the source against, and that state is the commit race
+    # (put_blob! lands before put_meta!, so a peer legitimately sees a blob with
+    # no manifest for an instant). Forcing a download there would break the
+    # "N racing fetchers ⇒ exactly ONE download" contract of spec §6 — measured:
+    # 3 of 4 processes re-downloaded. Rust and Python treat that state as a miss
+    # instead, which is their own pre-existing behaviour and equally untouched;
+    # it is why spec §4 says to delete the BLOB as well as the manifest when
+    # invalidating one entry by hand.
+    meta = (c.revalidate_file || ttl !== nothing) ? get_meta(c.store, key) : nothing
+    if c.revalidate_file && meta !== nothing
+        src = _local_source_path(url)
+        if src !== nothing
+            st = source_state(c.revalidator, src, meta)
+            # REPLACED: a different file at the same path — re-ingest, which is
+            # the whole point of the rung. MISSING: nothing there — re-ingest so
+            # the transport raises the real absence; absent must not read as a
+            # stale hit. (This track's `fetch_blob` takes no `mirrors`, so a
+            # missing source is always this entry's own source. Rust and Python
+            # abstain on MISSING when mirrors were supplied, because there the
+            # blob may have come from one.) UNKNOWN: the path could not be read
+            # at all — no permission, an unmounted filesystem — which is not
+            # evidence the bytes changed, so rung 0 abstains.
+            (st === SOURCE_REPLACED || st === SOURCE_MISSING) && return false
         end
+    end
+    if ttl !== nothing && meta !== nothing
+        age = _age_seconds(meta.fetched_at)
+        age !== nothing && age > ttl && return false
     end
     c.verify && _verify_integrity(c, url, key, bp)
     return true
@@ -206,14 +447,30 @@ function _verify_integrity(c::Cache, url, key, bp)
 end
 
 function _locked_fetch(c::Cache, url, key, source_loader, auth_realm, want_revalidate,
-                       store_read::Bool = false)
+                       store_read::Bool = false, ttl = nothing,
+                       revalidate::Bool = false)
     return lock_key(c.store, key) do
         # Re-check under the lock. When filling a miss, a blob that appeared
-        # means a peer process just filled it — reuse it, take no download. When
-        # revalidating, presence is expected and we proceed to the conditional GET.
+        # means a peer process just filled it — reuse it, take no download.
         bp = get_blob(c.store, key)
         if bp !== nothing && !want_revalidate
             c.verify && _verify_integrity(c, url, key, bp)
+            return CacheEntry(key, bp, get_meta(c.store, key), :hit)
+        end
+        # When revalidating, presence alone is NOT enough (that is what we are
+        # revalidating), but a peer may have refreshed the entry while we queued
+        # for the lock — so ask the fast path again rather than assuming. This is
+        # what makes N racers over a replaced `file://` source produce exactly
+        # ONE re-ingest instead of N (spec §6): without it, all N fail rung 0
+        # before any of them takes the lock and all N then re-copy. Measured on
+        # 4 processes: 4 downloads before, 1 after. Rust and Python get this for
+        # free by re-running their whole `try_hit` under the lock.
+        #
+        # A forced `revalidate` still falls through (the fast path refuses it
+        # outright), and a TTL that is genuinely expired still falls through to
+        # the conditional GET. `_valid_fast` verifies integrity itself when it
+        # says yes, so there is no second verify here.
+        if bp !== nothing && _valid_fast(c, url, key, bp, ttl, revalidate)
             return CacheEntry(key, bp, get_meta(c.store, key), :hit)
         end
 
