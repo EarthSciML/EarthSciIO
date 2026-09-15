@@ -499,6 +499,8 @@ def test_an_unchanged_source_is_read_once_not_once_per_call(tmp_path):
     src = tmp_path / "x.nc"
     body = b"a" * 4096
     src.write_bytes(body)
+    # Safely in the past: a just-written file is "racy" and is never memoised.
+    _set_mtime(src, _whole_second_now() - 60)
     m = _manifest_for(body)
 
     rev = SourceRevalidator()
@@ -527,6 +529,63 @@ def test_the_memo_is_dropped_when_the_source_changes(tmp_path):
     src.write_bytes(b"year,value\n2016,9.0\n")
     assert rev.state(src, m) == REPLACED
     assert rev.full_reads == 2
+
+
+def _whole_second_now() -> int:
+    import time
+
+    return int(time.time())
+
+
+def _set_mtime(path, seconds: int) -> None:
+    ns = seconds * 1_000_000_000
+    os.utime(path, ns=(ns, ns))
+
+
+def test_a_same_size_replacement_within_one_timestamp_tick_is_caught(tmp_path):
+    """A filesystem with whole-second mtimes (Lustre, ext3, HFS+; FAT keeps two
+    seconds) gives a same-size replacement in the same second the SAME
+    ``(size, mtime)``. The memo must not vouch for a digest taken that close to
+    the mtime. Simulated by pinning both mtimes to one whole second, so it does
+    not depend on the filesystem the test runs on."""
+    from earthsciio.validate import CURRENT, REPLACED, SourceRevalidator
+
+    src = tmp_path / "x.csv"
+    body = b"year,value\n2016,1.0\n"
+    tick = _whole_second_now()
+    src.write_bytes(body)
+    _set_mtime(src, tick)
+    m = _manifest_for(body)
+
+    rev = SourceRevalidator()
+    assert rev.state(src, m) == CURRENT
+
+    src.write_bytes(b"year,value\n2016,9.0\n")
+    _set_mtime(src, tick)
+    assert rev.state(src, m) == REPLACED
+
+
+def test_a_recent_source_is_rehashed_until_its_mtime_is_safely_past(tmp_path):
+    """The racy rule: a digest taken within the margin of the mtime is re-taken on
+    the next check, and a check that sees the mtime safely in the past is
+    memoised and trusted again."""
+    from earthsciio.validate import CURRENT, SourceRevalidator
+
+    src = tmp_path / "x.nc"
+    body = b"a" * 4096
+    src.write_bytes(body)
+    _set_mtime(src, _whole_second_now())
+    m = _manifest_for(body)
+
+    rev = SourceRevalidator()
+    for _ in range(3):
+        assert rev.state(src, m) == CURRENT
+    assert rev.full_reads == 3, "a racy digest is never reused"
+
+    _set_mtime(src, _whole_second_now() - 60)
+    for _ in range(3):
+        assert rev.state(src, m) == CURRENT
+    assert rev.full_reads == 4, "one re-hash, then the memo is trusted again"
 
 
 def test_the_memo_does_not_keep_a_stale_entry_alive_across_a_re_ingest(

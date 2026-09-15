@@ -396,6 +396,18 @@ end
 
 # --- the fingerprint memo ----------------------------------------------------
 
+_whole_second_now() = floor(time())
+
+# Pin a file's mtime without touching its bytes (no utime in the public API).
+function _set_mtime(path, seconds)
+    fh = Base.Filesystem.open(path, Base.Filesystem.JL_O_WRONLY)
+    try
+        Base.Filesystem.futime(fh, Float64(seconds), Float64(seconds))
+    finally
+        close(fh)
+    end
+end
+
 @testset "an unchanged source is read once, not once per call" begin
     # `fetch_blob` is called per TICK on this track (Provider keeps no
     # decoded-file buffer), so hashing on every call made rung 0 cost the whole
@@ -405,6 +417,8 @@ end
     src = joinpath(dir, "x.nc")
     body = rand(UInt8, 4096)
     write(src, body)
+    # Safely in the past: a just-written file is "racy" and is never memoised.
+    _set_mtime(src, _whole_second_now() - 60)
     m = Manifest("file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
                  length(body), "2026-01-01T00:00:00Z", nothing, nothing)
 
@@ -431,4 +445,51 @@ end
     write(src, b"year,value\n2016,9.0\n")
     @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_REPLACED
     @test rev.full_reads == 2
+end
+
+@testset "a same-size replacement within one timestamp tick is caught" begin
+    # A filesystem with whole-second mtimes (Lustre, ext3, HFS+; FAT keeps two
+    # seconds) gives a same-size replacement in the same second the SAME
+    # (size, mtime). The memo must not vouch for a digest taken that close to the
+    # mtime. Simulated by pinning both mtimes to one whole second, so it does not
+    # depend on the filesystem the test runs on.
+    dir = mktempdir()
+    src = joinpath(dir, "x.csv")
+    body = b"year,value\n2016,1.0\n"
+    tick = _whole_second_now()
+    write(src, body)
+    _set_mtime(src, tick)
+    m = Manifest("file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
+                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+
+    rev = EarthSciIO.SourceRevalidator()
+    @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
+    write(src, b"year,value\n2016,9.0\n")
+    _set_mtime(src, tick)
+    @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_REPLACED
+end
+
+@testset "a recent source is re-hashed until its mtime is safely past" begin
+    # The racy rule: a digest taken within the margin of the mtime is re-taken on
+    # the next check, and a check that sees the mtime safely in the past is
+    # memoised and trusted again.
+    dir = mktempdir()
+    src = joinpath(dir, "x.nc")
+    body = rand(UInt8, 4096)
+    write(src, body)
+    _set_mtime(src, _whole_second_now())
+    m = Manifest("file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
+                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+
+    rev = EarthSciIO.SourceRevalidator()
+    for _ in 1:3
+        @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
+    end
+    @test rev.full_reads == 3     # a racy digest is never reused
+
+    _set_mtime(src, _whole_second_now() - 60)
+    for _ in 1:3
+        @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
+    end
+    @test rev.full_reads == 4     # one re-hash, then the memo is trusted again
 end

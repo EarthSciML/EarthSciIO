@@ -44,6 +44,7 @@ import datetime as _dt
 import os
 import stat as _stat
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
@@ -210,10 +211,15 @@ class SourceRevalidator:
     pays one real read per file; what it removes is the *repeat* read within a
     run.
 
-    What it can miss: a replacement preserving both the length and the
-    nanosecond mtime, in-process, after the file was already read once
-    (``cp --preserve=timestamps`` over a same-length file can do it). The window
-    is one process lifetime.
+    A digest taken while the source's mtime was within :attr:`RACY_MARGIN_NS`
+    of the moment of hashing is never reused (git's "racy timestamp" rule): the
+    next check hashes again, and only a check that sees the mtime safely in the
+    past is trusted on later reads.
+
+    What it can still miss: a replacement preserving both the length and the
+    mtime, where that mtime is already more than the margin old, in-process,
+    after the file was already read once (``cp --preserve=timestamps`` of an old
+    file over a same-length one can do it). The window is one process lifetime.
 
     Instances are safe to share between threads.
     """
@@ -222,6 +228,14 @@ class SourceRevalidator:
     #: A read loop touches a handful of files; this only stops an unbounded walk
     #: from growing the map without limit.
     MEMO_CAP = 512
+
+    #: Git's racy-timestamp rule. A filesystem records mtime only to its
+    #: granularity: 1 s on Lustre, ext3, HFS+ and many NFS servers, 2 s on FAT.
+    #: A same-size write in the same tick as an earlier hash keeps the same
+    #: ``(size, mtime)``, so a digest taken within one tick of the mtime cannot
+    #: vouch for later bytes. Any later write sharing a 2 s FAT bucket lands
+    #: before ``mtime + 2 s``, so 2 s with an inclusive comparison covers it.
+    RACY_MARGIN_NS = 2_000_000_000
 
     def __init__(self) -> None:
         self._seen: dict = {}
@@ -243,8 +257,13 @@ class SourceRevalidator:
         fingerprint = (st.st_size, st.st_mtime_ns)
         with self._lock:
             seen = self._seen.get(key)
-        if seen is not None and seen[0] == fingerprint:
+        if (
+            seen is not None
+            and seen[0] == fingerprint
+            and st.st_mtime_ns < seen[2] - self.RACY_MARGIN_NS
+        ):
             return _verdict(seen[1], manifest)
+        hashed_at = time.time_ns()
         try:
             digest = sha256_file(source)
         except FileNotFoundError:
@@ -258,7 +277,7 @@ class SourceRevalidator:
             # of it costs one re-read per live file rather than needing an LRU.
             if len(self._seen) >= self.MEMO_CAP:
                 self._seen.clear()
-            self._seen[key] = (fingerprint, digest)
+            self._seen[key] = (fingerprint, digest, hashed_at)
         return _verdict(digest, manifest)
 
 

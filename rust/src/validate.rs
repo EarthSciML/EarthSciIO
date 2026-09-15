@@ -227,12 +227,30 @@ struct Fingerprint {
     len: u64,
     mtime: std::time::SystemTime,
     sha256: String,
+    /// Wall clock taken just before the digest was computed.
+    hashed_at: std::time::SystemTime,
 }
 
 /// How many source fingerprints one revalidator remembers before dropping the
 /// lot. A read loop touches a handful of files; this only has to stop an
 /// unbounded walk from growing the map without limit.
 const MEMO_CAP: usize = 512;
+
+/// Git's racy-timestamp rule. A filesystem records mtime only to its
+/// granularity: 1 s on Lustre, ext3, HFS+ and many NFS servers, 2 s on FAT. A
+/// same-length write in the same tick as an earlier hash keeps the same
+/// `(length, mtime)`, so a digest taken within one tick of the mtime cannot
+/// vouch for later bytes. Any later write sharing a 2 s FAT bucket lands before
+/// `mtime + 2 s`, so 2 s with an inclusive comparison covers it.
+const RACY_MARGIN: Duration = Duration::from_secs(2);
+
+/// Whether a digest taken at `hashed_at` is too close to `mtime` to trust.
+fn is_racy(mtime: std::time::SystemTime, hashed_at: std::time::SystemTime) -> bool {
+    match hashed_at.checked_sub(RACY_MARGIN) {
+        Some(safe_before) => mtime >= safe_before,
+        None => true,
+    }
+}
 
 /// Rung 0 plus the fingerprint memo that makes it affordable to run on every
 /// read (`spec/cache-format.md` §4.1).
@@ -251,11 +269,17 @@ const MEMO_CAP: usize = 512;
 ///
 /// [`Cache`]: crate::cache::Cache
 ///
-/// **What it can miss:** a replacement that preserves both the length and the
-/// mtime to nanosecond precision, in-process, after the file was already read
-/// once. `cp --preserve=timestamps` over a same-length file can do it. The
-/// window is one process lifetime, and `EARTHSCI_REVALIDATE_FILE` is unrelated
-/// to it — a caller that cannot accept the window wants a fresh `Cache`.
+/// A digest taken while the source's mtime was within [`RACY_MARGIN`] of the
+/// moment of hashing is never reused (git's "racy timestamp" rule): the next
+/// check hashes again, and only a check that sees the mtime safely in the past
+/// is trusted on later reads.
+///
+/// **What it can still miss:** a replacement that preserves both the length and
+/// the mtime, where that mtime is already more than the margin old, in-process,
+/// after the file was already read once. `cp --preserve=timestamps` of an old
+/// file over a same-length one can do it. The window is one process lifetime,
+/// and `EARTHSCI_REVALIDATE_FILE` is unrelated to it — a caller that cannot
+/// accept the window wants a fresh `Cache`.
 #[derive(Debug)]
 pub struct SourceRevalidator {
     seen: Mutex<HashMap<PathBuf, Fingerprint>>,
@@ -298,6 +322,7 @@ impl SourceRevalidator {
         if let Some(sha) = self.remembered(source, meta.len(), mtime) {
             return verdict(&sha, manifest);
         }
+        let hashed_at = std::time::SystemTime::now();
         let sha = match crate::key::sha256_file(source) {
             Ok(sha) => sha,
             // It survived `stat` but not `open`. Absence is still absence;
@@ -306,11 +331,12 @@ impl SourceRevalidator {
             Err(_) => return SourceState::Unknown,
         };
         self.full_reads.fetch_add(1, Ordering::Relaxed);
-        self.remember(source, meta.len(), mtime, &sha);
+        self.remember(source, meta.len(), mtime, &sha, hashed_at);
         verdict(&sha, manifest)
     }
 
-    /// The digest remembered for this exact `(len, mtime)`, if any. A source
+    /// The digest remembered for this exact `(len, mtime)`, if any, and only if
+    /// it was taken safely after that mtime (see [`RACY_MARGIN`]). A source
     /// whose mtime the filesystem will not report is never remembered — there
     /// would be no way to notice it had changed.
     fn remembered(
@@ -322,10 +348,18 @@ impl SourceRevalidator {
         let mtime = mtime?;
         let seen = self.seen.lock().ok()?;
         let fp = seen.get(source)?;
-        (fp.len == len && fp.mtime == mtime).then(|| fp.sha256.clone())
+        (fp.len == len && fp.mtime == mtime && !is_racy(fp.mtime, fp.hashed_at))
+            .then(|| fp.sha256.clone())
     }
 
-    fn remember(&self, source: &Path, len: u64, mtime: Option<std::time::SystemTime>, sha: &str) {
+    fn remember(
+        &self,
+        source: &Path,
+        len: u64,
+        mtime: Option<std::time::SystemTime>,
+        sha: &str,
+        hashed_at: std::time::SystemTime,
+    ) {
         let Some(mtime) = mtime else { return };
         let Ok(mut seen) = self.seen.lock() else { return };
         // Crude but sufficient: the memo is an optimisation, so dropping all of
@@ -339,6 +373,7 @@ impl SourceRevalidator {
                 len,
                 mtime,
                 sha256: sha.to_string(),
+                hashed_at,
             },
         );
     }

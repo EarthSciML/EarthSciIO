@@ -556,6 +556,8 @@ fn an_unchanged_source_is_hashed_once_not_once_per_read() {
     let src = tmp.path().join("x.nc");
     let body = vec![b'a'; 4096];
     std::fs::write(&src, &body).unwrap();
+    // Safely in the past: a just-written file is "racy" and is never memoised.
+    set_mtime(&src, whole_second_now() - 60);
     let m = manifest_for(&src, &body);
 
     let rev = SourceRevalidator::new();
@@ -586,4 +588,73 @@ fn the_memo_is_dropped_when_the_source_changes() {
     std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap();
     assert_eq!(rev.state(&src, &m), SourceState::Replaced);
     assert_eq!(rev.full_reads(), 2);
+}
+
+fn whole_second_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn set_mtime(path: &Path, secs: u64) {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+/// A filesystem with whole-second mtimes (Lustre, ext3, HFS+; FAT keeps two
+/// seconds) gives a same-size replacement in the same second the SAME
+/// `(length, mtime)`. The memo must not vouch for a digest taken that close to
+/// the mtime. Simulated by pinning both mtimes to one whole second, so it does
+/// not depend on the filesystem the test runs on.
+#[test]
+fn a_same_size_replacement_within_one_timestamp_tick_is_caught() {
+    use earthsciio::SourceRevalidator;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("x.csv");
+    let body = b"year,value\n2016,1.0\n".to_vec();
+    let tick = whole_second_now();
+    std::fs::write(&src, &body).unwrap();
+    set_mtime(&src, tick);
+    let m = manifest_for(&src, &body);
+
+    let rev = SourceRevalidator::new();
+    assert_eq!(rev.state(&src, &m), SourceState::Current);
+
+    std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap();
+    set_mtime(&src, tick);
+    assert_eq!(rev.state(&src, &m), SourceState::Replaced);
+}
+
+/// The racy rule: a digest taken within the margin of the mtime is re-taken on
+/// the next check, and a check that sees the mtime safely in the past is
+/// memoised and trusted again.
+#[test]
+fn a_recent_source_is_rehashed_until_its_mtime_is_safely_past() {
+    use earthsciio::SourceRevalidator;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("x.nc");
+    let body = vec![b'a'; 4096];
+    std::fs::write(&src, &body).unwrap();
+    set_mtime(&src, whole_second_now());
+    let m = manifest_for(&src, &body);
+
+    let rev = SourceRevalidator::new();
+    for _ in 0..3 {
+        assert_eq!(rev.state(&src, &m), SourceState::Current);
+    }
+    assert_eq!(rev.full_reads(), 3, "a racy digest is never reused");
+
+    set_mtime(&src, whole_second_now() - 60);
+    for _ in 0..3 {
+        assert_eq!(rev.state(&src, &m), SourceState::Current);
+    }
+    assert_eq!(rev.full_reads(), 4, "one re-hash, then the memo is trusted again");
 }
