@@ -20,6 +20,10 @@ Changes since v0.1.3. The headline fix is the `file://` cache revalidation
   against `(length, mtime)`. It is on by default; `EARTHSCI_REVALIDATE_FILE=0`
   opts out. Not a cache-format change: existing caches revalidate correctly.
   (6821a52, b58d664, 0045876)
+- **fix(cache):** the recheck's hash memo follows git's racy-timestamp rule: a
+  digest taken within 2 s of the source's mtime is never reused, so a
+  same-size replacement within one timestamp tick is caught on filesystems with
+  whole-second (Lustre, ext3, HFS+) or two-second (FAT) mtimes.
 - **fix:** the decode-time `select` vocabulary behaves alike at its edges in
   every track: over-long and negative slices are bounds errors, an empty axis
   is a zero-length axis kept in `dims`, a baked `select` on a reader that honours

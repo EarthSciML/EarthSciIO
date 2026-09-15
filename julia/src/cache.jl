@@ -181,15 +181,21 @@ it was computed, and reused while both are unchanged — the same bargain `make`
 a fresh process always pays one real read per file; what it removes is the
 *repeat* read within a run.
 
-What it can miss: a replacement preserving both the size and the mtime, in
-process, after the file was already read once. The window is one `Cache`
-lifetime."""
+A digest taken while the source's mtime was within `SOURCE_RACY_MARGIN` of the
+moment of hashing is never reused (git's "racy timestamp" rule): the next check
+hashes again, and only a check that sees the mtime safely in the past is trusted
+on later reads.
+
+What it can still miss: a replacement preserving both the size and an mtime
+already more than the margin old, in process, after the file was already read
+once. The window is one `Cache` lifetime."""
 mutable struct SourceRevalidator
-    seen::Dict{String,Tuple{Int,Float64,String}}   # path => (size, mtime, sha)
+    # path => (size, mtime, sha, hashed_at)
+    seen::Dict{String,Tuple{Int,Float64,String,Float64}}
     lock::ReentrantLock
     full_reads::Int
 end
-SourceRevalidator() = SourceRevalidator(Dict{String,Tuple{Int,Float64,String}}(),
+SourceRevalidator() = SourceRevalidator(Dict{String,Tuple{Int,Float64,String,Float64}}(),
                                         ReentrantLock(), 0)
 
 # How many fingerprints one revalidator remembers before dropping the lot. A
@@ -197,11 +203,20 @@ SourceRevalidator() = SourceRevalidator(Dict{String,Tuple{Int,Float64,String}}()
 # growing the map without limit.
 const SOURCE_MEMO_CAP = 512
 
+# Git's racy-timestamp rule, in seconds. A filesystem records mtime only to its
+# granularity: 1 s on Lustre, ext3, HFS+ and many NFS servers, 2 s on FAT. A
+# same-size write in the same tick as an earlier hash keeps the same
+# (size, mtime), so a digest taken within one tick of the mtime cannot vouch for
+# later bytes. Any later write sharing a 2 s FAT bucket lands before
+# `mtime + 2 s`, so 2 s with an inclusive comparison covers it.
+const SOURCE_RACY_MARGIN = 2.0
+
 """
     source_state(rev, source, manifest) -> Symbol
 
 Rung 0: the state of `source` relative to `manifest`, reusing a remembered
-digest when the source's `(size, mtime)` is unchanged."""
+digest when the source's `(size, mtime)` is unchanged and the digest was taken
+safely after that mtime (see `SOURCE_RACY_MARGIN`)."""
 function source_state(rev::SourceRevalidator, source::AbstractString, m::Manifest)
     st, verdict = _stat_source(source)
     verdict === nothing || return verdict
@@ -213,9 +228,11 @@ function source_state(rev::SourceRevalidator, source::AbstractString, m::Manifes
         get(rev.seen, String(source), nothing)
     end
     if remembered !== nothing && remembered[1] == fingerprint[1] &&
-       remembered[2] == fingerprint[2]
+       remembered[2] == fingerprint[2] &&
+       fingerprint[2] < remembered[4] - SOURCE_RACY_MARGIN
         return _source_verdict(remembered[3], m)
     end
+    hashed_at = time()
     got = try
         bytes2hex(open(sha256, source))
     catch
@@ -227,7 +244,7 @@ function source_state(rev::SourceRevalidator, source::AbstractString, m::Manifes
         # Crude but sufficient: the memo is an optimisation, so dropping all of
         # it costs one re-read per live file rather than needing an LRU.
         length(rev.seen) >= SOURCE_MEMO_CAP && empty!(rev.seen)
-        rev.seen[String(source)] = (fingerprint[1], fingerprint[2], got)
+        rev.seen[String(source)] = (fingerprint[1], fingerprint[2], got, hashed_at)
     end
     return _source_verdict(got, m)
 end

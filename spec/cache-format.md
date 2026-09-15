@@ -225,9 +225,20 @@ An implementation **SHOULD** therefore memoise the digest against the
 are unchanged — the bargain `make`, `ninja` and `rsync` strike. All three tracks
 do, on the cache object, so the memo dies with the process: a fresh run always
 pays one real read per file and what is removed is the *repeat* read within a
-run. The trade is that a replacement preserving both length and mtime, in
-process, after the file was already read once, is missed until the cache object
-is dropped.
+run.
+
+A memoised digest **MUST NOT** be reused while it is "racy" (git's rule for its
+index): record the wall-clock time just before hashing, and treat the entry as
+untrusted while `mtime >= hashed_at - 2 s`. The next check then hashes again,
+and a check that finds the mtime safely in the past is trusted on later reads. A
+filesystem records mtime only to its granularity (1 s on Lustre, ext3, HFS+ and
+many NFS servers, 2 s on FAT), so without this rule a same-length replacement in
+the same tick as an earlier read keeps the same `(length, mtime)` and is served
+stale. Two seconds with an inclusive comparison covers FAT's two-second buckets.
+
+The remaining trade is that a replacement preserving both length and an mtime
+already older than the margin, in process, after the file was already read once,
+is missed until the cache object is dropped.
 
 `EARTHSCI_REVALIDATE_FILE=0` (`0`/`false`/`no`/`off`) turns the rung off
 entirely for a corpus known to be immutable; any other value, including an
