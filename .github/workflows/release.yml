@@ -1,276 +1,93 @@
-name: Release
+name: Release 3 - Publish
 
-# Publishes the three EarthSciIO language tracks under one version number:
+# Step 3 of 3 (see release-register.yml). TagBot's push of `v<version>` starts
+# this run, which publishes to PyPI and crates.io from that tag. The jobs live in
+# EarthSciML/.github (RELEASING.md there).
 #
-#   rust/   -> crates.io      (earthsciio)
-#   .       -> PyPI           (earthsciio)
-#   julia/  -> General        (EarthSciIO)  -- via Registrator, see julia-register
-#
-# Everything lives in THIS file on purpose. A release created with GITHUB_TOKEN
-# does not start new workflow runs (GitHub deliberately suppresses that to avoid
-# recursive triggers), so a separate publish workflow keyed on `release:
-# published` would silently never run. Sequential jobs in one workflow have no
-# such problem.
+# Every publish step treats "already published" as success, so a run that
+# failed partway is finished by running this workflow by hand on the same tag.
 
 on:
   push:
-    branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
-
-permissions:
-  contents: read
+    inputs:
+      tag:
+        description: 'Release tag to (re-)publish, e.g. v0.4.0. Steps already done are skipped.'
+        required: true
+        type: string
 
 concurrency:
-  # Never let two releases race; a half-published version cannot be retracted.
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # The manifests are the single source of truth for the release version. There
-  # is no version bumping here and no guessing from tags or commit messages: a
-  # human decides the number in a reviewed commit, and this job only checks that
-  # the three tracks agree and that the version has not already shipped.
-  # ---------------------------------------------------------------------------
-  analysis:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.check.outputs.version }}
-      release: ${{ steps.check.outputs.release }}
-      notes: ${{ steps.check.outputs.notes }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  # The tag must be the commit General accepted.
+  resolve:
+    uses: EarthSciML/.github/.github/workflows/release-resolve.yml@main
+    with:
+      julia-package: EarthSciIO
+      julia-subdir: julia
+      tag: ${{ inputs.tag || github.ref_name }}
+      version-files: pyproject.toml rust/Cargo.toml
 
-      - name: Resolve and verify version
-        id: check
-        run: |
-          set -euo pipefail
-
-          read_toml_version() { grep -m1 '^version = ' "$1" | sed 's/.*"\(.*\)".*/\1/'; }
-
-          VERSION=$(read_toml_version rust/Cargo.toml)
-          PY_VERSION=$(read_toml_version pyproject.toml)
-          JL_VERSION=$(read_toml_version julia/Project.toml)
-          echo "rust=$VERSION python=$PY_VERSION julia=$JL_VERSION"
-
-          MISMATCH=""
-          for pair in "python:$PY_VERSION" "julia:$JL_VERSION"; do
-            name=${pair%%:*}; got=${pair#*:}
-            [ "$got" = "$VERSION" ] || MISMATCH="$MISMATCH $name=$got"
-          done
-          if [ -n "$MISMATCH" ]; then
-            echo "::error::Track versions disagree (rust says $VERSION):$MISMATCH"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "::notice::Tag v$VERSION already exists — this push is not a release."
-            echo "release=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          echo "release=true" >> $GITHUB_OUTPUT
-
-          # Changelog range. NOTE: never pipe git into `head` here -- this step
-          # runs under `set -o pipefail`, and `head` closing the pipe early kills
-          # git with SIGPIPE, which would abort the step midway through writing
-          # the heredoc below and leave it without a closing delimiter.
-          PREV_TAG=$(git tag -l 'v*' --sort=-v:refname)
-          PREV_TAG=${PREV_TAG%%$'\n'*}
-          if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
-            RANGE="$PREV_TAG..HEAD"
-          else
-            RANGE=""
-          fi
-
-          {
-            echo "notes<<ESIO_RELEASE_NOTES_EOF"
-            echo "# EarthSciIO v$VERSION"
-            echo ""
-            echo "## Changes"
-            echo ""
-            if [ -n "$RANGE" ]; then
-              git log "$RANGE" -n 100 --pretty=format:"- %s (%h)" --no-merges
-            else
-              git log -n 50 --pretty=format:"- %s (%h)" --no-merges
-            fi
-            echo ""
-            echo ""
-            echo "## Installation"
-            echo ""
-            echo '```bash'
-            echo "pip install earthsciio            # Python"
-            echo "cargo add earthsciio              # Rust"
-            echo '```'
-            echo "ESIO_RELEASE_NOTES_EOF"
-          } >> $GITHUB_OUTPUT
-
-  # ---------------------------------------------------------------------------
-  # Build and test each track BEFORE anything is published. A registry version
-  # can never be un-published, so a failure has to land here rather than after
-  # half the tracks are live.
-  # ---------------------------------------------------------------------------
-  verify:
-    needs: analysis
-    if: needs.analysis.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Rust build + test
-        working-directory: rust
-        run: |
-          cargo build --locked
-          cargo test --locked
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Python build
-        run: |
-          python -m pip install --upgrade pip build twine
-          python -m build
-          python -m twine check dist/*
-
-      - name: Upload python distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-distributions
-          path: dist/
-
-  create-release:
-    needs: [analysis, verify]
-    if: needs.analysis.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.analysis.outputs.version }}
-          name: EarthSciIO v${{ needs.analysis.outputs.version }}
-          body: ${{ needs.analysis.outputs.notes }}
-          draft: false
-          prerelease: ${{ contains(needs.analysis.outputs.version, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-crate:
-    needs: [analysis, verify, create-release]
-    if: needs.analysis.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish to crates.io
-        working-directory: rust
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.analysis.outputs.version }}"
-          # Publishing is not idempotent: crates.io rejects a version that
-          # already exists and a version can never be reused. Treat "already
-          # there" as success so a re-run, or a version published by hand, does
-          # not fail the job.
-          if curl -sf -o /dev/null \
-               -H "User-Agent: EarthSciIO release (github.com/EarthSciML/EarthSciIO)" \
-               "https://crates.io/api/v1/crates/earthsciio/$VERSION"; then
-            echo "::notice::earthsciio $VERSION is already on crates.io — skipping."
-            exit 0
-          fi
-          cargo publish --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
+  # Python. Published from this workflow directly, never from a reusable one:
+  # PyPI's trusted publishing cannot match a reusable workflow.
   publish-pypi:
-    needs: [analysis, verify, create-release]
-    if: needs.analysis.outputs.release == 'true'
+    needs: resolve
     runs-on: ubuntu-latest
-    # Trusted publishing: PyPI authenticates the workflow itself over OIDC, so
-    # there is no API token to store or rotate. Requires a PyPI publisher whose
-    # repository / workflow / environment match this job exactly.
+    timeout-minutes: 30
     environment:
       name: pypi
       url: https://pypi.org/p/earthsciio
     permissions:
       id-token: write
     steps:
-      - name: Download python distributions
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: python-distributions
-          path: dist/
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and check distributions
+        working-directory: .
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
 
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # PyPI also refuses a version that already exists; let a re-run be a
-          # no-op rather than a failure.
+          packages-dir: dist
+          # PyPI refuses a version that already exists; let a re-run be a no-op.
           skip-existing: true
 
-  # ---------------------------------------------------------------------------
-  # Julia registration. The package lives in a subdirectory, so Registrator needs
-  # its `subdir=` argument, which is only expressible in a registration comment
-  # (julia-actions/RegisterAction reads `subdir` off the workflow_dispatch event
-  # payload rather than an action input, and is unmaintained besides) — so this
-  # job posts the comment itself.
-  #
-  # A comment posted with the default GITHUB_TOKEN comes from `github-actions[bot]`,
-  # and Registrator whitelists exactly that login BEFORE its collaborator check:
-  #
-  #     # Registrator.jl src/commentbot/github_utils.jl:36 and :44
-  #     user == "github-actions[bot]" && return true
-  #
-  # (JuliaRegistries/Registrator.jl#250, "Allow GitHub Actions to trigger the
-  # Registrator GitHub app".) The GITHUB_TOKEN recursion rule that shaped the rest
-  # of this file does NOT apply here: it suppresses new *workflow runs*, and
-  # Registrator is a GitHub App consuming a `commit_comment` webhook. Live proof
-  # of this exact shape — roualdes/bridgestan registers `subdir=julia` from a
-  # github-actions[bot] commit comment.
-  #
-  # The one prerequisite that CI cannot satisfy: the JuliaRegistrator GitHub App
-  # must be installed on the repository. It is.
-  #
-  # Still true and worth knowing: a NEW package (not a new version) sits in
-  # General's 3-day AutoMerge waiting period. EarthSciIO is past that. EarthSciAST
-  # depends on this package and cannot register until this one merges into General.
-  # ---------------------------------------------------------------------------
-  julia-register:
-    needs: [analysis, create-release]
-    if: needs.analysis.outputs.release == 'true'
-    runs-on: ubuntu-latest
+  publish:
+    needs: resolve
     permissions:
-      # Creating a commit comment is a write to repository content.
       contents: write
-    steps:
-      - name: Trigger JuliaRegistrator
-        uses: peter-evans/commit-comment@v4
-        with:
-          # The tagged release commit, which is what create-release tagged and so
-          # what the registry entry must point at.
-          sha: ${{ github.sha }}
-          # Just the trigger. Registrator treats anything under a `Release
-          # notes:` heading as the registry PR's release notes, so boilerplate
-          # there is worse than no heading at all.
-          body: '@JuliaRegistrator register subdir=julia'
+    uses: EarthSciML/.github/.github/workflows/release-publish.yml@main
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+      version: ${{ needs.resolve.outputs.version }}
+      crates: rust
+      cargo-publish-args: --locked
+      install-notes: |
+        ```
+        using Pkg; Pkg.add("EarthSciIO")   # Julia
+        pip install earthsciio            # Python
+        cargo add earthsciio              # Rust
+        ```
+    secrets: inherit
 
-      - name: Note what happens next
-        run: |
-          VERSION="${{ needs.analysis.outputs.version }}"
-          {
-            echo "## Julia registration"
-            echo ""
-            echo "Posted \`@JuliaRegistrator register subdir=julia\` on"
-            echo "[the release commit](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
-            echo "for EarthSciIO.jl v$VERSION. Registrator opens a PR against the"
-            echo "General registry within a minute; AutoMerge takes it from there."
-            echo ""
-            echo "If no PR appears, check that the JuliaRegistrator GitHub App is"
-            echo "still installed on this repository — that is the one prerequisite"
-            echo "this workflow cannot satisfy for itself."
-          } >> "$GITHUB_STEP_SUMMARY"
+  report:
+    needs: [ resolve, publish-pypi, publish ]
+    if: always() && needs.resolve.result == 'success'
+    permissions:
+      issues: write
+    uses: EarthSciML/.github/.github/workflows/release-report.yml@main
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+      results: ${{ toJSON(needs) }}
