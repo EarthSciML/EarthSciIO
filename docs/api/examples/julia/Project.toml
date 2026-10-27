@@ -1,0 +1,10 @@
+[deps]
+EarthSciIO = "180e2c70-dda6-501b-9997-3c819c50e0c3"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+
+[sources]
+EarthSciIO = {path = "../../../../julia"}
+
+[compat]
+JSON3 = "1"
+julia = "1.11"

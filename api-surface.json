@@ -1,0 +1,366 @@
+{
+  "version": 1,
+  "note": "Canonical-operation manifest for the EarthSciIO API reference (python, julia, rust). Spellings are the names each binding exports at its top level; methods appear as signatures on their type's page.",
+  "symbols": [
+    {
+      "name": "cache",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Cache",
+        "julia": "Cache",
+        "rust": "Cache"
+      }
+    },
+    {
+      "name": "cache_entry",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "CacheEntry",
+        "julia": "CacheEntry",
+        "rust": "CachedBlob"
+      }
+    },
+    {
+      "name": "cache_key",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "cache_key",
+        "julia": "cache_key",
+        "rust": "cache_key"
+      }
+    },
+    {
+      "name": "sha256_file",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "sha256_file",
+        "rust": "sha256_file"
+      }
+    },
+    {
+      "name": "is_offline",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "resolve_offline",
+        "julia": "is_offline",
+        "rust": "is_offline"
+      }
+    },
+    {
+      "name": "data_dir",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "resolve_cache_root",
+        "julia": "datadir",
+        "rust": "data_dir"
+      }
+    },
+    {
+      "name": "file_source_is_current",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "file_source_is_current",
+        "julia": "file_source_is_current",
+        "rust": "file_source_is_current"
+      }
+    },
+    {
+      "name": "file_source_state",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "file_source_state",
+        "julia": "file_source_state",
+        "rust": "file_source_state"
+      }
+    },
+    {
+      "name": "manifest",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Manifest",
+        "julia": "Manifest",
+        "rust": "Manifest"
+      }
+    },
+    {
+      "name": "temporal",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Temporal",
+        "rust": "Temporal"
+      }
+    },
+    {
+      "name": "provider",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Provider",
+        "julia": "Provider",
+        "rust": "Provider"
+      }
+    },
+    {
+      "name": "data_source",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "DataSource",
+        "rust": "DataSource"
+      }
+    },
+    {
+      "name": "source_temporal",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "SourceTemporal",
+        "rust": "SourceTemporal"
+      }
+    },
+    {
+      "name": "window",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Window",
+        "rust": "Window"
+      }
+    },
+    {
+      "name": "const_provider",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "const_provider"
+      }
+    },
+    {
+      "name": "discrete_provider",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "discrete_provider"
+      }
+    },
+    {
+      "name": "materialize",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "materialize"
+      }
+    },
+    {
+      "name": "refresh",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "refresh"
+      }
+    },
+    {
+      "name": "refresh_times",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "refresh_times"
+      }
+    },
+    {
+      "name": "prefetch",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "prefetch"
+      }
+    },
+    {
+      "name": "native_field",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "NativeField",
+        "julia": "NativeField",
+        "rust": "NativeField"
+      }
+    },
+    {
+      "name": "native_dataset",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "NativeDataset",
+        "julia": "NativeDataset",
+        "rust": "NativeDataset"
+      }
+    },
+    {
+      "name": "csv_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "CSVReader",
+        "julia": "CSVReader"
+      }
+    },
+    {
+      "name": "netcdf_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "NetCDFReader",
+        "julia": "NetCDFReader",
+        "rust": "NetcdfReader"
+      }
+    },
+    {
+      "name": "geotiff_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "GeoTIFFReader",
+        "julia": "GeoTIFFReader",
+        "rust": "GeoTiffReader"
+      }
+    },
+    {
+      "name": "ff10_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "FF10Reader",
+        "julia": "FF10Reader",
+        "rust": "Ff10Reader"
+      }
+    },
+    {
+      "name": "shapefile_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "ShapefileReader",
+        "julia": "ShapefileReader",
+        "rust": "ShapefileReader"
+      }
+    },
+    {
+      "name": "parquet_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "ParquetReader",
+        "julia": "ParquetReader",
+        "rust": "ParquetReader"
+      }
+    },
+    {
+      "name": "zarr_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "julia": "ZarrReader",
+        "rust": "ZarrReader"
+      }
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "EarthSciIOError",
+        "rust": "Error"
+      }
+    },
+    {
+      "name": "cache_miss",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "CacheMiss",
+        "julia": "CacheMiss"
+      }
+    },
+    {
+      "name": "integrity_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "IntegrityError",
+        "julia": "IntegrityError"
+      }
+    },
+    {
+      "name": "transport",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "python": "Transport",
+        "julia": "Transport"
+      }
+    },
+    {
+      "name": "store",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "python": "Store",
+        "julia": "Store"
+      }
+    },
+    {
+      "name": "reader",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "python": "Reader",
+        "julia": "Reader",
+        "rust": "Reader"
+      }
+    },
+    {
+      "name": "format_registry",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "julia": "FORMAT_REGISTRY"
+      }
+    },
+    {
+      "name": "static_header_auth",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "python": "StaticHeaderAuth"
+      }
+    },
+    {
+      "name": "cds_transport",
+      "kind": "type",
+      "tier": "extension",
+      "bindings": {
+        "python": "CdsTransport",
+        "julia": "CdsTransport"
+      }
+    },
+    {
+      "name": "cds_api_key",
+      "kind": "function",
+      "tier": "extension",
+      "bindings": {
+        "python": "cds_api_key",
+        "julia": "cds_api_key"
+      }
+    }
+  ]
+}

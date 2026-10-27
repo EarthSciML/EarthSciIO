@@ -1,0 +1,27 @@
+# Runnable examples for the generated API reference. Built against the in-repo
+# crate, never a published release. Run them with `tools/api_docs/rust.sh
+# --examples-only` from EarthSciML/earthsci.dev.
+[package]
+name = "earthsciio-api-examples"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# A workspace of its own, so cargo never looks for one further up the tree.
+[workspace]
+
+[dependencies]
+earthsciio = { path = "../../../../rust" }
+tempfile = "3"
+
+# The examples share one helper, `fixture`, which finds the shared inputs
+# relative to this directory rather than the working directory.
+[lib]
+path = "support.rs"
+
+[profile.dev]
+debug = false
+
+[[example]]
+name = "fetch"
+path = "fetch.rs"

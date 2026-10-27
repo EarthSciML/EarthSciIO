@@ -1,0 +1,15 @@
+id = "io"
+title = "EarthSciIO"
+description = "Data-provider library: URL download, a shared content-addressed cache, and native-grid readers for Python, Julia and Rust."
+repo = "EarthSciML/EarthSciIO"
+
+# Run from the repo root before the docs-bundle action (see templates/docs.yml
+# in EarthSciML/earthsci.dev). Writes docs/content/generated/spec/ from spec/*.md.
+prebuild = ["python3 docs/build_spec_pages.py"]
+
+[[nav]]
+title = "Overview"
+path = "overview/"
+[[nav]]
+title = "Spec"
+path = "generated/spec/"

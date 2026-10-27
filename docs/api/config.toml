@@ -1,0 +1,25 @@
+# API reference configuration, read by the shared tooling in
+# EarthSciML/earthsci.dev (tools/api_docs; schema in its README.md).
+
+manifest = "api-surface.json"
+examples = "docs/api/examples"
+groups = "docs/api/groups.toml"
+guides = "docs/api/guides"
+
+[reference]
+title = "EarthSciIO"
+summary = "download data into one shared content-addressed cache and read it as native-grid arrays."
+
+[bindings.python]
+path = "."
+package = "earthsciio"
+
+[bindings.julia]
+path = "julia"
+package = "EarthSciIO"
+env = "docs/api/examples/julia"
+
+[bindings.rust]
+path = "rust"
+crate = "earthsciio"
+docs_rs_features = []

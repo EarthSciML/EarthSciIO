@@ -22,3 +22,10 @@ venv/
 .DS_Store
 *.swp
 *.egg-info/
+
+# Docs build products (EarthSciML/earthsci.dev tooling): generated pages, extracted
+# docstrings, cargo targets, and the examples' resolved Julia environment.
+/build/
+/docs/content/generated/
+/docs/api/examples/julia/Manifest.toml
+/docs/api/examples/rust/target/

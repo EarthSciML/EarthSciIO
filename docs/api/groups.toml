@@ -1,0 +1,29 @@
+# Topic grouping of the canonical STABLE operations, for the generated API
+# reference (tools/api_docs/render.py in EarthSciML/earthsci.dev).
+
+[[group]]
+id = "cache"
+title = "Cache"
+description = "Fetching a resolved URL into the shared content-addressed cache, validating what is stored, and reading it back offline."
+ops = ["cache", "cache_entry", "cache_key", "sha256_file", "is_offline", "data_dir",
+       "file_source_is_current", "file_source_state", "manifest", "temporal"]
+
+[[group]]
+id = "providers"
+title = "Providers"
+description = "Binding a data source to the cache and a reader, and getting native-grid arrays out at the simulation's cadence."
+ops = ["provider", "data_source", "source_temporal", "window", "const_provider", "discrete_provider",
+       "materialize", "refresh", "refresh_times", "prefetch"]
+
+[[group]]
+id = "native-arrays"
+title = "Native arrays and readers"
+description = "The raw native-grid arrays a provider returns, and the format readers that decode cached files into them."
+ops = ["native_field", "native_dataset", "csv_reader", "netcdf_reader", "geotiff_reader", "ff10_reader",
+       "shapefile_reader", "parquet_reader", "zarr_reader"]
+
+[[group]]
+id = "errors"
+title = "Errors"
+description = "What fails and how: offline misses, integrity failures and the general error."
+ops = ["error", "cache_miss", "integrity_error"]
