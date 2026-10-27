@@ -1,0 +1,57 @@
+name: Release 1 - Register Julia
+
+# A release is three workflows, run in order, so that every registry publishes
+# from the ONE commit the Julia General registry accepted:
+#
+#   1. release-register.yml (this file): on a version bump, run the release
+#      gates and ask JuliaRegistrator to register that commit, with release
+#      notes. Nothing is tagged or published.
+#   2. TagBot.yml: once General merges the registration, TagBot tags the
+#      registered commit `v<version>` and creates the GitHub release.
+#   3. release.yml: that tag push publishes to PyPI and crates.io.
+#
+# The jobs live in EarthSciML/.github; RELEASING.md there explains each step,
+# what to do when General refuses a registration, and the one-time setup.
+
+on:
+  push:
+    branches: [ main ]
+    # A release starts with a version bump, and the Julia manifest is the
+    # source of truth for the version.
+    paths: [ 'julia/Project.toml' ]
+  workflow_dispatch:
+
+concurrency:
+  group: release-register
+  cancel-in-progress: false
+
+jobs:
+  release-analysis:
+    uses: EarthSciML/.github/.github/workflows/release-analyze.yml@main
+    with:
+      julia-package: EarthSciIO
+      julia-subdir: julia
+      version-files: pyproject.toml rust/Cargo.toml
+
+  tests:
+    needs: release-analysis
+    if: needs.release-analysis.outputs.needs_release == 'true'
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+
+  conformance:
+    needs: release-analysis
+    if: needs.release-analysis.outputs.needs_release == 'true'
+    uses: ./.github/workflows/conformance.yml
+    secrets: inherit
+
+  register-julia:
+    needs: [ release-analysis, tests, conformance ]
+    if: needs.release-analysis.outputs.needs_release == 'true'
+    permissions:
+      contents: write
+    uses: EarthSciML/.github/.github/workflows/release-register.yml@main
+    with:
+      julia-package: EarthSciIO
+      julia-subdir: julia
+      version: ${{ needs.release-analysis.outputs.version }}
