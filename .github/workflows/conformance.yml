@@ -31,11 +31,11 @@ jobs:
       # already force offline caches rooted at the corpus).
       EARTHSCI_OFFLINE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # --- Python track ---------------------------------------------------- #
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # Every extra a corpus case's format needs must be installed here, because
@@ -57,10 +57,10 @@ jobs:
 
       # --- Julia track ----------------------------------------------------- #
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: "1.10"
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       # EarthSciIO keeps its zarr/shapefile/parquet/geotiff decode backends in
       # weakdep EXTENSIONS, so `Pkg.instantiate()` on `julia/Project.toml` does
       # NOT install them and a bare `--project=julia` cannot import them. Resolve
@@ -88,7 +88,7 @@ jobs:
         run: ./conformance/run_conformance.sh "${{ runner.temp }}/conformance-dumps"
       - name: Upload native-array dumps
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-array-dumps
           path: ${{ runner.temp }}/conformance-dumps/*.json
