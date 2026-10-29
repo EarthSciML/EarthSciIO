@@ -112,3 +112,35 @@ def test_processes_share_one_root_exactly_one_download(cache_root, tmp_path):
     assert counter.stat().st_size == 1  # one download across ALL processes
     assert len(shas) == 1  # every process saw identical bytes (no torn read)
     assert shas == {sha256_file(src)}
+
+
+def test_threads_fetching_several_urls_at_once_download_each_once(cache_root, tmp_path):
+    """The `PrefetchGroup` shape (spec/prefetch.md §3.10): several worker threads
+    plus a fetch-ahead thread call ``fetch`` on ONE cache at once, for the SAME
+    url and for DIFFERENT ones. Each url is downloaded exactly once, every caller
+    gets that url's own bytes, and different urls do not serialise on one
+    another's lock (each blob has its own)."""
+    _register()
+    urls = {}
+    for i in range(4):
+        src = tmp_path / f"src{i}.bin"
+        src.write_bytes(PAYLOAD + bytes([i]) * (i + 1))
+        counter = tmp_path / f"downloads{i}.count"
+        urls[_count_url(src, counter)] = (src, counter)
+    cache = Cache(root=cache_root)
+    jobs = [u for u in urls for _ in range(4)]
+
+    t0 = time.monotonic()
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        results = list(pool.map(cache.fetch, jobs))
+    elapsed = time.monotonic() - t0
+
+    for url, entry in zip(jobs, results):
+        src, _ = urls[url]
+        assert entry.path.read_bytes() == src.read_bytes()
+    for url, (src, counter) in urls.items():
+        assert counter.stat().st_size == 1, url  # one download per url
+        statuses = [r.status for u, r in zip(jobs, results) if u == url]
+        assert statuses.count("downloaded") == 1
+    # four 0.15 s downloads ran side by side, not one after another (4 x DELAY)
+    assert elapsed < 3.5 * DELAY, elapsed

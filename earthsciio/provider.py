@@ -29,6 +29,15 @@ CONST vs DISCRETE (the cadence contract):
   tstops). A multi-record file is sliced on its ``time_dim`` axis; a file-per-tick
   source resolves a new URL per file period.
 
+``refresh(t)`` is :meth:`Provider.sample_at` followed by the buffer update
+(``spec/prefetch.md`` §1): both run :meth:`Provider._sample`, which takes the
+decoded file from a caller-supplied source — the provider's own buffers for
+``refresh``, a fresh read for ``sample_at``, a shared two-file LRU for a
+:class:`~earthsciio.prefetch.PrefetchGroup` — so the three cannot drift apart.
+A named-dimension window is bound at construction with
+:meth:`Provider.with_window`, and K of them decode in one pass with
+:meth:`Provider.sample_windows_at` (§2).
+
 This mirrors the peer Rust ``Provider`` (``rust/src/provider.rs``) and Julia
 ``Provider`` (``julia/src/provider.jl``); the decoded native arrays are equal
 across all three tracks (conformance ``esio-9nb.9``).
@@ -36,6 +45,7 @@ across all three tracks (conformance ``esio-9nb.9``).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import inspect
 from collections import OrderedDict
@@ -48,6 +58,7 @@ from .cache import Cache, CacheEntry
 from .errors import UnknownReaderOption
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
+from .selection import _WindowUnion, _as_dims_select
 
 __all__ = ["SourceTemporal", "DataSource", "Provider", "Window",
            "LoaderTemporal", "DataLoader"]
@@ -287,6 +298,14 @@ class Provider:
         # the same reason: an unrecognised reader_kwarg is an error here, never
         # a key the decode silently ignores (spec/registries.md §2.1).
         check_reader_options(self._reader, loader)
+        self._init_buffers()
+
+    def _init_buffers(self) -> None:
+        """Empty the per-instance decode state.
+
+        The ONLY mutable state a Provider has: :meth:`sample_at` reads none of
+        it, :meth:`refresh` and :meth:`materialize` own it, and a copy made by
+        :meth:`with_window` or by pickling starts with its own, empty."""
         # Current state — a file-read cache so stepping within one file decodes
         # it once, and the buffer the solver reads between cadence boundaries.
         self._current: Optional[NativeDataset] = None
@@ -297,6 +316,21 @@ class Provider:
         # two adjacent files open at a file-period seam (the "after" record of the
         # last record in a file lives in the next file). Cap 2.
         self._files: "OrderedDict[_dt.datetime, NativeDataset]" = OrderedDict()
+
+    def __getstate__(self) -> Dict[str, Any]:
+        # A pickled provider (a `PrefetchGroup(executor="process")` member)
+        # travels WITHOUT its decoded buffers: they are a per-process cache that
+        # is rebuilt on first use, not state, and shipping them would copy whole
+        # decoded files to every worker for nothing.
+        state = self.__dict__.copy()
+        for k in ("_current", "_current_anchor", "_current_file_anchor",
+                  "_current_file", "_files"):
+            state.pop(k, None)
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._init_buffers()
 
     # -- introspection ------------------------------------------------------ #
 
@@ -352,38 +386,108 @@ class Provider:
 
         ``select`` is the per-call projection pushdown override (see
         :meth:`materialize`) — a peek that reads fresh and leaves the buffer intact.
+
+        This is :meth:`sample_at` followed by the buffer update — the same
+        :meth:`_sample`, fed from the decoded-file buffer instead of a fresh read
+        (``spec/prefetch.md`` §1). Decoding a file is deterministic, so the two
+        return the same arrays.
         """
         temporal = self.loader.temporal
         if temporal is None:
             if select is None and self._current is not None:
                 return self._current
             return self.materialize(select=select)
-
-        anchor = _snap_down(temporal.start, t, temporal.frequency)
-        if anchor < temporal.start:
-            raise ValueError(
-                f"t={t!r} precedes the loader start {temporal.start!r}"
-            )
-        if temporal.records_per_sample == 2:
-            return self._refresh_bracket(temporal, anchor, select=select)
-        file_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
-        # A per-call `select` override reads fresh and does NOT disturb the cadence
-        # buffer / file cache (it is a projection peek for this call only).
         if select is not None:
-            file_ds = self._read_file(
-                self.loader.resolve_url(file_anchor), select=select
-            )
-            rec = _record_index(file_ds, temporal, anchor, file_anchor)
-            return _slice_record(file_ds, temporal.time_dim, rec)
-        if self._current_file is None or self._current_file_anchor != file_anchor:
-            self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
-            self._current_file_anchor = file_anchor
+            # A per-call `select` override reads fresh and does NOT disturb the
+            # cadence buffer / file cache (a projection peek for this call only).
+            return self._sample(t, self._fresh_files(select))
 
-        rec = _record_index(self._current_file, temporal, anchor, file_anchor)
-        sliced = _slice_record(self._current_file, temporal.time_dim, rec)
+        anchor = self._anchor(t)
+        # rps 1 steps through one file at a time; rps 2 may need two adjacent
+        # files open at a file-period seam, hence the 2-entry LRU.
+        files = self._file_for if temporal.records_per_sample == 2 else self._buffered_file
+        sliced = self._sample(t, files)
         self._current = sliced
         self._current_anchor = anchor
         return sliced
+
+    def sample_at(self, t: _dt.datetime) -> NativeDataset:
+        """The dataset :meth:`refresh` would return for ``t`` — data variables
+        AND coordinates — computed without touching any provider buffer
+        (``spec/prefetch.md`` §1).
+
+        Same snap-down to the cadence anchor, same file-local record, same
+        ``records_per_sample = 2`` bracket and end-of-data clamp, and the same
+        errors ``refresh(t)`` raises (a ``CacheMiss`` offline included). It reads
+        and writes no current record, no current anchor and no decoded-file LRU,
+        so it is safe to call from several threads at once on one provider — the
+        reader and cache it shares are stateless or locked (NetCDF decodes take
+        one process-wide lock, :data:`earthsciio.readers._NETCDF_LOCK`). It
+        depends on ``t`` only through the anchor ``t`` snaps to. A CONST
+        provider's ``sample_at(t)`` is its :meth:`materialize` result.
+
+        Every call decodes its file afresh: the buffer that amortises one decode
+        over every tick of a file is exactly the state this method may not
+        touch. A :class:`~earthsciio.prefetch.PrefetchGroup` brings its own
+        shared buffer instead.
+        """
+        return self._sample(t, self._fresh_files())
+
+    # -- named-dimension windows (spec/prefetch.md §2) ---------------------- #
+
+    def with_window(self, w: Any) -> "Provider":
+        """A NEW provider with the window ``w`` baked in as its ``select``.
+
+        ``w`` is a :class:`~earthsciio.selection.DimWindow` or the wire dict
+        ``{"dims": {...}}``. The new provider shares this one's cache and reader
+        INSTANCE (and its loader, run window and decode options); this one is
+        unchanged. Raised at once, before any I/O (``spec/prefetch.md`` §2.3):
+
+        * this provider already bakes a ``select`` — two windows do not compose;
+        * the reader does not answer ``supports_selection``;
+        * ``w`` names the loader's ``time_dim`` — records are the Provider's.
+
+        A window is bound at construction, never per call: a baked window keeps
+        the decoded-file buffer, so each windowed file decodes once rather than
+        once per tick, while a per-call ``select`` stays a peek that reads fresh.
+        """
+        select = self._window_select(w)
+        clone = type(self).__new__(type(self))
+        clone.loader = dataclasses.replace(
+            self.loader,
+            reader_kwargs={**(self.loader.reader_kwargs or {}), "select": select},
+        )
+        clone.cache = self.cache
+        clone.window = self.window
+        clone._reader = self._reader
+        check_reader_options(clone._reader, clone.loader)
+        clone._init_buffers()
+        return clone
+
+    def sample_windows_at(self, t: _dt.datetime, windows: Sequence[Any]) -> List[NativeDataset]:
+        """K windows of :meth:`sample_at` ``(t)``, from ONE fetch and decode.
+
+        Dataset ``i`` is identical — bitwise, coordinates included — to
+        ``with_window(windows[i]).sample_at(t)`` (``spec/prefetch.md`` §2.4). The
+        bounding union is decoded once — per dimension the sorted distinct union
+        of the windows' indices, or ``"all"`` when some window leaves the
+        dimension unnamed or names it ``"all"`` — and each window is then sliced
+        back out of it by name, in its own order with its own repetitions. Every
+        window is checked against :meth:`with_window`'s preconditions first; an
+        empty list returns ``[]`` without fetching anything. Like
+        :meth:`sample_at` it touches no provider buffer.
+
+        For chunk layouts a window cannot shrink (one global level per chunk),
+        one rank per node decodes its neighbours' windows in a single pass and
+        scatters them.
+        """
+        windows = list(windows)
+        if not windows:
+            return []
+        for w in windows:
+            self._window_select(w)
+        union = _WindowUnion(windows)
+        return self._sample_windows(t, union, self._fresh_files(union.select))
 
     # -- projection-pushdown capability ------------------------------------ #
 
@@ -489,6 +593,111 @@ class Provider:
 
     # -- internals ---------------------------------------------------------- #
 
+    def _window_select(self, w: Any) -> Dict[str, Any]:
+        """``w`` as a wire select, or the :meth:`with_window` precondition it
+        breaks — checked before any I/O."""
+        baked = (self.loader.reader_kwargs or {}).get("select")
+        if baked is not None:
+            raise ValueError(
+                f"provider {self.loader.name!r} already bakes a select ({baked!r}); "
+                "two windows do not compose — build the window from the unwindowed "
+                "provider"
+            )
+        if not supports_selection(self._reader):
+            raise ValueError(
+                f"format {self.loader.format!r} (reader "
+                f"{type(self._reader).__name__}) does not support selection, so it "
+                "cannot take a window; read it whole and slice afterwards"
+            )
+        select = _as_dims_select(w)
+        temporal = self.loader.temporal
+        if temporal is not None and temporal.time_dim in select["dims"]:
+            raise ValueError(
+                f"window names the provider's time dimension {temporal.time_dim!r}; "
+                "records are the Provider's (it owns the cadence), so a window "
+                "must leave the time dimension unnamed"
+            )
+        return select
+
+    def _anchor_of(self, t: _dt.datetime) -> _dt.datetime:
+        """The cadence anchor ``t`` snaps to, UNVALIDATED (it may precede the
+        loader start; :meth:`_anchor` is the validating spelling)."""
+        temporal = self.loader.temporal
+        assert temporal is not None
+        return _snap_down(temporal.start, t, temporal.frequency)
+
+    def _anchor(self, t: _dt.datetime) -> _dt.datetime:
+        anchor = self._anchor_of(t)
+        temporal = self.loader.temporal
+        if anchor < temporal.start:
+            raise ValueError(
+                f"t={t!r} precedes the loader start {temporal.start!r}"
+            )
+        return anchor
+
+    def _sample(self, t: _dt.datetime,
+                files: Callable[[_dt.datetime], NativeDataset]) -> NativeDataset:
+        """The ONE sampling path behind :meth:`refresh`, :meth:`sample_at` and a
+        prefetch group's decode (``spec/prefetch.md`` §1).
+
+        ``files(file_anchor)`` returns the DECODED file covering ``file_anchor``
+        (the CONST file at the epoch anchor). Who caches it is the caller's
+        business — the provider's buffers, nobody, or a group's shared LRU —
+        and this method touches no provider state itself, which is what makes
+        :meth:`sample_at` thread-safe.
+        """
+        temporal = self.loader.temporal
+        if temporal is None:
+            return files(_EPOCH)
+        anchor = self._anchor(t)
+        if temporal.records_per_sample == 2:
+            return self._sample_bracket(temporal, anchor, files)
+        file_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
+        file_ds = files(file_anchor)
+        rec = _record_index(file_ds, temporal, anchor, file_anchor)
+        return _slice_record(file_ds, temporal.time_dim, rec)
+
+    def _sample_windows(self, t: _dt.datetime, union: _WindowUnion,
+                        files: Callable[[_dt.datetime], NativeDataset]) -> List[NativeDataset]:
+        """:meth:`_sample` over files decoded under ``union.select``, split back
+        into its windows. Record slicing and window slicing are both pure
+        gathers, so their order does not change a value."""
+        return union.split(self._sample(t, files))
+
+    def _fresh_files(self, select: Optional[Any] = None
+                     ) -> Callable[[_dt.datetime], NativeDataset]:
+        """A file source that decodes afresh on every call (no buffer)."""
+        def files(file_anchor: _dt.datetime) -> NativeDataset:
+            return self._read_file(self.loader.resolve_url(file_anchor), select=select)
+        return files
+
+    def _buffered_file(self, file_anchor: _dt.datetime) -> NativeDataset:
+        """The ``records_per_sample = 1`` buffer: the one file being stepped
+        through, re-decoded only when the FILE anchor changes."""
+        if self._current_file is None or self._current_file_anchor != file_anchor:
+            self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
+            self._current_file_anchor = file_anchor
+        return self._current_file
+
+    def _sample_urls(self, t: _dt.datetime) -> List[str]:
+        """The blob URLs a sample at ``t`` reads (the successor's file too, for a
+        bracket) — what a prefetch group's ``fetch_ahead`` warms. Best-effort:
+        computed from the cadence grid, never from a decode."""
+        temporal = self.loader.temporal
+        if temporal is None:
+            return [self.loader.resolve_url(_EPOCH)]
+        anchor = self._anchor_of(t)
+        anchors = [anchor]
+        nxt = anchor + temporal.frequency
+        if temporal.records_per_sample == 2 and (temporal.end is None or nxt < temporal.end):
+            anchors.append(nxt)
+        urls: List[str] = []
+        for a in anchors:
+            url = self.loader.resolve_url(_snap_down(temporal.start, a, temporal.file_period))
+            if url not in urls:
+                urls.append(url)
+        return urls
+
     def _lower_bound(self) -> _dt.datetime:
         """The effective lower bound: the window start clamped to the loader
         epoch (a DISCRETE provider always has a temporal)."""
@@ -581,18 +790,19 @@ class Provider:
             self._files.move_to_end(file_anchor)
         return ds
 
-    def _refresh_bracket(self, temporal: SourceTemporal,
-                         anchor: _dt.datetime,
-                         select: Optional[Any] = None) -> NativeDataset:
+    def _sample_bracket(self, temporal: SourceTemporal,
+                        anchor: _dt.datetime,
+                        files: Callable[[_dt.datetime], NativeDataset]) -> NativeDataset:
         """Return the two records bracketing ``anchor`` (floor + successor) with
         ``time_dim`` retained at length 2 and a canonical epoch-seconds ``time``
         coordinate. Handles the cross-file successor and the end-of-data clamp.
 
-        A per-call ``select`` override reads fresh and does NOT disturb the cadence
-        buffer (a projection peek for this call only)."""
+        Reads its files through ``files`` and touches no provider state (see
+        :meth:`_sample`); :meth:`refresh` passes the 2-entry LRU, a per-call
+        ``select`` a fresh read."""
         time_dim = temporal.time_dim
         file0_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
-        file0 = self._file_for(file0_anchor, select=select)
+        file0 = files(file0_anchor)
         rec0 = _record_index(file0, temporal, anchor, file0_anchor)
 
         next_anchor = anchor + temporal.frequency
@@ -605,7 +815,7 @@ class Provider:
                 else:  # successor is record 0 of the next file
                     n_anchor = _snap_down(temporal.start, next_anchor,
                                           temporal.file_period)
-                    file1 = self._file_for(n_anchor, select=select)
+                    file1 = files(n_anchor)
                     r1 = _record_index(file1, temporal, next_anchor, n_anchor)
                     if 0 <= r1 < _time_len(file1, time_dim):
                         succ = (file1, r1)
@@ -615,14 +825,10 @@ class Provider:
             next_anchor = anchor
             succ = (file0, rec0)
 
-        sliced = _bracket_record(
+        return _bracket_record(
             file0, rec0, succ[0], succ[1], time_dim,
             _epoch_seconds(anchor), _epoch_seconds(next_anchor),
         )
-        if select is None:
-            self._current = sliced
-            self._current_anchor = anchor
-        return sliced
 
 
 def _slice_record(ds: NativeDataset, time_dim: str, rec: int) -> NativeDataset:

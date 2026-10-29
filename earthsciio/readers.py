@@ -26,6 +26,7 @@ import datetime as _dt
 import decimal as _decimal
 import fnmatch as _fnmatch
 import io as _io
+import threading as _threading
 import zipfile as _zipfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -33,7 +34,13 @@ import numpy as np
 
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry
-from .selection import _parse_axis, _resolve_axis_indices, _select_axes
+from .selection import (
+    _absent_dims_error,
+    _parse_axis,
+    _resolve_axis_indices,
+    _select_axes,
+    _select_dims,
+)
 
 __all__ = [
     "NetCDFReader",
@@ -70,6 +77,18 @@ def _finalize_numeric(values: Any) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # NetCDF reader (xarray / netCDF4).
 # --------------------------------------------------------------------------- #
+
+#: ONE process-wide lock around every NetCDF decode and header read
+#: (``spec/prefetch.md`` §3.10). netCDF4-python and the HDF5 library beneath it
+#: are not assumed thread-safe — HDF5 is built thread-safe only on request, and
+#: xarray's own per-file locks do not serialise two DIFFERENT files against one
+#: global HDF5 state — and a prefetch group decodes on worker threads beside a
+#: solver that may itself call ``refresh``. Whether the lock can go is an open
+#: question (§5 Q3); until it is settled, NetCDF decodes are serial in a process
+#: and overlap comes from decoding while the CONSUMER computes, not from two
+#: decodes at once. Re-entrant so a reader method may call another. The zarr
+#: reader takes no such lock: zarr-python and numcodecs are thread-safe.
+_NETCDF_LOCK = _threading.RLock()
 
 
 def _field_from_dataarray(da: Any) -> NativeField:
@@ -144,14 +163,23 @@ def _netcdf_is_time_dim(ds: Any, dim: str) -> bool:
     return str(dim).lower() == "time"
 
 
-def _netcdf_dim_selection(ds: Any, select: Optional[Any]) -> Optional[Dict[str, List[int]]]:
+def _netcdf_dim_selection(
+    ds: Any, select: Optional[Any], fields: Sequence[Any] = ()
+) -> Optional[Dict[str, List[int]]]:
     """``select`` → ``{dimension: ordered 0-based index list}``, or ``None``.
 
     The axes are positional over the file-order dims of every array whose rank
     matches the axis count (the zarr rule); the induced map is what the read
     applies BY NAME, which is what keeps the coordinates in step with the data.
     NetCDF dimension lengths are file-global, so each axis resolves once.
+
+    The named form ``{"dims": {...}}`` skips the positional step and produces
+    the same map directly (:func:`_netcdf_named_selection`); ``fields`` are the
+    DataArrays the read will return, against which its names are checked.
     """
+    named = _select_dims(select)
+    if named is not None:
+        return _netcdf_named_selection(ds, named, fields)
     axes_spec = _select_axes(select)
     if axes_spec is None:
         return None
@@ -191,6 +219,55 @@ def _netcdf_dim_selection(ds: Any, select: Optional[Any]) -> Optional[Dict[str, 
                 "selection is the Provider's (it owns the cadence: "
                 "records_per_sample), not the reader's — the time axis of a "
                 'netcdf `select` must be "all"'
+            )
+        out[dim] = _resolve_axis_indices(axis, int(ds.sizes[dim]))
+    return out or None
+
+
+def _netcdf_named_selection(
+    ds: Any, named: Dict[str, Tuple], fields: Sequence[Any]
+) -> Optional[Dict[str, List[int]]]:
+    """The named form (``spec/prefetch.md`` §2.1) → the same ``{dim: indices}``
+    map the positional form induces, by NAME, with no rank match at all.
+
+    Everything is validated before a single value is read: a name no returned
+    field carries, a non-``"all"`` selector on the time axis, and every index
+    against the FILE dimension length. ``fields`` — the projected data variables
+    plus the coordinates returned with them — define what "carries" means, so a
+    dimension only an UNREQUESTED variable uses is as absent as a misspelling.
+    A char variable's string length is absent the same way: xarray folds it into
+    the strings (it is in no decoded field's ``dims``, nor in ``ds.sizes``), and
+    applying it would truncate every string rather than window anything.
+    """
+    present = {str(d) for da in fields for d in da.dims}
+    absent = [d for d in named if d not in present]
+    if absent:
+        consumed = {
+            str(da.encoding.get("char_dim_name"))
+            for da in ds.variables.values()
+            if getattr(da, "encoding", None) and da.encoding.get("char_dim_name")
+        }
+        hint = ""
+        hits = [d for d in absent if d in consumed]
+        if hits:
+            hint = (
+                f" {', '.join(repr(d) for d in hits)} is the string length of a "
+                "char variable, which the decode consumes into one string per "
+                "cell (spec/conformance.md §3, NetCDF text variables): it is not "
+                "a dimension of any decoded field and cannot be windowed."
+            )
+        raise _absent_dims_error(absent, present, hint)
+
+    out: Dict[str, List[int]] = {}
+    for dim, axis in named.items():
+        if axis[0] == "all":
+            continue
+        if _netcdf_is_time_dim(ds, dim):
+            raise ValueError(
+                f"select asks for a subset of the time dimension {dim!r}; record "
+                "selection is the Provider's (it owns the cadence: "
+                "records_per_sample), not the reader's — a named `select` must "
+                'leave the time dimension unnamed or "all"'
             )
         out[dim] = _resolve_axis_indices(axis, int(ds.sizes[dim]))
     return out or None
@@ -340,7 +417,7 @@ class NetCDFReader:
         """
         import netCDF4  # lazy: only the netcdf path needs the heavy stack
 
-        with netCDF4.Dataset(str(path), "r") as ds:
+        with _NETCDF_LOCK, netCDF4.Dataset(str(path), "r") as ds:
             d = ds.dimensions.get(str(dim))
             return None if d is None else int(len(d))
 
@@ -361,9 +438,10 @@ class NetCDFReader:
 
         ``select`` is an orthogonal selection in the shared 0-based vocabulary
         (:mod:`earthsciio.selection`): ``{"axes": [...]}`` with each axis
-        ``"all"``, ``{"indices": [...]}`` or ``{"slice": [start, stop, step?]}``.
-        It is honoured at DECODE time — the blob is already fetched, and
-        ``.isel`` reads only the intersecting chunks. Applied thus:
+        ``"all"``, ``{"indices": [...]}`` or ``{"slice": [start, stop, step?]}``,
+        or the NAMED form ``{"dims": {"<dim>": <axis>, ...}}``. It is honoured at
+        DECODE time — the blob is already fetched, and ``.isel`` reads only the
+        intersecting chunks. The positional form is applied thus:
 
         * the axes are **positional over file-order dims** of every array whose
           rank equals the axis count (the zarr rule);
@@ -383,6 +461,17 @@ class NetCDFReader:
           length 1 — and an axis may legally select NOTHING (``{"indices": []}``,
           or an empty half-open ``{"slice": [1, 1]}``), giving a **zero-length
           axis** kept in ``dims`` rather than an error.
+
+        The named form (``spec/prefetch.md`` §2.1) has no rank match: each
+        selector applies to every returned field and coordinate carrying its
+        dimension, whatever the field's rank, and an unnamed dimension is
+        ``"all"`` — so one window covers ``ps(time, lat, lon)``, ``t(time, lev,
+        lat, lon)`` and a staggered ``u(time, lat, lon_edge)``. A name that no
+        returned field carries (a consumed char string length included) is a
+        :class:`ValueError` listing the dimensions present; every other rule
+        above — time refused, bounds, never dropping a dimension, empty legal,
+        order and repetition kept — binds it unchanged. A ``select`` carrying
+        both ``axes`` and ``dims`` is a :class:`ValueError`.
 
         ``records = {"dim": <name>, "indices": [<0-based>, ...]}`` is RECORD
         PUSHDOWN — the other half of the refused time axis above. The refusal says
@@ -404,8 +493,9 @@ class NetCDFReader:
         want = {str(v) for v in variables} if variables else None
         out_vars: Dict[str, NativeField] = {}
         out_coords: Dict[str, NativeField] = {}
-        with xr.open_dataset(handle, decode_times=False, mask_and_scale=True,
-                             engine=_netcdf_engine()) as ds:
+        with _NETCDF_LOCK, xr.open_dataset(handle, decode_times=False,
+                                           mask_and_scale=True,
+                                           engine=_netcdf_engine()) as ds:
             if want is not None:
                 missing = [v for v in want if v not in ds.data_vars]
                 if missing:
@@ -413,7 +503,10 @@ class NetCDFReader:
                         f"requested variables not in blob: {sorted(missing)}; "
                         f"present data variables: {sorted(map(str, ds.data_vars))}"
                     )
-            isel = _netcdf_dim_selection(ds, select)
+            fields = [da for name, da in ds.data_vars.items()
+                      if want is None or str(name) in want]
+            fields.extend(ds.coords.values())
+            isel = _netcdf_dim_selection(ds, select, fields)
             # RECORD PUSHDOWN: the cadence owner's chosen records of its own axis,
             # folded into the same map. Without it the record axis comes back
             # whole and the caller slices afterwards — every record decoded to

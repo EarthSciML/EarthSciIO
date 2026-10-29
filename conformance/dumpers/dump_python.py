@@ -222,15 +222,17 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
             reader_kwargs["null_string"] = str(dec["null_string"])
     elif fmt == "netcdf":
         # Whole-file, but selection-capable: a case carrying an orthogonal
-        # `select` is a DECODE-TIME window — the same blob under the same cache
-        # key, with only the requested hyperslab materialised. A case without
-        # `axes` reads the blob whole (the `{all_records: true}` form).
-        if (case.get("select") or {}).get("axes") is not None:
+        # `select` — positional `axes` or named `dims` (spec/prefetch.md §2.1) —
+        # is a DECODE-TIME window: the same blob under the same cache key, with
+        # only the requested hyperslab materialised. A case with neither reads
+        # the blob whole (the `{all_records: true}` form).
+        sel = case.get("select") or {}
+        if sel.get("axes") is not None or sel.get("dims") is not None:
             reader_kwargs["select"] = case["select"]
     elif fmt == "zarr":
         # Store-backed: the reader is handed (cache, base_url, variables, select).
-        # `variables` names the arrays (no .zmetadata to enumerate); `select` (the
-        # orthogonal selection) rides in reader_kwargs and drives lazy chunk fetch.
+        # `variables` names the arrays (no .zmetadata to enumerate); `select` —
+        # either spelling — rides in reader_kwargs and drives lazy chunk fetch.
         variables = list(case["variables"])
         reader_kwargs["select"] = case.get("select")
 
