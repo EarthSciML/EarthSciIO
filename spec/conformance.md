@@ -50,6 +50,9 @@ per-track by `rust/tests/parquet_reader.rs`, `julia/test/test_parquet_reader.jl`
 and `tests/test_parquet_reader.py`.
 | `permuted-order-tile` | isrm | grid | zarr | s3 | local | **ordered** lazy orthogonal selection: a non-contiguous, PERMUTED index list is returned in the requested order exactly (a reader that sorted the indices fails), fetching 2 of 15 chunks |
 | `landfire-raster-tile` | landfire | grid | geotiff | file | local | **GeoTIFF** georef contract: `Band1` naming, `lat`/`lon` axis names from `GTModelTypeGeoKey`, **cell-centre** axes offset half a cell from the tiepoint's corner, **non-square** cells (`sx`≠`sy`), lat decreasing with row (y-up model vs y-down rows), `GDAL_NODATA`→NaN on an interior cell, int16→float64 |
+| `named-window-mixed-rank` | geosfp | grid | netcdf | file | local | a **named-dimension** `select` (`{dims: …}`, [prefetch.md](prefetch.md) §2.1) over a GEOS-FP-shaped blob with rank-2, -3 and -4 fields and a **staggered** `lon_edge` beside `lon`: one window applied by name at every rank (no positional `axes` can say this — rank 3 is both `[time, lat, lon]` and `[time, lat, lon_edge]`), a permuted `indices`, a stepped `slice`, coordinates sliced with the data, int16 CF unpacking and a masked cell inside the window, time untouched and raw |
+| `named-window-zarr` | geosfp | grid | zarr | s3 | local | the named form on a **store-backed** Zarr v2 store with a rank-3 and a rank-2 array. Every chunk object the window does not intersect is **poisoned** — committed, manifest-valid, and undecodable — so a reader that fetches one fails the case rather than quietly discarding it |
+| `window-wrap` | geosfp | grid | netcdf | file | local | the **same blob and cache key** as `named-window-mixed-rank` under `{dims: {lon: {indices: [3, 4, 0, 1]}}}` — a window across the periodic longitude seam, returned in the order given, applied to `lon` and every field on it while `lon_edge` (a different dimension) stays whole |
 
 The GeoTIFF entry is **no longer reserved**: `landfire-raster-tile` commits a
 424-byte single-band raster authored by `generate.py` with `tifffile`, so no
@@ -61,6 +64,20 @@ had asserted for as long as the reader existed.
 The **S3-store** entry remains reserved: the case + manifest shape is defined
 here, but the store-backed variant is not committed (binary hosting for a
 realistic object store is still an open decision, plan §8).
+
+### Scenarios (sequences of calls)
+
+A case pins ONE decoded dataset. Prefetch and multi-window behaviour is a
+property of a sequence of calls, so it is pinned by **scenarios**:
+`corpus/scenarios/<id>.json`, each naming its blobs (with the same per-blob
+`url`/`cache_key`/`blob_path`/`content_sha256`/`bytes` records a zarr case's
+`objects` carries, verified by `verify.py` exactly like a case's checks 1 + 2)
+and the sources, windows and parameter grid every track runs. Each track's own
+test suite drives its Provider and `PrefetchGroup` through the scenario against
+the committed corpus, offline: `multi-window`, `prefetch-equivalence` and
+`prefetch-errors` ([prefetch.md](prefetch.md) §6). Cross-track equality of the
+arrays themselves is what the decode cases already prove; a scenario proves
+each track's sequence equals its own synchronous one.
 
 ---
 
@@ -422,6 +439,19 @@ chunks out of the already-fetched blob. The reader therefore declares
   `{slice: [start, stop, step?]}` (half-open, `step` default 1). One spelling
   across every reader and every track; a caller that translates a 1-based
   model-side selection for zarr does not translate differently here.
+- **The named form** — `select = {dims: {<dim>: <axis>, …}}` spells the same
+  selectors by dimension NAME instead of position ([prefetch.md](prefetch.md)
+  §2.1): each applies to every decoded field and coordinate carrying that
+  dimension, at any rank; unnamed dimensions are `"all"`; a `select` carrying
+  both `axes` and `dims` is an error; and a named dimension that no field of the
+  read carries (a consumed string length included) is an error naming the
+  dimensions present. The positional rules below — the rank match, "an axis
+  count matching no array" — belong to `axes` alone; every other rule (bounds,
+  never dropping a dimension, empty legal, order kept, the sliced-afterwards
+  gate) binds both forms, and the named form refuses a non-`"all"` time
+  selector in the `zarr` reader too (by the dimension's name, since a store has
+  no coordinates), where the positional form historically refused none. `named-window-mixed-rank`,
+  `named-window-zarr` and `window-wrap` pin it.
 - **Axis order and base** — the axes are **positional over FILE-order dims** —
   the order `dims` reports, `[time, lev, lat, lon]` for a GEOS-FP A3dyn variable,
   which the Julia track reaches by permuting NCDatasets' reversed arrays back —

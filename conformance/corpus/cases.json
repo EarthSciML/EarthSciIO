@@ -74,6 +74,24 @@
       "file": "cases/landfire-raster-tile.json",
       "cache_key": "f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885",
       "blob_path": "cache/v1/blobs/f8/f8e152448140816b6f2edbf46333990528dfdefb6079fc0fce941bae3af02885.tif"
+    },
+    {
+      "id": "named-window-mixed-rank",
+      "file": "cases/named-window-mixed-rank.json",
+      "cache_key": "15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef",
+      "blob_path": "cache/v1/blobs/15/15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef.nc"
+    },
+    {
+      "id": "window-wrap",
+      "file": "cases/window-wrap.json",
+      "cache_key": "15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef",
+      "blob_path": "cache/v1/blobs/15/15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef.nc"
+    },
+    {
+      "id": "named-window-zarr",
+      "file": "cases/named-window-zarr.json",
+      "cache_key": "2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93",
+      "blob_path": "cache/v1/blobs/2b/2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93"
     }
   ]
 }

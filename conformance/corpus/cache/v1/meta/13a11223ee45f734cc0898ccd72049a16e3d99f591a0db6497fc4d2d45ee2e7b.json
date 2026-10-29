@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 856,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "be46172bce99534be1ed65c0b0ba93097f567ce308aa7e87250ef78520ca2efa",
+  "source_loader": "geosfp",
+  "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0000.nc"
+}

@@ -1,0 +1,321 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "prefetch-equivalence",
+  "description": "For every combination of order x depth x workers x max_bytes (and once with `windows`), the PrefetchGroup take(k) sequence must equal, member by member and BITWISE, the synchronous sequence of a FRESH provider's refresh(B[k]) (Rust: refresh's variables + coords()). Randomize decode latency with the binding's test hook so completion order varies. `expect` pins boundaries and, per member, the anchor of every epoch and which epochs are `changed` in a forward order; epochs are 0-based here (Julia adds 1).",
+  "blobs": [
+    {
+      "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0000.nc",
+      "cache_key": "13a11223ee45f734cc0898ccd72049a16e3d99f591a0db6497fc4d2d45ee2e7b",
+      "blob_path": "cache/v1/blobs/13/13a11223ee45f734cc0898ccd72049a16e3d99f591a0db6497fc4d2d45ee2e7b.nc",
+      "content_sha256": "be46172bce99534be1ed65c0b0ba93097f567ce308aa7e87250ef78520ca2efa",
+      "bytes": 856
+    },
+    {
+      "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0400.nc",
+      "cache_key": "e10c71657146eca3d71e304ce32609ffd719d9f63b7525e744a573f12320d2cf",
+      "blob_path": "cache/v1/blobs/e1/e10c71657146eca3d71e304ce32609ffd719d9f63b7525e744a573f12320d2cf.nc",
+      "content_sha256": "4b6c9a58311dc045a77a88a6edb8cc24d657939b3efd5d3f2d96da24cefbca2d",
+      "bytes": 856
+    },
+    {
+      "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0800.nc",
+      "cache_key": "1abf18541922ae873e231312606ae1bfe604ae4b81b0c790443823fc7bba0e79",
+      "blob_path": "cache/v1/blobs/1a/1abf18541922ae873e231312606ae1bfe604ae4b81b0c790443823fc7bba0e79.nc",
+      "content_sha256": "b5696ac4611cbecd21be5f59afdfeead7a8573bf90aa30a226bc3b81c7019c55",
+      "bytes": 856
+    },
+    {
+      "url": "https://data.earthsci.dev/prefetch/geosfp-2hourly.20240101_0000.nc",
+      "cache_key": "1bd6ea761e84318841388b56b17cdff242384827d3d8374f2d71a2aba4b8369d",
+      "blob_path": "cache/v1/blobs/1b/1bd6ea761e84318841388b56b17cdff242384827d3d8374f2d71a2aba4b8369d.nc",
+      "content_sha256": "0a5cb6f48861fa6ed86014346716555933ea29a9c8d881e87293fdd8a85ed10f",
+      "bytes": 592
+    },
+    {
+      "url": "https://data.earthsci.dev/prefetch/geosfp-2hourly.20240101_0600.nc",
+      "cache_key": "ced255fad716c110c79497b43b12ee677937dc58503ec86613bf2d94e6070f5a",
+      "blob_path": "cache/v1/blobs/ce/ced255fad716c110c79497b43b12ee677937dc58503ec86613bf2d94e6070f5a.nc",
+      "content_sha256": "987afbde33325d81bac3aadd615764559f214d688fc3ce028f6030ce73751385",
+      "bytes": 592
+    }
+  ],
+  "sources": {
+    "hourly": {
+      "format": "netcdf",
+      "url_template": {
+        "strftime": "https://data.earthsci.dev/prefetch/geosfp-hourly.%Y%m%d_%H%M.nc",
+        "rust": "https://data.earthsci.dev/prefetch/geosfp-hourly.[year][month][day]_[hour][minute].nc"
+      },
+      "start": "2024-01-01T00:00:00Z",
+      "start_s": 1704067200,
+      "end": "2024-01-01T12:00:00Z",
+      "end_s": 1704110400,
+      "frequency_s": 3600,
+      "file_period_s": 14400,
+      "time_dim": "time",
+      "variables": [
+        "Q",
+        "TP"
+      ],
+      "refresh_times_s": [
+        1704067200,
+        1704070800,
+        1704074400,
+        1704078000,
+        1704081600,
+        1704085200,
+        1704088800,
+        1704092400,
+        1704096000,
+        1704099600,
+        1704103200,
+        1704106800
+      ],
+      "files": [
+        {
+          "anchor": "2024-01-01T00:00:00Z",
+          "anchor_s": 1704067200,
+          "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0000.nc",
+          "in_corpus": true
+        },
+        {
+          "anchor": "2024-01-01T04:00:00Z",
+          "anchor_s": 1704081600,
+          "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0400.nc",
+          "in_corpus": true
+        },
+        {
+          "anchor": "2024-01-01T08:00:00Z",
+          "anchor_s": 1704096000,
+          "url": "https://data.earthsci.dev/prefetch/geosfp-hourly.20240101_0800.nc",
+          "in_corpus": true
+        }
+      ]
+    },
+    "two_hourly": {
+      "format": "netcdf",
+      "url_template": {
+        "strftime": "https://data.earthsci.dev/prefetch/geosfp-2hourly.%Y%m%d_%H%M.nc",
+        "rust": "https://data.earthsci.dev/prefetch/geosfp-2hourly.[year][month][day]_[hour][minute].nc"
+      },
+      "start": "2024-01-01T00:00:00Z",
+      "start_s": 1704067200,
+      "end": "2024-01-01T12:00:00Z",
+      "end_s": 1704110400,
+      "frequency_s": 7200,
+      "file_period_s": 21600,
+      "time_dim": "time",
+      "variables": [
+        "PS"
+      ],
+      "refresh_times_s": [
+        1704067200,
+        1704074400,
+        1704081600,
+        1704088800,
+        1704096000,
+        1704103200
+      ],
+      "files": [
+        {
+          "anchor": "2024-01-01T00:00:00Z",
+          "anchor_s": 1704067200,
+          "url": "https://data.earthsci.dev/prefetch/geosfp-2hourly.20240101_0000.nc",
+          "in_corpus": true
+        },
+        {
+          "anchor": "2024-01-01T06:00:00Z",
+          "anchor_s": 1704088800,
+          "url": "https://data.earthsci.dev/prefetch/geosfp-2hourly.20240101_0600.nc",
+          "in_corpus": true
+        }
+      ]
+    }
+  },
+  "members": [
+    {
+      "key": "Q1",
+      "source": "hourly",
+      "records_per_sample": 1
+    },
+    {
+      "key": "Q2",
+      "source": "hourly",
+      "records_per_sample": 2
+    },
+    {
+      "key": "PS",
+      "source": "two_hourly",
+      "records_per_sample": 1
+    }
+  ],
+  "orders": [
+    "forward",
+    "reverse",
+    [
+      3,
+      1,
+      4,
+      1,
+      5,
+      9,
+      2,
+      6,
+      5,
+      3,
+      5,
+      0,
+      11,
+      11,
+      10,
+      7,
+      8
+    ]
+  ],
+  "depth": [
+    1,
+    2,
+    3
+  ],
+  "workers": [
+    1,
+    4
+  ],
+  "max_bytes": [
+    null,
+    1
+  ],
+  "windows": [
+    {
+      "dims": {
+        "lat": {
+          "slice": [
+            1,
+            2
+          ]
+        },
+        "lon": {
+          "indices": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "dims": {
+        "lon": {
+          "slice": [
+            0,
+            3,
+            2
+          ]
+        }
+      }
+    }
+  ],
+  "expect": {
+    "boundaries_s": [
+      1704067200,
+      1704070800,
+      1704074400,
+      1704078000,
+      1704081600,
+      1704085200,
+      1704088800,
+      1704092400,
+      1704096000,
+      1704099600,
+      1704103200,
+      1704106800
+    ],
+    "anchors_s": {
+      "Q1": [
+        1704067200,
+        1704070800,
+        1704074400,
+        1704078000,
+        1704081600,
+        1704085200,
+        1704088800,
+        1704092400,
+        1704096000,
+        1704099600,
+        1704103200,
+        1704106800
+      ],
+      "Q2": [
+        1704067200,
+        1704070800,
+        1704074400,
+        1704078000,
+        1704081600,
+        1704085200,
+        1704088800,
+        1704092400,
+        1704096000,
+        1704099600,
+        1704103200,
+        1704106800
+      ],
+      "PS": [
+        1704067200,
+        1704067200,
+        1704074400,
+        1704074400,
+        1704081600,
+        1704081600,
+        1704088800,
+        1704088800,
+        1704096000,
+        1704096000,
+        1704103200,
+        1704103200
+      ]
+    },
+    "changed_forward": {
+      "Q1": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "Q2": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "PS": [
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false
+      ]
+    }
+  }
+}

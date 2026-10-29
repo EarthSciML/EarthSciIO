@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 238,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "6e10c7a5342e90924a7ca3ad0767435c2de54c416cb41a82187c524fcf1d2f6b",
+  "source_loader": "geosfp",
+  "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/.zarray"
+}

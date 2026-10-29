@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 20,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+  "source_loader": "geosfp",
+  "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/1.0.0"
+}
