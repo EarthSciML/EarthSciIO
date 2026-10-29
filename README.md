@@ -19,8 +19,10 @@ per-language implementations:
   [cache + manifest format](spec/cache-format.md)
   (`key = sha256(resolved_url)`), the three extensibility
   [registries](spec/registries.md) (transport / format / store), the
-  [offline-mode](spec/offline-mode.md) contract, and the
-  [conformance](spec/conformance.md) corpus format. JSON Schemas in
+  [offline-mode](spec/offline-mode.md) contract, the
+  [conformance](spec/conformance.md) corpus format, and
+  [epoch prefetch + named-dimension windows](spec/prefetch.md) (`sample_at`,
+  `select.dims`, `with_window`, `PrefetchGroup`). JSON Schemas in
   [`spec/schemas/`](spec/schemas).
 - **[`conformance/`](conformance/)** — offline golden fixtures + expected native
   arrays + a reference runner. `python3 conformance/verify.py` validates the

@@ -186,6 +186,118 @@
       }
     },
     {
+      "name": "dim_window",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "DimWindow",
+        "julia": "DimWindow",
+        "rust": "DimWindow"
+      }
+    },
+    {
+      "name": "prefetch_group",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "PrefetchGroup",
+        "julia": "PrefetchGroup",
+        "rust": "PrefetchGroup"
+      }
+    },
+    {
+      "name": "prefetch_sample",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "Sample",
+        "julia": "Sample",
+        "rust": "Sample"
+      }
+    },
+    {
+      "name": "epoch_sample",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "EpochSample",
+        "julia": "EpochSample",
+        "rust": "EpochSample"
+      }
+    },
+    {
+      "name": "prefetch_order",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "Order"
+      }
+    },
+    {
+      "name": "select_form",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "select_form"
+      }
+    },
+    {
+      "name": "sample_at",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "sample_at"
+      }
+    },
+    {
+      "name": "with_window",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "with_window"
+      }
+    },
+    {
+      "name": "sample_windows_at",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "sample_windows_at"
+      }
+    },
+    {
+      "name": "boundaries",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "boundaries"
+      }
+    },
+    {
+      "name": "start",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "start!"
+      }
+    },
+    {
+      "name": "take",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "take!"
+      }
+    },
+    {
+      "name": "cancel",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "cancel!"
+      }
+    },
+    {
       "name": "native_field",
       "kind": "type",
       "tier": "stable",
