@@ -42,6 +42,41 @@ end
     _assert_single_intact(root, url, payload)
 end
 
+# The same contract from `Threads.@spawn` tasks, which is how `sample_at` and
+# `PrefetchGroup` fetch (spec/prefetch.md §3.10): with more than one thread the
+# racers genuinely run in parallel, and the in-process `mkpidlock` + re-check
+# under it must still yield exactly ONE download and one intact blob. (With one
+# thread this degenerates to the cooperative case above, and must pass too.)
+@testset "concurrency — intra-process race (Threads.@spawn workers)" begin
+    src = string(tempname(), ".nc")
+    payload = rand(UInt8, 1_048_576)
+    write(src, payload)
+    root = mktempdir()
+    url = string("file://", src)
+
+    n = 4 * max(Threads.nthreads(), 2)
+    statuses = Vector{Symbol}(undef, n)
+    @sync for i in 1:n
+        Threads.@spawn begin
+            c = Cache(LocalStore(root); offline = false)
+            statuses[i] = fetch_blob(c, url).status
+        end
+    end
+    @test count(==(:downloaded), statuses) == 1
+    @test count(==(:hit), statuses) == n - 1
+    _assert_single_intact(root, url, payload)
+
+    # ...and ONE shared Cache hit from every thread at once (the PrefetchGroup
+    # shape: all members' workers fetch through the providers' cache).
+    shared = Cache(LocalStore(root); offline = false)
+    paths = Vector{String}(undef, n)
+    @sync for i in 1:n
+        Threads.@spawn paths[i] = fetch_blob(shared, url).path
+    end
+    @test all(==(paths[1]), paths)
+    @test read(paths[1]) == payload
+end
+
 @testset "concurrency — multi-process race (mkpidlock across processes)" begin
     src = string(tempname(), ".nc")
     payload = rand(UInt8, 1_048_576)                # 1 MiB: widen the race window

@@ -7,6 +7,10 @@ import Shapefile  # activates the EarthSciIOShapefileExt weakdep ext for the sha
 import Parquet2   # activates the EarthSciIOParquet2Ext weakdep ext for the parquet decode
 import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the geotiff decode
 
+# The PrefetchGroup tests take a different path on one thread (decode inside
+# take!, spec/prefetch.md §3.10) than on several; say which one this run took.
+@info "EarthSciIO tests" Threads.nthreads()
+
 @testset "EarthSciIO — Julia track: cache + transport + store + readers + provider" begin
     # component (a): cache / transport / store
     include("test_cache.jl")
@@ -24,4 +28,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
     include("test_zarr.jl")          # store-backed zarr reader: lazy orthogonal selection
     include("zarr_write_test.jl")    # zarr v3 sharded WRITER round-trip (write -> read)
     include("test_provider.jl")      # cadence + the full offline pipeline; reuses helpers
+    # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11)
+    include("test_windows.jl")       # `dims` select, sample_at, with_window, multi-window scenario
+    include("test_prefetch.jl")      # PrefetchGroup: equivalence + errors scenarios, API, fallback
 end

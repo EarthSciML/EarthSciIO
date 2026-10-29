@@ -108,3 +108,58 @@ end
     # The `len -> indices` callable is Julia's alone, and the file says so.
     @test collect(keys(records["extensions"])) == ["julia"]
 end
+
+# --- per-track selection forms (spec/registries.json `selection.forms`) ------
+#
+# `registries.json` now records, per selection-capable format, which `select`
+# FORMS (`axes`, `dims`) each track's reader takes (registries.md §2.2, "Two
+# spellings, one vocabulary"). A form this track is listed under must be one the
+# REAL reader honours: every committed corpus case of that format pinning a select
+# in that form is decoded here by the registered reader with exactly that select,
+# and must come back at the window's shape and dims. Before the `dims` form
+# existed, a `{"dims": ...}` select was silently read as no select at all and
+# returned the WHOLE array — which a shape check catches and a mere "it did not
+# throw" would not. The capability pair the entry states is checked too.
+@testset "registries.json — the selection forms it claims for Julia are Julia's" begin
+    spec = JSON.parsefile(joinpath(@__DIR__, "..", "..", "spec", "registries.json"))
+    corpus = normpath(joinpath(@__DIR__, "..", "..", "conformance", "corpus"))
+    cases = [JSON.parsefile(joinpath(corpus, e["file"]))
+             for e in JSON.parsefile(joinpath(corpus, "cases.json"))["cases"]]
+    cache = Cache(LocalStore(joinpath(corpus, "cache")); offline = true, verify = true)
+    claimed = String[]
+    for entry in spec["registries"]["format"]["entries"]
+        name = String(entry["name"])
+        haskey(FORMAT_REGISTRY, name) || continue
+        reader = FORMAT_REGISTRY[name]
+        sel = get(entry, "selection", nothing)
+        if sel === nothing
+            # no `selection` block: the reader must not claim a capability the
+            # machine-readable contract does not record
+            @test !supports_selection(reader)
+            continue
+        end
+        @test supports_selection(reader) == sel["supports_selection"]
+        @test store_backed(reader) == sel["store_backed"]
+        for f in sel["forms"]
+            @test issubset(Set(f["tracks"]), Set(["python", "julia", "rust"]))
+            "julia" in f["tracks"] || continue
+            form = String(f["form"])
+            push!(claimed, "$name:$form")
+            pinned = [c for c in cases
+                      if c["format"] == name && get(c, "select", nothing) isa AbstractDict &&
+                         haskey(c["select"], form)]
+            @test !isempty(pinned)               # a claim the corpus actually exercises
+            for c in pinned
+                nds = store_backed(reader) ?
+                    read_store(reader, cache, c["resolved_url"];
+                               variables = String.(c["variables"]), select = c["select"]) :
+                    read_native(reader, joinpath(corpus, c["blob_path"]); select = c["select"])
+                for (v, want) in c["expected"]["variables"]
+                    @test nds[v].dims == want["dims"]
+                    @test collect(size(nds[v].data)) == want["shape"]
+                end
+            end
+        end
+    end
+    @test Set(claimed) == Set(["netcdf:axes", "netcdf:dims", "zarr:axes", "zarr:dims"])
+end
