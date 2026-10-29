@@ -150,11 +150,7 @@ impl Reader for ZarrReader {
             ));
         }
         let storage = Arc::new(CacheStorage::new(cache, base_url));
-        let axes: Option<&[AxisSelect]> = match select {
-            Selection::Orthogonal(a) => Some(a.as_slice()),
-            _ => None,
-        };
-        read_arrays(storage, variables, axes)
+        read_arrays(storage, variables, select)
     }
 
     /// True only when the crate is built with the `object-store` feature — that
@@ -206,43 +202,57 @@ impl Reader for ZarrReader {
 
 /// Decode `variables` from an already-constructed `zarrs` storage (any backend:
 /// the content-addressed [`CacheStorage`] or, under the `object-store` feature, an
-/// object-store adapter). `axes` is the per-axis orthogonal selection applied to
-/// arrays whose rank matches; `None` (or a rank mismatch) reads the whole array.
+/// object-store adapter) under `select` in either spelling ([`array_selection`]).
 /// Only the chunk objects the selection intersects are retrieved (lazy).
+///
+/// Two phases, on purpose. Every array's METADATA is opened and its selection
+/// resolved — every index bounds-checked against that array's own length, and a
+/// named dimension no array carries refused — before the first chunk object is
+/// fetched, so a bad window costs metadata reads and never a chunk download
+/// (`spec/prefetch.md` §2.1: "bounds-checked … before anything is read").
 pub(crate) fn read_arrays<S>(
     storage: Arc<S>,
     variables: &[String],
-    axes: Option<&[AxisSelect]>,
+    select: &Selection,
 ) -> Result<NativeDataset>
 where
     S: zarrs::storage::ReadableStorageTraits + 'static,
 {
-    let mut out_vars = HashMap::new();
+    let mut plans = Vec::with_capacity(variables.len());
     for array_name in variables {
         let array = open_array(storage.clone(), array_name)?;
-            let shape: Vec<usize> = array.shape().iter().map(|&s| s as usize).collect();
-            let ndim = shape.len();
+        let shape: Vec<usize> = array.shape().iter().map(|&s| s as usize).collect();
+        let ndim = shape.len();
+        // Regular chunk grid: the chunk shape is uniform, so read it off chunk 0.
+        let zeros = vec![0u64; ndim];
+        let chunk_shape: Vec<usize> = array
+            .chunk_shape_usize(&zeros)
+            .map_err(|e| zarr_err(format!("chunk shape of '{array_name}': {e}")))?;
+        let dims = dim_names(&array, ndim);
+        let (dtype, is_f32) = float_dtype(&array, array_name)?;
+        plans.push(ArrayPlan { array_name, array, shape, chunk_shape, dims, dtype, is_f32 });
+    }
+    if let Selection::Named(named) = select {
+        let carried: BTreeSet<&str> =
+            plans.iter().flat_map(|p| p.dims.iter().map(String::as_str)).collect();
+        let unknown: Vec<&str> =
+            named.keys().map(String::as_str).filter(|d| !carried.contains(d)).collect();
+        if !unknown.is_empty() {
+            return Err(zarr_err(format!(
+                "select names dimension(s) {unknown:?}, which no array of this read \
+                 carries; present: {carried:?}"
+            )));
+        }
+    }
+    let mut resolved = Vec::with_capacity(plans.len());
+    for plan in plans {
+        let sel_idx = array_selection(select, &plan.dims, &plan.shape)?;
+        resolved.push((plan, sel_idx));
+    }
 
-            // Regular chunk grid: the chunk shape is uniform, so read it off chunk 0.
-            let zeros = vec![0u64; ndim];
-            let chunk_shape: Vec<usize> = array
-                .chunk_shape_usize(&zeros)
-                .map_err(|e| zarr_err(format!("chunk shape of '{array_name}': {e}")))?;
-
-            let dims = dim_names(&array, ndim);
-            let (dtype, is_f32) = float_dtype(&array, array_name)?;
-
-            // Resolve per-axis global index lists (ndim-match on the selection).
-            let sel_idx: Vec<Vec<usize>> = match axes {
-                Some(a) if a.len() == ndim => {
-                    let mut v = Vec::with_capacity(ndim);
-                    for d in 0..ndim {
-                        v.push(a[d].resolve(shape[d])?);
-                    }
-                    v
-                }
-                _ => (0..ndim).map(|d| (0..shape[d]).collect()).collect(),
-            };
+    let mut out_vars = HashMap::new();
+    for (plan, sel_idx) in resolved {
+            let ArrayPlan { array_name, array, chunk_shape, dims, dtype, is_f32, .. } = plan;
 
             // Allocate the output FIRST; a position no retrieved chunk covers stays
             // 0.0 (never reached for a valid selection). `fill_value` is NOT mapped
@@ -342,6 +352,51 @@ where
         variables: out_vars,
         coords: HashMap::new(),
     })
+}
+
+/// One array's metadata, read before any chunk is: the first phase of
+/// [`read_arrays`].
+struct ArrayPlan<'a, S> {
+    array_name: &'a String,
+    array: Array<S>,
+    shape: Vec<usize>,
+    chunk_shape: Vec<usize>,
+    dims: Vec<String>,
+    dtype: DType,
+    is_f32: bool,
+}
+
+/// One array's per-axis global index lists under `select`.
+///
+/// - [`Selection::Orthogonal`] is positional and applies only to an array whose
+///   rank equals the axis count; any other array is read whole (the existing
+///   `axes` rule for this reader).
+/// - [`Selection::Named`] applies each selector to the axis of that NAME, at any
+///   rank — `_ARRAY_DIMENSIONS`/`dimension_names`, or the synthesized `dim_<i>`
+///   when the store names none, which is therefore nameable too. A non-`All`
+///   selector on a dimension named `time` is refused, as the netcdf reader
+///   refuses one: choosing records is the Provider's (a store carries no
+///   coordinate variables here, so the name is the whole of the rule).
+fn array_selection(select: &Selection, dims: &[String], shape: &[usize]) -> Result<Vec<Vec<usize>>> {
+    let whole = |d: usize| (0..shape[d]).collect::<Vec<usize>>();
+    match select {
+        Selection::Orthogonal(a) if a.len() == shape.len() => {
+            a.iter().zip(shape).map(|(ax, &len)| ax.resolve(len)).collect()
+        }
+        Selection::Named(named) => (0..shape.len())
+            .map(|d| match named.get(&dims[d]) {
+                None | Some(AxisSelect::All) => Ok(whole(d)),
+                Some(_) if dims[d].eq_ignore_ascii_case("time") => Err(zarr_err(format!(
+                    "select asks for a subset of the time dimension '{}'; record selection \
+                     is the Provider's, not the reader's — the time axis of a `select` \
+                     must be \"all\"",
+                    dims[d]
+                ))),
+                Some(ax) => ax.resolve(shape[d]),
+            })
+            .collect(),
+        _ => Ok((0..shape.len()).map(whole).collect()),
+    }
 }
 
 /// Open the `zarrs` array `name` under the store root. The array path is

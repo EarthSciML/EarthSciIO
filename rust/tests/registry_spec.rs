@@ -190,3 +190,98 @@ fn the_records_pushdown_is_declared_for_every_track() {
     assert_eq!(records["used_by_provider"]["rust"], Value::Bool(false));
     assert_eq!(records["used_by_provider"]["julia"], Value::Bool(true));
 }
+
+/// `selection.forms` (`spec/registries.md` §2.2, "Two spellings, one
+/// vocabulary"): each selection-capable format says which tracks take the
+/// positional `axes` form and which the named `dims` form. Checked by DOING it
+/// against the corpus — a form is real in this track only if a read through it
+/// returns the window — and a reader with no `selection` block must not claim
+/// `supports_selection` either, so the block cannot silently go missing.
+#[test]
+fn declared_selection_forms_are_the_rust_readers_own() {
+    let spec = spec();
+    let registry = FormatRegistry::with_builtins();
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/corpus");
+    let cache = Arc::new(
+        earthsciio::Cache::builder()
+            .data_dir(corpus.join("cache"))
+            .offline(true)
+            .verify_on_read(true)
+            .build()
+            .unwrap(),
+    );
+    let case = |id: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(corpus.join(format!("cases/{id}.json"))).unwrap())
+            .unwrap()
+    };
+    // One corpus case per (format, form) proves the form end to end.
+    let proof = |format: &str, form: &str| -> &'static str {
+        match (format, form) {
+            ("netcdf", "axes") => "era5-window-slice",
+            ("netcdf", "dims") => "named-window-mixed-rank",
+            ("zarr", "axes") => "isrm-zarr-tile",
+            ("zarr", "dims") => "named-window-zarr",
+            other => panic!(
+                "spec/registries.json declares selection form {other:?} for the rust \
+                 track, and this test knows no corpus case proving it. Teach it."
+            ),
+        }
+    };
+
+    let mut checked = Vec::new();
+    for entry in format_entries(&spec) {
+        let name = entry["name"].as_str().unwrap();
+        let Some(reader) = registry.get(name) else {
+            continue; // a format with no Rust reader claims nothing here
+        };
+        let Some(selection) = entry.get("selection") else {
+            assert!(
+                !reader.supports_selection(),
+                "{name}: the reader honours a select but registries.json has no selection block"
+            );
+            continue;
+        };
+        assert_eq!(
+            selection["supports_selection"].as_bool(),
+            Some(reader.supports_selection()),
+            "{name}: supports_selection"
+        );
+        assert_eq!(selection["store_backed"].as_bool(), Some(reader.store_backed()), "{name}: store_backed");
+        for form in selection["forms"].as_array().expect("selection.forms") {
+            let form_name = form["form"].as_str().unwrap();
+            if !tracks(form).contains(&"rust") {
+                continue;
+            }
+            let c = case(proof(name, form_name));
+            assert_eq!(c["format"], name);
+            let select = Selection::from_json(&c["select"]).unwrap();
+            assert!(
+                matches!(
+                    (form_name, &select),
+                    ("axes", Selection::Orthogonal(_)) | ("dims", Selection::Named(_))
+                ),
+                "{name}/{form_name}: the proving case spells its select that way"
+            );
+            let ds = if reader.store_backed() {
+                let vars: Vec<String> = c["variables"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect();
+                reader.read_store(cache.clone(), c["resolved_url"].as_str().unwrap(), &vars, &select)
+            } else {
+                reader.read_native(&corpus.join(c["blob_path"].as_str().unwrap()), &[], &select)
+            }
+            .unwrap_or_else(|e| panic!("{name}/{form_name}: registries.json says rust takes it: {e}"));
+            for (var, exp) in c["expected"]["variables"].as_object().unwrap() {
+                let shape: Vec<usize> =
+                    exp["shape"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
+                assert_eq!(ds.variables[var].shape, shape, "{name}/{form_name}/{var}: the window was applied");
+            }
+            checked.push(format!("{name}/{form_name}"));
+        }
+    }
+    checked.sort();
+    assert_eq!(checked, ["netcdf/axes", "netcdf/dims", "zarr/axes", "zarr/dims"]);
+}

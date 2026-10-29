@@ -99,7 +99,7 @@ use zarrs::storage::storage_adapter::async_to_sync::{
 use zarrs_object_store::AsyncObjectStore;
 
 use super::zarr_store::SanitizedV2;
-use super::{AxisSelect, NativeDataset, OutputSchema, Selection};
+use super::{NativeDataset, OutputSchema, Selection};
 use crate::error::{Error, Result};
 // The S3 option-key vocabulary these decisions are made in, and the per-bucket
 // statement that now sits between the environment and the caller. Both live in
@@ -434,14 +434,11 @@ pub fn read_zarr_object_store_with_options(
     // The runtime must outlive the synchronous decode (the adapter blocks on it).
     let rt = runtime()?;
     let store = build_read_store(url, options, rt.handle().clone())?;
-    let axes: Option<&[AxisSelect]> = match select {
-        Selection::Orthogonal(a) => Some(a.as_slice()),
-        _ => None,
-    };
     // Selection pushdown is NOT re-implemented here: `read_arrays` is the same
-    // function the cache-backed reader calls, so `Selection::Orthogonal` fetches
-    // exactly the intersecting chunk objects on this path too.
-    super::zarr::read_arrays(store, variables, axes)
+    // function the cache-backed reader calls, so a `select` in either spelling
+    // (`Orthogonal` or `Named`) fetches exactly the intersecting chunk objects on
+    // this path too.
+    super::zarr::read_arrays(store, variables, select)
 }
 
 /// Write a sharded Zarr **v3** store to `url` through `object_store`, following

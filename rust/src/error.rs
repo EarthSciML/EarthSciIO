@@ -141,6 +141,19 @@ pub enum Error {
         /// What went wrong while decoding.
         detail: String,
     },
+
+    /// A [`PrefetchGroup`](crate::PrefetchGroup) was asked for something its
+    /// contract refuses (`spec/prefetch.md` §3): a construction it cannot honour,
+    /// a `take` of any epoch but the next one, a `take` before `start`, after
+    /// `cancel`, past the end of the order or after a stored error ended it.
+    ///
+    /// Never a wrapper around a decode failure: a member's decode error is raised
+    /// by `take` as the very error `refresh` would have raised — an offline cold
+    /// cache is [`Error::CacheMiss`], not this.
+    Prefetch {
+        /// What was refused, and what to do instead.
+        detail: String,
+    },
 }
 
 impl Error {
@@ -207,6 +220,7 @@ impl std::fmt::Display for Error {
             Error::Format { format, detail } => {
                 write!(f, "{format} decode error: {detail}")
             }
+            Error::Prefetch { detail } => write!(f, "prefetch: {detail}"),
         }
     }
 }

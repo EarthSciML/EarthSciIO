@@ -27,6 +27,12 @@
 //! `prefetch` over them — returning **raw** native arrays (remap/regrid stay
 //! upstream/downstream).
 //!
+//! On top of that sits epoch prefetch (`spec/prefetch.md`): the buffer-free
+//! [`Provider::sample_at`], named-dimension windows ([`Selection::Named`],
+//! [`DimWindow`], [`Provider::with_window`], [`Provider::sample_windows_at`]),
+//! and the [`PrefetchGroup`] that decodes upcoming forcing epochs on worker
+//! threads, bitwise identical to synchronous `refresh`.
+//!
 //! # Example — fetch (or reuse) a blob
 //!
 //! (The `cfg` guard is what lets these compile as doctests on the wasm32
@@ -110,6 +116,8 @@ pub mod manifest;
 #[cfg(not(target_arch = "wasm32"))]
 mod offline;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod prefetch;
+#[cfg(not(target_arch = "wasm32"))]
 mod provider;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod s3_config;
@@ -138,9 +146,9 @@ pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use format::{
-    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, Ff10Reader, FormatRegistry, GeoTiffReader,
-    NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Records, Selection,
-    ShapefileReader, ZarrReader,
+    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, DimWindow, Ff10Reader, FormatRegistry,
+    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Records,
+    Selection, ShapefileReader, ZarrReader,
 };
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
@@ -154,6 +162,10 @@ pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
 pub use manifest::{Manifest, MANIFEST_SCHEMA};
 #[cfg(not(target_arch = "wasm32"))]
 pub use offline::{is_offline, OFFLINE_ENV};
+#[cfg(not(target_arch = "wasm32"))]
+pub use prefetch::{
+    EpochSample, Order, PrefetchBuilder, PrefetchGroup, PrefetchStats, Sample,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use provider::{DataSource, Provider, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV};
 #[cfg(not(target_arch = "wasm32"))]
