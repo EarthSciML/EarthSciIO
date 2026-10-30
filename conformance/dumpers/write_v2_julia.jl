@@ -26,28 +26,35 @@ import JSON
 include(joinpath(@__DIR__, "codec_weakdeps.jl"))
 load_codec_weakdeps!()
 
-const DTYPE = Dict("float64" => Float64, "float32" => Float32, "int32" => Int32,
-                   "int64" => Int64, "uint8" => UInt8)
+const DTYPE = Dict(
+    "float64" => Float64, "float32" => Float32, "int32" => Int32,
+    "int64" => Int64, "uint8" => UInt8
+)
 
-_attrs(d) = Dict{String,Any}(String(k) => v for (k, v) in something(get(d, "attrs", nothing), Dict()))
+_attrs(d) = Dict{String, Any}(String(k) => v for (k, v) in something(get(d, "attrs", nothing), Dict()))
 
 function build_schema(s)
     dims = [String(d[1]) => Int(d[2]) for d in s["dims"]]
-    coords = Pair{String,Tuple{Vector,Dict{String,Any}}}[
+    coords = Pair{String, Tuple{Vector, Dict{String, Any}}}[
         String(c["name"]) => (Float64[Float64(v) for v in c["values"]], _attrs(c))
-        for c in s["coords"]]
-    var(v) = String(v["name"]) => OutputVar(String.(v["dims"]), DTYPE[String(v["dtype"])];
-                                            attrs = _attrs(v))
+            for c in s["coords"]
+    ]
+    var(v) = String(v["name"]) => OutputVar(
+        String.(v["dims"]), DTYPE[String(v["dtype"])];
+        attrs = _attrs(v)
+    )
     tm = s["time_mode"]
     time_mode = String(tm["kind"]) == "indexed" ? IndexedTime(Float64.(tm["times"])) : :append
-    return OutputSchema(; dims = dims, time_dim = String(s["time_dim"]),
-                        vars = [var(v) for v in s["vars"]],
-                        statics = [var(v) for v in s["statics"]],
-                        chunk_shape = Dict(String(k) => Int(v) for (k, v) in s["chunk_shape"]),
-                        shard_shape = Dict(String(k) => Int(v) for (k, v) in s["shard_shape"]),
-                        coords = coords, profile = Symbol(s["profile"]),
-                        attrs = _attrs(Dict("attrs" => s["group_attrs"])),
-                        time_mode = time_mode)
+    return OutputSchema(;
+        dims = dims, time_dim = String(s["time_dim"]),
+        vars = [var(v) for v in s["vars"]],
+        statics = [var(v) for v in s["statics"]],
+        chunk_shape = Dict(String(k) => Int(v) for (k, v) in s["chunk_shape"]),
+        shard_shape = Dict(String(k) => Int(v) for (k, v) in s["shard_shape"]),
+        coords = coords, profile = Symbol(s["profile"]),
+        attrs = _attrs(Dict("attrs" => s["group_attrs"])),
+        time_mode = time_mode
+    )
 end
 
 # --- the §10 generator ------------------------------------------------------
@@ -87,11 +94,11 @@ end
 mutable struct Writer_
     h::Any
     role::Symbol
-    region::Dict{String,Tuple{Int,Int}}
+    region::Dict{String, Tuple{Int, Int}}
 end
 
 error_kind(e) = e isa RegionNotShardAligned ? "RegionNotShardAligned" :
-                e isa CommitError ? "CommitError" : "Error"
+    e isa CommitError ? "CommitError" : "Error"
 
 function run_case(case, gen, out_root)
     name = String(case["name"])
@@ -103,13 +110,13 @@ function run_case(case, gen, out_root)
     rm(store; force = true, recursive = true)
     mkpath(dirname(store))
     zw = ZarrWriter()
-    writers = Dict{String,Writer_}()
-    tokens = Dict{String,CommitToken}()
+    writers = Dict{String, Writer_}()
+    tokens = Dict{String, CommitToken}()
     vars = sdict["vars"]
     statics = Dict(String(s["name"]) => s for s in sdict["statics"])
 
     function arrays_for(wr::Writer_, r)
-        out = Dict{String,Any}()
+        out = Dict{String, Any}()
         for v in vars
             vd = [String(d) for d in v["dims"]]
             partitioned = any(d -> haskey(wr.region, d), vd)
@@ -127,16 +134,22 @@ function run_case(case, gen, out_root)
         try
             if kind in ("create", "join", "resume")
                 role, n, id = parse_role(op["role"])
-                region = Dict{String,Tuple{Int,Int}}(String(d) => (Int(ab[1]), Int(ab[2]))
-                                                     for (d, ab) in op["region"])
+                region = Dict{String, Tuple{Int, Int}}(
+                    String(d) => (Int(ab[1]), Int(ab[2]))
+                        for (d, ab) in op["region"]
+                )
                 h = if kind == "resume"
                     at = op["at"]
-                    write_resume(zw, nothing, store; role = role, n_writers = n, id = id,
-                                 region = region, at = at === nothing ? nothing : Float64(at),
-                                 schema = schema)
+                    write_resume(
+                        zw, nothing, store; role = role, n_writers = n, id = id,
+                        region = region, at = at === nothing ? nothing : Float64(at),
+                        schema = schema
+                    )
                 else
-                    write_open!(zw, nothing, store, schema; role = role, n_writers = n,
-                                id = id, region = region)
+                    write_open!(
+                        zw, nothing, store, schema; role = role, n_writers = n,
+                        id = id, region = region
+                    )
                 end
                 writers[wname] = Writer_(h, role, region)
             elseif kind == "write_record"
@@ -150,8 +163,10 @@ function run_case(case, gen, out_root)
             elseif kind == "write_static"
                 wr = writers[wname]
                 s = statics[String(op["name"])]
-                write_static!(zw, wr.h, String(op["name"]),
-                              gen_array(gen, s, time_dim, wr.region, dimlen, 0))
+                write_static!(
+                    zw, wr.h, String(op["name"]),
+                    gen_array(gen, s, time_dim, wr.region, dimlen, 0)
+                )
             elseif kind == "write_blob"
                 wr = writers[wname]
                 scope = op["scope"] == "static" ? :static : (:record, Int(op["record"]))
@@ -173,15 +188,19 @@ function run_case(case, gen, out_root)
         catch e
             ok, err, msg = false, error_kind(e), sprint(showerror, e)
         end
-        push!(results, Dict("index" => k - 1, "op" => kind, "ok" => ok,
-                            "error" => err, "message" => msg))
+        push!(
+            results, Dict(
+                "index" => k - 1, "op" => kind, "ok" => ok,
+                "error" => err, "message" => msg
+            )
+        )
     end
     open(joinpath(out_root, name, "result.json"), "w") do io
         write(io, JSON.json(Dict("case" => name, "ops" => results), 1))
         write(io, "\n")
     end
     nfail = count(r -> !r["ok"], results)
-    println("[julia-writer-v2] $name: $(length(results)) ops ($nfail raised)")
+    return println("[julia-writer-v2] $name: $(length(results)) ops ($nfail raised)")
 end
 
 function main()
@@ -192,6 +211,7 @@ function main()
     for case in spec["cases"]
         run_case(case, spec["generator"], out_root)
     end
+    return
 end
 
 main()

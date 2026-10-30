@@ -283,7 +283,11 @@ fn named_dim_selection(
         .filter(|d| !carried.contains_key(*d))
         .collect();
     if !unknown.is_empty() {
-        let lengths: Vec<&str> = unknown.iter().copied().filter(|d| consumed.contains(d)).collect();
+        let lengths: Vec<&str> = unknown
+            .iter()
+            .copied()
+            .filter(|d| consumed.contains(d))
+            .collect();
         let note = if lengths.is_empty() {
             String::new()
         } else {
@@ -332,10 +336,7 @@ fn time_refused(name: &str) -> Error {
 /// the file has no such dimension. Reads metadata only.
 fn nc_dim_length(file: &NcFile, dim: &str) -> Result<Option<usize>> {
     let dims = file.dimensions().map_err(fmt_err)?;
-    Ok(dims
-        .iter()
-        .find(|d| d.name == dim)
-        .map(|d| d.size as usize))
+    Ok(dims.iter().find(|d| d.name == dim).map(|d| d.size as usize))
 }
 
 /// Fold a [`Records`] pushdown into the dimension→indices map `sel` built from
@@ -385,7 +386,12 @@ fn merge_records(
     // The reader does no wrapping: an index past the end is a mistake in the
     // caller's own record arithmetic, and reading `i % len` instead would hand
     // back a real array of the wrong record with nothing to show for it.
-    let mut bad: Vec<usize> = records.indices.iter().copied().filter(|i| *i >= len).collect();
+    let mut bad: Vec<usize> = records
+        .indices
+        .iter()
+        .copied()
+        .filter(|i| *i >= len)
+        .collect();
     bad.sort_unstable();
     bad.dedup();
     if !bad.is_empty() {
@@ -1592,7 +1598,11 @@ mod tests {
             }
         }
         build_cdf1(
-            &[("time", NREC as u32), ("lat", NLAT as u32), ("lon", NLON as u32)],
+            &[
+                ("time", NREC as u32),
+                ("lat", NLAT as u32),
+                ("lon", NLON as u32),
+            ],
             &[
                 VarSpec {
                     name: "time",
@@ -1714,8 +1724,12 @@ mod tests {
         sweeps.push(vec![3, 1, 2, 0]); // a permutation
 
         for idx in sweeps {
-            let got = read_cadence(&[], &Selection::All, Some(&Records::new("time", idx.clone())))
-                .unwrap_or_else(|e| panic!("records {idx:?}: {e}"));
+            let got = read_cadence(
+                &[],
+                &Selection::All,
+                Some(&Records::new("time", idx.clone())),
+            )
+            .unwrap_or_else(|e| panic!("records {idx:?}: {e}"));
             let (dims, shape, vals) = field_of(&got, "t2m");
             // The axis is RETAINED at the requested length and never dropped.
             assert_eq!(dims, vec!["time", "lat", "lon"], "records {idx:?}");
@@ -1749,24 +1763,36 @@ mod tests {
         assert_eq!(coord_of(&one, "time"), vec![2.0]);
 
         // Order is the order GIVEN, not sorted.
-        let rev = read_cadence(&[], &Selection::All, Some(&Records::new("time", vec![3, 1])))
-            .expect("a reversed pair");
+        let rev = read_cadence(
+            &[],
+            &Selection::All,
+            Some(&Records::new("time", vec![3, 1])),
+        )
+        .expect("a reversed pair");
         assert_eq!(
             field_of(&rev, "t2m").2,
-            vec![400.0, 401.0, 402.0, 410.0, 411.0, 412.0, 200.0, 201.0, 202.0, 210.0, 211.0, 212.0]
+            vec![
+                400.0, 401.0, 402.0, 410.0, 411.0, 412.0, 200.0, 201.0, 202.0, 210.0, 211.0, 212.0
+            ]
         );
         assert_eq!(coord_of(&rev, "time"), vec![3.0, 1.0]);
 
         // Duplicates are LEGAL — the end-of-data bracket `[last, last]` is one,
         // and a reader that de-duplicated would hand back one record where two
         // were asked for.
-        let dup = read_cadence(&[], &Selection::All, Some(&Records::new("time", vec![3, 3])))
-            .expect("the degenerate end-of-data bracket");
+        let dup = read_cadence(
+            &[],
+            &Selection::All,
+            Some(&Records::new("time", vec![3, 3])),
+        )
+        .expect("the degenerate end-of-data bracket");
         let (_, shape, vals) = field_of(&dup, "t2m");
         assert_eq!(shape, vec![2, NLAT, NLON]);
         assert_eq!(
             vals,
-            vec![400.0, 401.0, 402.0, 410.0, 411.0, 412.0, 400.0, 401.0, 402.0, 410.0, 411.0, 412.0]
+            vec![
+                400.0, 401.0, 402.0, 410.0, 411.0, 412.0, 400.0, 401.0, 402.0, 410.0, 411.0, 412.0
+            ]
         );
         assert_eq!(coord_of(&dup, "time"), vec![3.0, 3.0]);
     }
@@ -1833,21 +1859,31 @@ mod tests {
         // it does no `mod1` — `4` of a 4-record file is a mistake in the caller's
         // own arithmetic, not record 0.
         for bad in [vec![4], vec![0, 9], vec![usize::MAX]] {
-            let err = read_cadence(&[], &Selection::All, Some(&Records::new("time", bad.clone())))
-                .unwrap_err();
+            let err = read_cadence(
+                &[],
+                &Selection::All,
+                Some(&Records::new("time", bad.clone())),
+            )
+            .unwrap_err();
             let msg = format!("{err}");
             assert!(msg.contains("outside 0:3"), "records {bad:?}: {msg}");
         }
         // A dimension the blob does not have.
-        let err = read_cadence(&[], &Selection::All, Some(&Records::new("nope", vec![0])))
-            .unwrap_err();
-        assert!(format!("{err}").contains("which the blob does not have"), "{err}");
+        let err =
+            read_cadence(&[], &Selection::All, Some(&Records::new("nope", vec![0]))).unwrap_err();
+        assert!(
+            format!("{err}").contains("which the blob does not have"),
+            "{err}"
+        );
         // An EMPTY selection is an error, not a whole-axis read: a caller that
         // computed no records has a bug, and handing it every record would bury
         // it under a correct-looking array.
         let err =
             read_cadence(&[], &Selection::All, Some(&Records::new("time", vec![]))).unwrap_err();
-        assert!(format!("{err}").contains("empty selection is an error"), "{err}");
+        assert!(
+            format!("{err}").contains("empty selection is an error"),
+            "{err}"
+        );
         // `select` and `records` may not both narrow the same dimension.
         let sel = Selection::Orthogonal(vec![
             AxisSelect::All,

@@ -5,6 +5,7 @@ The files under spec/ stay the source of truth; this copies them with Hugo front
 matter, turns links between spec documents into site links, and points links to
 anything else in the repo at GitHub. Output is never committed.
 """
+
 import re
 import shutil
 from pathlib import Path
@@ -14,8 +15,16 @@ SPEC = ROOT / "spec"
 OUT = ROOT / "docs" / "content" / "generated" / "spec"
 GITHUB = "https://github.com/EarthSciML/EarthSciIO/blob/main"
 
-ORDER = ["README", "cache-format", "registries", "offline-mode", "conformance", "prefetch",
-         "cloud-future", "parquet-bindings-handoff"]
+ORDER = [
+    "README",
+    "cache-format",
+    "registries",
+    "offline-mode",
+    "conformance",
+    "prefetch",
+    "cloud-future",
+    "parquet-bindings-handoff",
+]
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
@@ -47,7 +56,9 @@ def convert(text: str, name: str) -> str:
 def main() -> None:
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True)
-    names = sorted((p.stem for p in SPEC.glob("*.md")), key=lambda s: (ORDER.index(s) if s in ORDER else 99, s))
+    names = sorted(
+        (p.stem for p in SPEC.glob("*.md")), key=lambda s: (ORDER.index(s) if s in ORDER else 99, s)
+    )
     for weight, stem in enumerate(names, start=1):
         text = (SPEC / f"{stem}.md").read_text(encoding="utf-8")
         title = next((l[2:].strip() for l in text.splitlines() if l.startswith("# ")), stem)

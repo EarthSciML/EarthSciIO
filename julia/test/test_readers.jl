@@ -24,10 +24,10 @@ _corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
 # private dimension — has no axes to permute, and needs its own method:
 # `permutedims` with an EMPTY permutation throws on Julia 1.10 (CI's version)
 # while working on 1.12, so without this the suite passes locally and fails there.
-_corder(a::AbstractArray{<:Any,0}) = collect(vec(a))
+_corder(a::AbstractArray{<:Any, 0}) = collect(vec(a))
 
-const READER_ATOL = 1e-6
-const READER_RTOL = 1e-9
+const READER_ATOL = 1.0e-6
+const READER_RTOL = 1.0e-9
 
 # Returns `nothing` on match, else an error string (so the testset can @test it).
 function cmp_native_numeric(got::AbstractArray, expected_nested)
@@ -84,8 +84,10 @@ end
                 # variables, select) — a Zarr store is many objects, not one blob.
                 zcache = Cache(LocalStore(joinpath(CORPUS, "cache")); offline = true, verify = true)
                 vars = String[String(v) for v in case["variables"]]
-                nds = read_store(reader, zcache, case["resolved_url"];
-                                 variables = vars, select = case["select"])
+                nds = read_store(
+                    reader, zcache, case["resolved_url"];
+                    variables = vars, select = case["select"]
+                )
             else
                 kwargs = if fmt == "csv"
                     (; numeric_columns = String.(case["decode"]["numeric_columns"]))
@@ -93,7 +95,7 @@ end
                     # forward the zip member selection + header handling the case
                     # pins (member/members/member_glob/skip_header_row).
                     dec = case["decode"]
-                    kw = Dict{Symbol,Any}(
+                    kw = Dict{Symbol, Any}(
                         :numeric_columns => String.(dec["numeric_columns"]),
                         :kind => String(get(dec, "kind", "point")),
                         :member => get(dec, "member", nothing),
@@ -109,7 +111,7 @@ end
                     # forward the `.shp` member inside the zip blob + the text
                     # code column the case wants as a number.
                     dec = case["decode"]
-                    kw = Dict{Symbol,Any}()
+                    kw = Dict{Symbol, Any}()
                     m = get(dec, "member", nothing)
                     m === nothing || (kw[:member] = String(m))
                     nc = get(dec, "numeric_columns", nothing)
@@ -121,7 +123,7 @@ end
                     # columnar case decodes to a different field set and a
                     # different dtype without them.
                     dec = case["decode"]
-                    kw = Dict{Symbol,Any}()
+                    kw = Dict{Symbol, Any}()
                     vars = get(case, "variables", nothing)
                     vars === nothing || (kw[:variables] = String.(vars))
                     fc = get(dec, "float_columns", nothing)
@@ -150,8 +152,8 @@ end
                 field = nds[name]
                 @test dtype_ok(field.data, spec["dtype"])
                 err = spec["dtype"] == "string" ?
-                      cmp_native_string(field.data, spec["data"]) :
-                      cmp_native_numeric(field.data, spec["data"])
+                    cmp_native_string(field.data, spec["data"]) :
+                    cmp_native_numeric(field.data, spec["data"])
                 err === nothing || @info "decode mismatch" id name err
                 @test err === nothing
             end
@@ -200,9 +202,9 @@ end
 
     # An EMPTY list reads every variable, NOT none (spec/conformance.md §3).
     @test variable_names(read_native(reader, blob; variables = String[])) ==
-          variable_names(full)
+        variable_names(full)
     @test variable_names(read_native(reader, blob; variables = nothing)) ==
-          variable_names(full)
+        variable_names(full)
 
     # An absent name is an error naming what IS present, never a missing array.
     err = try
@@ -220,8 +222,10 @@ end
     # reader call when the reader declares it.
     @test :variables in reader_option_keys(reader)
     cache = Cache(LocalStore(joinpath(CORPUS, "cache")); offline = true, verify = true)
-    p = const_provider(cache, era5_case["resolved_url"];
-                       format = "netcdf", variables = ["t2m"])
+    p = const_provider(
+        cache, era5_case["resolved_url"];
+        format = "netcdf", variables = ["t2m"]
+    )
     pushed = materialize(p)
     @test variable_names(pushed) == ["t2m"]
     @test isequal(pushed["t2m"].data, full["t2m"].data)
@@ -255,8 +259,10 @@ end
     # An explicit index list is returned in the ORDER GIVEN (the zarr reader's
     # rule): a reader that sorted the indices, or read a bounding slab and forgot
     # to gather, fails here.
-    perm = read_native(reader, blob;
-                       select = Dict("axes" => Any["all", "all", Dict("indices" => [2, 0])]))
+    perm = read_native(
+        reader, blob;
+        select = Dict("axes" => Any["all", "all", Dict("indices" => [2, 0])])
+    )
     @test isequal(perm["t2m"].data, full["t2m"].data[:, :, [3, 1]])
     @test perm["longitude"].data == full["longitude"].data[[3, 1]]
 
@@ -268,8 +274,10 @@ end
     # Time is the PROVIDER's axis (it owns the cadence), so a time selection is
     # refused rather than quietly honoured.
     e = try
-        read_native(reader, blob;
-                    select = Dict("axes" => Any[Dict("indices" => [0]), "all", "all"]))
+        read_native(
+            reader, blob;
+            select = Dict("axes" => Any[Dict("indices" => [0]), "all", "all"])
+        )
         nothing
     catch err
         err
@@ -278,14 +286,18 @@ end
     @test occursin("time", sprint(showerror, e))
 
     # An axis count matching no array is an error, not a silently ignored select.
-    @test_throws ArgumentError read_native(reader, blob;
-                                           select = Dict("axes" => Any["all", "all"]))
+    @test_throws ArgumentError read_native(
+        reader, blob;
+        select = Dict("axes" => Any["all", "all"])
+    )
 
     # A FULL-EXTENT selection must be the no-selection read, exactly — both
     # spellings of "everything" still go down the windowed code path, so this is
     # the read that catches an off-by-one in the slab planner.
-    for axes in (Any["all", Dict("slice" => [0, 3]), Dict("slice" => [0, 3])],
-                 Any["all", Dict("indices" => [0, 1, 2]), Dict("indices" => [0, 1, 2])])
+    for axes in (
+            Any["all", Dict("slice" => [0, 3]), Dict("slice" => [0, 3])],
+            Any["all", Dict("indices" => [0, 1, 2]), Dict("indices" => [0, 1, 2])],
+        )
         everything = read_native(reader, blob; select = Dict("axes" => axes))
         for name in ("t2m", "sp")
             @test size(everything[name].data) == size(full[name].data)
@@ -346,12 +358,14 @@ end
     # ...and the per-call select is a peek: the next plain read is the full array.
     @test size(materialize(p)["t2m"].data) == size(full["t2m"].data)
 
-    pb = const_provider(cache, era5_case["resolved_url"]; format = "netcdf",
-                        reader_kwargs = (; select = sel))
+    pb = const_provider(
+        cache, era5_case["resolved_url"]; format = "netcdf",
+        reader_kwargs = (; select = sel)
+    )
     @test isequal(materialize(pb)["t2m"].data, full["t2m"].data[:, 2:3, [1, 3]])
     # a per-call select OVERRIDES the baked one
     @test size(materialize(pb; select = Dict("axes" => Any["all", "all", "all"]))["t2m"].data) ==
-          size(full["t2m"].data)
+        size(full["t2m"].data)
 end
 
 import NCDatasets   # authors the NC_STRING fixture; also read directly below
@@ -376,63 +390,67 @@ import NCDatasets   # authors the NC_STRING fixture; also read directly below
 # (`value` lives on it), so `label` is three ONE-character strings.
 const CHAR_VAR_CDF1 = hex2bytes(
     "43444601000000000000000a00000001" *
-    "000000016e0000000000000300000000" *
-    "000000000000000b0000000200000005" *
-    "76616c75650000000000000100000000" *
-    "0000000000000000000000050000000c" *
-    "0000007c000000056c6162656c000000" *
-    "00000001000000000000000000000000" *
-    "0000000200000004000000883f800000" *
-    "400000004040000061626300")
+        "000000016e0000000000000300000000" *
+        "000000000000000b0000000200000005" *
+        "76616c75650000000000000100000000" *
+        "0000000000000000000000050000000c" *
+        "0000007c000000056c6162656c000000" *
+        "00000001000000000000000000000000" *
+        "0000000200000004000000883f800000" *
+        "400000004040000061626300"
+)
 
 # The same file with an interior NUL: `char label(n) = "a\0c"`. A NUL cell is the
 # EMPTY string (numpy's `|S1` of a NUL byte is `b""`), never `"\0"`.
 const CHAR_HOLES_CDF1 = hex2bytes(
     "43444601000000000000000a00000001" *
-    "000000016e0000000000000300000000" *
-    "000000000000000b0000000200000005" *
-    "76616c75650000000000000100000000" *
-    "0000000000000000000000050000000c" *
-    "0000007c000000056c6162656c000000" *
-    "00000001000000000000000000000000" *
-    "0000000200000004000000883f800000" *
-    "400000004040000061006300")
+        "000000016e0000000000000300000000" *
+        "000000000000000b0000000200000005" *
+        "76616c75650000000000000100000000" *
+        "0000000000000000000000050000000c" *
+        "0000007c000000056c6162656c000000" *
+        "00000001000000000000000000000000" *
+        "0000000200000004000000883f800000" *
+        "400000004040000061006300"
+)
 
 # dims `n=4` and a PRIVATE `strlen=4`; `float value(n)` and `char label(n,
 # strlen)` = "ab", "cd  ", "efgh", "". Nothing but `label` uses `strlen`, so
 # `strlen` is the string length: four strings on `dims == ["n"]`.
 const STRING_ROWS_CDF1 = hex2bytes(
     "43444601000000000000000a00000002" *
-    "000000016e0000000000000400000006" *
-    "7374726c656e00000000000400000000" *
-    "000000000000000b0000000200000005" *
-    "76616c75650000000000000100000000" *
-    "00000000000000000000000500000010" *
-    "00000090000000056c6162656c000000" *
-    "00000002000000000000000100000000" *
-    "000000000000000200000010000000a0" *
-    "3f800000400000004040000040800000" *
-    "61620000636420206566676800000000")
+        "000000016e0000000000000400000006" *
+        "7374726c656e00000000000400000000" *
+        "000000000000000b0000000200000005" *
+        "76616c75650000000000000100000000" *
+        "00000000000000000000000500000010" *
+        "00000090000000056c6162656c000000" *
+        "00000002000000000000000100000000" *
+        "000000000000000200000010000000a0" *
+        "3f800000400000004040000040800000" *
+        "61620000636420206566676800000000"
+)
 
 # dims `n=3` and a private `strlen=5`; `float value(n)` and a ONE-dimensional
 # `char label(strlen)` = "hi". Its only dimension is the length, so the field is
 # a SCALAR string: `dims == []`.
 const SCALAR_STRING_CDF1 = hex2bytes(
     "43444601000000000000000a00000002" *
-    "000000016e0000000000000300000006" *
-    "7374726c656e00000000000500000000" *
-    "000000000000000b0000000200000005" *
-    "76616c75650000000000000100000000" *
-    "0000000000000000000000050000000c" *
-    "0000008c000000056c6162656c000000" *
-    "00000001000000010000000000000000" *
-    "0000000200000008000000983f800000" *
-    "40000000404000006869000000000000")
+        "000000016e0000000000000300000006" *
+        "7374726c656e00000000000500000000" *
+        "000000000000000b0000000200000005" *
+        "76616c75650000000000000100000000" *
+        "0000000000000000000000050000000c" *
+        "0000008c000000056c6162656c000000" *
+        "00000001000000010000000000000000" *
+        "0000000200000008000000983f800000" *
+        "40000000404000006869000000000000"
+)
 
 # Run `f` over a temp file holding `bytes` (the corpus blobs are extension-less,
 # and so are these — the reader is handed a path, never a name to sniff).
 function _with_nc_blob(f, bytes)
-    mktempdir() do dir
+    return mktempdir() do dir
         path = joinpath(dir, "blob.nc")
         write(path, bytes)
         return f(path)
@@ -528,8 +546,10 @@ end
         # string LENGTH, and then apply that selector BY NAME to every other array
         # in the blob — here it would hand back "ab"/"cd"/"ef" and call it a window.
         e = try
-            read_native(reader, path;
-                        select = Dict("axes" => Any["all", Dict("indices" => [0, 1])]))
+            read_native(
+                reader, path;
+                select = Dict("axes" => Any["all", Dict("indices" => [0, 1])])
+            )
             nothing
         catch err
             err
@@ -572,8 +592,10 @@ end
             @test e isa ArgumentError
             @test occursin("string LENGTH", sprint(showerror, e))
             # a selector on a REAL axis of the field still applies, of course
-            @test EarthSciIO._netcdf_text_select(ds, v, ["n"], data,
-                                                 Dict("n" => [0, 2])) == ["ab", "efgh"]
+            @test EarthSciIO._netcdf_text_select(
+                ds, v, ["n"], data,
+                Dict("n" => [0, 2])
+            ) == ["ab", "efgh"]
         end
     end
 end
@@ -628,8 +650,10 @@ struct LastRecord end
 
     # `variables`, `select` and `records` all compose: project, window, then records.
     sel = Dict("axes" => Any["all", Dict("slice" => [1, 3]), Dict("indices" => [0, 2])])
-    all3 = read_native(reader, blob; variables = ["t2m"], select = sel,
-                       records = Dict("dim" => "time", "indices" => [1]))
+    all3 = read_native(
+        reader, blob; variables = ["t2m"], select = sel,
+        records = Dict("dim" => "time", "indices" => [1])
+    )
     @test variable_names(all3) == ["t2m"]
     @test isequal(all3["t2m"].data, full["t2m"].data[2:2, 2:3, [1, 3]])
     @test all3["latitude"].data == full["latitude"].data[2:3]
@@ -648,46 +672,68 @@ struct LastRecord end
         @test occursin("outside 0:1", sprint(showerror, e))
     end
     # a dimension the blob does not have, an empty selection, and a malformed shape
-    @test_throws ArgumentError read_native(reader, blob;
-        records = Dict("dim" => "nope", "indices" => [0]))
-    @test_throws ArgumentError read_native(reader, blob;
-        records = Dict("dim" => "time", "indices" => Int[]))
+    @test_throws ArgumentError read_native(
+        reader, blob;
+        records = Dict("dim" => "nope", "indices" => [0])
+    )
+    @test_throws ArgumentError read_native(
+        reader, blob;
+        records = Dict("dim" => "time", "indices" => Int[])
+    )
     @test_throws ArgumentError read_native(reader, blob; records = Dict("dim" => "time"))
     # `select` and `records` may not both narrow the same axis
-    @test_throws ArgumentError read_native(reader, blob;
+    @test_throws ArgumentError read_native(
+        reader, blob;
         select = Dict("axes" => Any["all", Dict("slice" => [1, 3]), "all"]),
-        records = Dict("dim" => "latitude", "indices" => [0]))
+        records = Dict("dim" => "latitude", "indices" => [0])
+    )
 
     # The CALLABLE `indices`: resolved against the axis length inside this
     # reader's own open, so a caller whose record choice depends on that length
     # (`mod1(tick, len)`) does not have to open the blob a second time to learn
     # it. Same answer as the equivalent literal list.
     seen = Int[]
-    cb = read_native(reader, blob; records = Dict("dim" => "time",
-        "indices" => len -> (push!(seen, len); [len - 1])))
+    cb = read_native(
+        reader, blob; records = Dict(
+            "dim" => "time",
+            "indices" => len -> (push!(seen, len); [len - 1])
+        )
+    )
     @test seen == [2]                                  # told the real axis length
     @test isequal(cb["t2m"].data, full["t2m"].data[2:2, :, :])
     @test cb["time"].data == full["time"].data[2:2]
     # a resolver that returns something out of range is checked like any other list
-    @test_throws ArgumentError read_native(reader, blob;
-        records = Dict("dim" => "time", "indices" => len -> [len]))
+    @test_throws ArgumentError read_native(
+        reader, blob;
+        records = Dict("dim" => "time", "indices" => len -> [len])
+    )
     # a blob with no such dimension does NOT call the resolver and narrows
     # nothing — the answer a caller that had probed with `dim_length` would give
     # itself — while a LITERAL list against a missing dimension stays an error.
     called = Ref(false)
-    absent = read_native(reader, blob; records = Dict("dim" => "no-such-dim",
-        "indices" => len -> (called[] = true; Int[])))
+    absent = read_native(
+        reader, blob; records = Dict(
+            "dim" => "no-such-dim",
+            "indices" => len -> (called[] = true; Int[])
+        )
+    )
     @test !called[]
     @test isequal(absent["t2m"].data, full["t2m"].data)
     # "Callable" means callable, not `isa Function`: a callable STRUCT is the
     # spelling a caller with per-file state reaches for, and it must resolve
     # rather than fall through to the list branch and die in `iterate`.
-    fn = read_native(reader, blob;
-                     records = Dict("dim" => "time", "indices" => LastRecord()))
+    fn = read_native(
+        reader, blob;
+        records = Dict("dim" => "time", "indices" => LastRecord())
+    )
     @test isequal(fn["t2m"].data, full["t2m"].data[2:2, :, :])
-    @test isequal(read_native(reader, blob;
-        records = Dict("dim" => "no-such-dim", "indices" => LastRecord()))["t2m"].data,
-        full["t2m"].data)
+    @test isequal(
+        read_native(
+            reader, blob;
+            records = Dict("dim" => "no-such-dim", "indices" => LastRecord())
+        )["t2m"].data,
+        full["t2m"].data
+    )
 end
 
 @testset "reader edge cases" begin
@@ -695,8 +741,10 @@ end
     # list (the store cannot be enumerated without a consolidated .zmetadata).
     @test status_of(FORMAT_REGISTRY, "zarr") == :active
     @test store_backed(FORMAT_REGISTRY["zarr"])
-    @test_throws ErrorException read_store(FORMAT_REGISTRY["zarr"], Cache(; offline = true),
-                                           "s3://b/z"; variables = nothing)
+    @test_throws ErrorException read_store(
+        FORMAT_REGISTRY["zarr"], Cache(; offline = true),
+        "s3://b/z"; variables = nothing
+    )
 
     # CSV inference fallback: with no numeric_columns, digit-only TEXT would be
     # mis-inferred as numeric — which is exactly why the loader must pass the
@@ -728,17 +776,25 @@ function _ff10_fixture_text()
         occursin(',', nm) && (r[idx["FACILITY_NAME"]] = "\"" * nm * "\"")
         return join(r, ',')
     end
-    stack = ["COUNTRY_CD"=>"US", "REGION_CD"=>"01001", "FACILITY_ID"=>"F001",
-             "UNIT_ID"=>"U1", "REL_POINT_ID"=>"R1", "PROCESS_ID"=>"P1",
-             "SCC"=>"0030700101", "FACILITY_NAME"=>"Autauga Plant, Unit 1",
-             "STKHGT"=>"100.0", "STKTEMP"=>"500.0", "LONGITUDE"=>"-86.51045",
-             "LATITUDE"=>"32.43878", "ZIPCODE"=>"00000"]
-    lines = ["#FORMAT=FF10_POINT", "#COUNTRY US", "",
-             mkrow([stack; ["POLID"=>"NOX", "ANN_VALUE"=>"123.45"]]),
-             mkrow([stack; ["POLID"=>"SO2", "ANN_VALUE"=>"67.89"]]),
-             mkrow(["COUNTRY_CD"=>"US", "REGION_CD"=>"01001", "FACILITY_ID"=>"F002",
-                    "POLID"=>"PM25", "ANN_VALUE"=>"4.2",
-                    "FACILITY_NAME"=>"Plain Name"])]
+    stack = [
+        "COUNTRY_CD" => "US", "REGION_CD" => "01001", "FACILITY_ID" => "F001",
+        "UNIT_ID" => "U1", "REL_POINT_ID" => "R1", "PROCESS_ID" => "P1",
+        "SCC" => "0030700101", "FACILITY_NAME" => "Autauga Plant, Unit 1",
+        "STKHGT" => "100.0", "STKTEMP" => "500.0", "LONGITUDE" => "-86.51045",
+        "LATITUDE" => "32.43878", "ZIPCODE" => "00000",
+    ]
+    lines = [
+        "#FORMAT=FF10_POINT", "#COUNTRY US", "",
+        mkrow([stack; ["POLID" => "NOX", "ANN_VALUE" => "123.45"]]),
+        mkrow([stack; ["POLID" => "SO2", "ANN_VALUE" => "67.89"]]),
+        mkrow(
+            [
+                "COUNTRY_CD" => "US", "REGION_CD" => "01001", "FACILITY_ID" => "F002",
+                "POLID" => "PM25", "ANN_VALUE" => "4.2",
+                "FACILITY_NAME" => "Plain Name",
+            ]
+        ),
+    ]
     return join(lines, '\n') * '\n'
 end
 
@@ -826,18 +882,22 @@ end
 # prove the read order is sorted-name.
 function _ff10_egu_zip(dir)
     member(rows) = "#FORMAT=FF10_POINT\n" * _ff10_header_line() * "\n" *
-                   join(rows, '\n') * "\n"
+        join(rows, '\n') * "\n"
     zippath = joinpath(dir, "2016fd_inputs_point.zip")
     w = ZipFile.Writer(zippath)
     # a glob-matching DIRECTORY placeholder entry (like the real 2016fd
     # `…/ptegu/`) — selection must ignore it (file members only).
     ZipFile.addfile(w, "point_egu/")
     for (name, rows) in [
-        ("point/egu_beta.csv", [_ff10_tiny_row("F202", "NOX", "333.3")]),
-        ("point/egu_alpha.csv", [_ff10_tiny_row("F101", "NOX", "111.1"),
-                                 _ff10_tiny_row("F101", "SO2", "22.2")]),
-        ("point/ptnonipm.csv", [_ff10_tiny_row("F999", "NOX", "999.9")]),
-    ]
+            ("point/egu_beta.csv", [_ff10_tiny_row("F202", "NOX", "333.3")]),
+            (
+                "point/egu_alpha.csv", [
+                    _ff10_tiny_row("F101", "NOX", "111.1"),
+                    _ff10_tiny_row("F101", "SO2", "22.2"),
+                ],
+            ),
+            ("point/ptnonipm.csv", [_ff10_tiny_row("F999", "NOX", "999.9")]),
+        ]
         f = ZipFile.addfile(w, name)
         write(f, member(rows))
     end
@@ -851,48 +911,64 @@ end
 
     # glob selects BOTH egu members (not ptnonipm); rows concatenate in sorted
     # member-name order (alpha's 2 rows, then beta's 1); one header dropped each.
-    nds = read_native(FF10Reader(), zippath;
-                      member_glob = "*egu*", skip_header_row = true)
+    nds = read_native(
+        FF10Reader(), zippath;
+        member_glob = "*egu*", skip_header_row = true
+    )
     @test nds["FACILITY_ID"].data == ["F101", "F101", "F202"]
     @test nds["ANN_VALUE"].data == [111.1, 22.2, 333.3]
     @test !("F999" in nds["FACILITY_ID"].data)
 
     # a glob matching zero members is an error, not a silent empty.
-    @test_throws ArgumentError read_native(FF10Reader(), zippath;
-                                           member_glob = "*nope*")
+    @test_throws ArgumentError read_native(
+        FF10Reader(), zippath;
+        member_glob = "*nope*"
+    )
 
     # explicit members ∪ glob, deduplicated, sorted.
-    both = read_native(FF10Reader(), zippath;
-                       members = ["point/ptnonipm.csv", "point/egu_alpha.csv"],
-                       member_glob = "*egu*", skip_header_row = true)
+    both = read_native(
+        FF10Reader(), zippath;
+        members = ["point/ptnonipm.csv", "point/egu_alpha.csv"],
+        member_glob = "*egu*", skip_header_row = true
+    )
     @test both["FACILITY_ID"].data == ["F101", "F101", "F202", "F999"]
 
     # an explicit member absent from the archive is an error.
-    @test_throws ArgumentError read_native(FF10Reader(), zippath;
-                                           members = ["point/absent.csv"],
-                                           skip_header_row = true)
+    @test_throws ArgumentError read_native(
+        FF10Reader(), zippath;
+        members = ["point/absent.csv"],
+        skip_header_row = true
+    )
 
     # without skip_header_row the header line is a 77-field data row that dies
     # at the numeric parse of ann_value (it is NOT silently accepted).
-    @test_throws ArgumentError read_native(FF10Reader(), zippath;
-                                           member_glob = "*egu*")
+    @test_throws ArgumentError read_native(
+        FF10Reader(), zippath;
+        member_glob = "*egu*"
+    )
 
     # singular member + skip_header_row composes.
-    one = read_native(FF10Reader(), zippath;
-                      member = "point/egu_beta.csv", skip_header_row = true)
+    one = read_native(
+        FF10Reader(), zippath;
+        member = "point/egu_beta.csv", skip_header_row = true
+    )
     @test one["FACILITY_ID"].data == ["F202"]
 
     # `member` is mutually exclusive with `members`/`member_glob`.
-    @test_throws ArgumentError read_native(FF10Reader(), zippath;
-                                           member = "point/egu_beta.csv",
-                                           member_glob = "*egu*")
+    @test_throws ArgumentError read_native(
+        FF10Reader(), zippath;
+        member = "point/egu_beta.csv",
+        member_glob = "*egu*"
+    )
 
     # asserting a header on an input that has none errors — never a silently
     # dropped data row.
     bare = joinpath(dir, "noheader.csv")
     write(bare, _ff10_fixture_text())
-    @test_throws ArgumentError read_native(FF10Reader(), bare;
-                                           skip_header_row = true)
+    @test_throws ArgumentError read_native(
+        FF10Reader(), bare;
+        skip_header_row = true
+    )
 end
 
 @testset "FF10 reader — glob matcher semantics" begin

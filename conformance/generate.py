@@ -111,7 +111,7 @@ def write_json(path: pathlib.Path, obj: dict) -> None:
 def build_era5_netcdf() -> tuple[bytes, dict, dict]:
     from netCDF4 import Dataset  # lazy: only the netcdf fixture needs it
 
-    lat = np.array([40.0, 39.5, 39.0], dtype="f8")        # N->S, ERA5 order
+    lat = np.array([40.0, 39.5, 39.0], dtype="f8")  # N->S, ERA5 order
     lon = np.array([-122.0, -121.5, -121.0], dtype="f8")  # Camp Fire vicinity
     time = np.array([0, 1], dtype="i4")  # hours since 2018-11-08 00:00:00
 
@@ -121,12 +121,12 @@ def build_era5_netcdf() -> tuple[bytes, dict, dict]:
     fill_short = np.int16(-32767)
     t2m_decoded = np.array(
         [
-            [[282.50, 282.75, 283.00],
-             [283.25, 283.50, 283.75],
-             [284.00, 284.25, 284.50]],
-            [[282.60, 282.85, 283.10],
-             [283.35, 283.60, 283.85],
-             [284.10, 284.35, np.nan]],  # one masked cell -> _FillValue on disk
+            [[282.50, 282.75, 283.00], [283.25, 283.50, 283.75], [284.00, 284.25, 284.50]],
+            [
+                [282.60, 282.85, 283.10],
+                [283.35, 283.60, 283.85],
+                [284.10, 284.35, np.nan],
+            ],  # one masked cell -> _FillValue on disk
         ],
         dtype="f8",
     )
@@ -139,12 +139,16 @@ def build_era5_netcdf() -> tuple[bytes, dict, dict]:
     # sp: plain float64 surface pressure (Pa), no packing, no fills.
     sp = np.array(
         [
-            [[100000.0, 100100.0, 100200.0],
-             [100300.0, 100400.0, 100500.0],
-             [100600.0, 100700.0, 100800.0]],
-            [[100050.0, 100150.0, 100250.0],
-             [100350.0, 100450.0, 100550.0],
-             [100650.0, 100750.0, 100850.0]],
+            [
+                [100000.0, 100100.0, 100200.0],
+                [100300.0, 100400.0, 100500.0],
+                [100600.0, 100700.0, 100800.0],
+            ],
+            [
+                [100050.0, 100150.0, 100250.0],
+                [100350.0, 100450.0, 100550.0],
+                [100650.0, 100750.0, 100850.0],
+            ],
         ],
         dtype="f8",
     )
@@ -175,8 +179,7 @@ def build_era5_netcdf() -> tuple[bytes, dict, dict]:
     vtime.standard_name = "time"
     vtime[:] = time
 
-    vt2m = ds.createVariable("t2m", "i2", ("time", "latitude", "longitude"),
-                             fill_value=fill_short)
+    vt2m = ds.createVariable("t2m", "i2", ("time", "latitude", "longitude"), fill_value=fill_short)
     # Write the already-packed int16 verbatim: disable netCDF4's auto pack/mask
     # so our hand-computed raw values (and the -32767 fill cell) land as-is. CF
     # decoding happens on READ (xarray / NCDatasets / netcdf-rs), not on write.
@@ -199,8 +202,10 @@ def build_era5_netcdf() -> tuple[bytes, dict, dict]:
 
     # Expected native arrays = CF-decoded float64 (fill -> null/NaN).
     def f64(a):
-        return [[[None if np.isnan(v) else round(float(v), 10) for v in row]
-                 for row in slab] for slab in a]
+        return [
+            [[None if np.isnan(v) else round(float(v), 10) for v in row] for row in slab]
+            for slab in a
+        ]
 
     expected = {
         "variables": {
@@ -238,7 +243,6 @@ def build_era5_netcdf() -> tuple[bytes, dict, dict]:
     return data, expected, decode
 
 
-
 # -----------------------------------------------------------------------------
 # Fixture 1b — the SAME ERA5 blob read through a decode-time `select`
 # (transport=file, format=netcdf).
@@ -256,8 +260,8 @@ ERA5_WINDOW = {"axes": ["all", {"slice": [1, 3]}, {"indices": [0, 2]}]}
 def window_era5_expected(expected: dict) -> dict:
     """Slice the full ERA5 expectation by ERA5_WINDOW — the oracle stated as
     "the full read, sliced afterwards", which is exactly the acceptance gate."""
-    lat = [1, 2]      # {"slice": [1, 3]}
-    lon = [0, 2]      # {"indices": [0, 2]}
+    lat = [1, 2]  # {"slice": [1, 3]}
+    lon = [0, 2]  # {"indices": [0, 2]}
     out_vars = {}
     for name, spec in expected["variables"].items():
         data = [[[slab[y][x] for x in lon] for y in lat] for slab in spec["data"]]
@@ -270,10 +274,14 @@ def window_era5_expected(expected: dict) -> dict:
         }
     coords = expected["coords"]
     out_coords = {
-        "latitude": {"dtype": coords["latitude"]["dtype"],
-                     "data": [coords["latitude"]["data"][y] for y in lat]},
-        "longitude": {"dtype": coords["longitude"]["dtype"],
-                      "data": [coords["longitude"]["data"][x] for x in lon]},
+        "latitude": {
+            "dtype": coords["latitude"]["dtype"],
+            "data": [coords["latitude"]["data"][y] for y in lat],
+        },
+        "longitude": {
+            "dtype": coords["longitude"]["dtype"],
+            "data": [coords["longitude"]["data"][x] for x in lon],
+        },
         # the time axis is untouched: raw, with its units + calendar
         "time": dict(coords["time"]),
     }
@@ -301,9 +309,9 @@ def window_era5_expected(expected: dict) -> dict:
 # This is the case that could not be committed while one track returned a raw
 # `Char` matrix here and two of the three dumpers crashed on a string field.
 # -----------------------------------------------------------------------------
-SITE_IDS = ["ab", "cd  ", "efgh", ""]      # NUL-padded to strlen=4 on disk
-SITE_FLAGS = ["a", "", "c", "d"]           # the "" cell is a NUL byte on disk
-SITE_TITLE = "hi"                          # NUL-padded to titlelen=8 on disk
+SITE_IDS = ["ab", "cd  ", "efgh", ""]  # NUL-padded to strlen=4 on disk
+SITE_FLAGS = ["a", "", "c", "d"]  # the "" cell is a NUL byte on disk
+SITE_TITLE = "hi"  # NUL-padded to titlelen=8 on disk
 SITE_VALUES = [12.5, 13.0, 14.25, 15.75]
 
 
@@ -347,25 +355,45 @@ def build_text_netcdf() -> tuple[bytes, dict, dict]:
 
     expected = {
         "variables": {
-            "value": {"dtype": "float64", "dims": ["site"], "shape": [4],
-                      "fill_value": None, "data": list(SITE_VALUES)},
+            "value": {
+                "dtype": "float64",
+                "dims": ["site"],
+                "shape": [4],
+                "fill_value": None,
+                "data": list(SITE_VALUES),
+            },
             # the private `strlen` is CONSUMED: 4 strings, not a 4x4 Char matrix
-            "site_id": {"dtype": "string", "dims": ["site"], "shape": [4],
-                        "fill_value": None, "data": list(SITE_IDS)},
+            "site_id": {
+                "dtype": "string",
+                "dims": ["site"],
+                "shape": [4],
+                "fill_value": None,
+                "data": list(SITE_IDS),
+            },
             # `site` is a real axis, so every cell is its own 1-character string
-            "flag": {"dtype": "string", "dims": ["site"], "shape": [4],
-                     "fill_value": None, "data": list(SITE_FLAGS)},
+            "flag": {
+                "dtype": "string",
+                "dims": ["site"],
+                "shape": [4],
+                "fill_value": None,
+                "data": list(SITE_FLAGS),
+            },
             # a private length dimension ALONE => a scalar string: dims [], shape []
-            "title": {"dtype": "string", "dims": [], "shape": [],
-                      "fill_value": None, "data": [SITE_TITLE]},
+            "title": {
+                "dtype": "string",
+                "dims": [],
+                "shape": [],
+                "fill_value": None,
+                "data": [SITE_TITLE],
+            },
         },
         # `site` carries no coordinate variable (and `strlen`/`titlelen` are not
         # axes at all), so the file has no coordinate fields.
         "coords": {},
     }
     decode = {
-        "char_stacking": True,      # the last dim is a length iff nothing claims it
-        "nul_stripped": True,       # trailing NULs go; trailing SPACES are data
+        "char_stacking": True,  # the last dim is a length iff nothing claims it
+        "nul_stripped": True,  # trailing NULs go; trailing SPACES are data
         "fill_to_nan": False,
         "time_decoded": False,
     }
@@ -389,12 +417,16 @@ def window_text_expected(expected: dict) -> dict:
         if spec["dims"] == ["site"]:
             data = [spec["data"][i] for i in take]
             shape = [len(take)]
-        else:                       # the scalar string has no `site` axis
+        else:  # the scalar string has no `site` axis
             data = list(spec["data"])
             shape = list(spec["shape"])
-        out_vars[name] = {"dtype": spec["dtype"], "dims": list(spec["dims"]),
-                          "shape": shape, "fill_value": spec["fill_value"],
-                          "data": data}
+        out_vars[name] = {
+            "dtype": spec["dtype"],
+            "dims": list(spec["dims"]),
+            "shape": shape,
+            "fill_value": spec["fill_value"],
+            "data": data,
+        }
     return {"variables": out_vars, "coords": {}}
 
 
@@ -464,37 +496,127 @@ def build_openaq_csv() -> tuple[bytes, dict, dict]:
 # (Emissions.jl: COUNTRY / FIPS — identical values, positional alias).
 # -----------------------------------------------------------------------------
 FF10_POINT_COLUMNS = [
-    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
-    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
-    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
-    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
-    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
-    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
-    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
-    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
-    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
-    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
-    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
-    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
-    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
-    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
-    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
-    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COUNTRY_CD",
+    "REGION_CD",
+    "TRIBAL_CODE",
+    "FACILITY_ID",
+    "UNIT_ID",
+    "REL_POINT_ID",
+    "PROCESS_ID",
+    "AGY_FACILITY_ID",
+    "AGY_UNIT_ID",
+    "AGY_REL_POINT_ID",
+    "AGY_PROCESS_ID",
+    "SCC",
+    "POLID",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "FACILITY_NAME",
+    "ERPTYPE",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "NAICS",
+    "LONGITUDE",
+    "LATITUDE",
+    "LL_DATUM",
+    "HORIZ_COLL_MTHD",
+    "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS",
+    "REG_CODES",
+    "FAC_SOURCE_TYPE",
+    "UNIT_TYPE_CODE",
+    "CONTROL_IDS",
+    "CONTROL_MEASURES",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "SUBMITTER_FAC_ID",
+    "CALC_METHOD",
+    "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE",
+    "ORIS_FACILITY_CODE",
+    "ORIS_BOILER_ID",
+    "IPM_YN",
+    "CALC_YEAR",
+    "DATE_UPDATED",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ZIPCODE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
     "COMMENT",
 ]
 FF10_POINT_NUMERIC = {
-    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
-    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
-    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
-    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
-    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
-    "NOV_PCTRED", "DEC_PCTRED",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "LONGITUDE",
+    "LATITUDE",
+    "DESIGN_CAPACITY",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
 }
 
 
@@ -509,29 +631,69 @@ def build_ff10_point() -> tuple[bytes, dict, dict]:
     # (the reader must NOT pivot/aggregate). Row 1 has a quoted-comma FACILITY_NAME
     # and one non-blank monthly value; DESIGN_CAPACITY is blank (numeric -> NaN).
     stack = dict(
-        COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F001", UNIT_ID="U1",
-        REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101",
-        FACILITY_NAME="Autauga Plant, Unit 1", ERPTYPE="01",
-        STKHGT="100.0", STKDIAM="5.0", STKTEMP="500.0", STKFLOW="25.0",
-        STKVEL="12.5", NAICS="221112", LONGITUDE="-86.51045", LATITUDE="32.43878",
-        LL_DATUM="NAD83", ZIPCODE="36066",
+        COUNTRY_CD="US",
+        REGION_CD="01001",
+        FACILITY_ID="F001",
+        UNIT_ID="U1",
+        REL_POINT_ID="R1",
+        PROCESS_ID="P1",
+        SCC="0030700101",
+        FACILITY_NAME="Autauga Plant, Unit 1",
+        ERPTYPE="01",
+        STKHGT="100.0",
+        STKDIAM="5.0",
+        STKTEMP="500.0",
+        STKFLOW="25.0",
+        STKVEL="12.5",
+        NAICS="221112",
+        LONGITUDE="-86.51045",
+        LATITUDE="32.43878",
+        LL_DATUM="NAD83",
+        ZIPCODE="36066",
     )
     rows = [
-        row(**stack, POLID="NOX", ANN_VALUE="123.45", JAN_VALUE="10.0",
-            CALC_YEAR="2016", DATE_UPDATED="20130210"),
+        row(
+            **stack,
+            POLID="NOX",
+            ANN_VALUE="123.45",
+            JAN_VALUE="10.0",
+            CALC_YEAR="2016",
+            DATE_UPDATED="20130210",
+        ),
         row(**stack, POLID="SO2", ANN_VALUE="67.89"),
         row(**stack, POLID="PM25", ANN_VALUE="4.2"),
         # A second facility: plain (unquoted) FACILITY_NAME, ZIPCODE "00000".
-        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F002", UNIT_ID="U9",
-            REL_POINT_ID="R9", PROCESS_ID="P9", SCC="0030700201",
-            POLID="NOX", ANN_VALUE="8.0", FACILITY_NAME="Prattville Facility",
-            ERPTYPE="01", STKHGT="50.0", STKDIAM="2.5", STKTEMP="350.0",
-            STKFLOW="10.0", STKVEL="6.0", NAICS="221112", LONGITUDE="-86.40000",
-            LATITUDE="32.50000", LL_DATUM="NAD83", ZIPCODE="00000"),
+        row(
+            COUNTRY_CD="US",
+            REGION_CD="01001",
+            FACILITY_ID="F002",
+            UNIT_ID="U9",
+            REL_POINT_ID="R9",
+            PROCESS_ID="P9",
+            SCC="0030700201",
+            POLID="NOX",
+            ANN_VALUE="8.0",
+            FACILITY_NAME="Prattville Facility",
+            ERPTYPE="01",
+            STKHGT="50.0",
+            STKDIAM="2.5",
+            STKTEMP="350.0",
+            STKFLOW="10.0",
+            STKVEL="6.0",
+            NAICS="221112",
+            LONGITUDE="-86.40000",
+            LATITUDE="32.50000",
+            LL_DATUM="NAD83",
+            ZIPCODE="00000",
+        ),
     ]
 
-    header_lines = ["#FORMAT=FF10_POINT", "#COUNTRY US", "#YEAR 2016",
-                    "#DESC synthetic conformance fixture"]
+    header_lines = [
+        "#FORMAT=FF10_POINT",
+        "#COUNTRY US",
+        "#YEAR 2016",
+        "#DESC synthetic conformance fixture",
+    ]
     sio = io.StringIO()
     w = csv.writer(sio, lineterminator="\n")  # quotes the comma-bearing name
     for r in rows:
@@ -544,19 +706,28 @@ def build_ff10_point() -> tuple[bytes, dict, dict]:
         vals = [r[j] for r in rows]
         if col in FF10_POINT_NUMERIC:
             variables[col] = {
-                "dtype": "float64", "dims": ["index"], "shape": [nrows],
+                "dtype": "float64",
+                "dims": ["index"],
+                "shape": [nrows],
                 "fill_value": None,
-                "data": [None if str(v).strip() == "" else round(float(v), 10)
-                         for v in vals],
+                "data": [None if str(v).strip() == "" else round(float(v), 10) for v in vals],
             }
         else:
             variables[col] = {
-                "dtype": "string", "dims": ["index"], "shape": [nrows],
-                "fill_value": None, "data": [str(v) for v in vals],
+                "dtype": "string",
+                "dims": ["index"],
+                "shape": [nrows],
+                "fill_value": None,
+                "data": [str(v) for v in vals],
             }
     expected = {"variables": variables, "coords": {}}
-    decode = {"kind": "point", "member": None, "delimiter": ",", "comment": "#",
-              "numeric_columns": sorted(FF10_POINT_NUMERIC)}
+    decode = {
+        "kind": "point",
+        "member": None,
+        "delimiter": ",",
+        "comment": "#",
+        "numeric_columns": sorted(FF10_POINT_NUMERIC),
+    }
     return data, expected, decode
 
 
@@ -591,35 +762,73 @@ def build_ff10_zip() -> tuple[bytes, dict, dict]:
         for r in rows:
             w.writerow(r)
         header = ",".join(c.lower() for c in FF10_POINT_COLUMNS)
-        return (
-            "#FORMAT=FF10_POINT\n#COUNTRY US\n#YEAR 2016\n"
-            + header + "\n" + sio.getvalue()
-        )
+        return "#FORMAT=FF10_POINT\n#COUNTRY US\n#YEAR 2016\n" + header + "\n" + sio.getvalue()
 
     # Two `*egu*` members (mirrors the real 2016fd zip, which has exactly two)
     # + one member the glob must EXCLUDE. egu_alpha sorts before egu_beta.
     alpha_rows = [
-        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F101", UNIT_ID="U1",
-            REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101", POLID="NOX",
-            ANN_VALUE="111.1", FACILITY_NAME="Alpha Station, Unit 1",
-            STKHGT="100.0", STKTEMP="500.0", LONGITUDE="-86.51045",
-            LATITUDE="32.43878", ZIPCODE="00000"),
-        row(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F101", UNIT_ID="U1",
-            REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101", POLID="SO2",
-            ANN_VALUE="22.2", FACILITY_NAME="Alpha Station, Unit 1",
-            STKHGT="100.0", STKTEMP="500.0", LONGITUDE="-86.51045",
-            LATITUDE="32.43878", ZIPCODE="00000"),
+        row(
+            COUNTRY_CD="US",
+            REGION_CD="01001",
+            FACILITY_ID="F101",
+            UNIT_ID="U1",
+            REL_POINT_ID="R1",
+            PROCESS_ID="P1",
+            SCC="0030700101",
+            POLID="NOX",
+            ANN_VALUE="111.1",
+            FACILITY_NAME="Alpha Station, Unit 1",
+            STKHGT="100.0",
+            STKTEMP="500.0",
+            LONGITUDE="-86.51045",
+            LATITUDE="32.43878",
+            ZIPCODE="00000",
+        ),
+        row(
+            COUNTRY_CD="US",
+            REGION_CD="01001",
+            FACILITY_ID="F101",
+            UNIT_ID="U1",
+            REL_POINT_ID="R1",
+            PROCESS_ID="P1",
+            SCC="0030700101",
+            POLID="SO2",
+            ANN_VALUE="22.2",
+            FACILITY_NAME="Alpha Station, Unit 1",
+            STKHGT="100.0",
+            STKTEMP="500.0",
+            LONGITUDE="-86.51045",
+            LATITUDE="32.43878",
+            ZIPCODE="00000",
+        ),
     ]
     beta_rows = [
-        row(COUNTRY_CD="US", REGION_CD="17031", FACILITY_ID="F202", UNIT_ID="U2",
-            REL_POINT_ID="R2", PROCESS_ID="P2", SCC="0030700201", POLID="NOX",
-            ANN_VALUE="333.3", FACILITY_NAME="Beta Plant",
-            STKHGT="75.0", STKTEMP="400.0", LONGITUDE="-87.65000",
-            LATITUDE="41.85000"),  # blank DESIGN_CAPACITY et al -> NaN
+        row(
+            COUNTRY_CD="US",
+            REGION_CD="17031",
+            FACILITY_ID="F202",
+            UNIT_ID="U2",
+            REL_POINT_ID="R2",
+            PROCESS_ID="P2",
+            SCC="0030700201",
+            POLID="NOX",
+            ANN_VALUE="333.3",
+            FACILITY_NAME="Beta Plant",
+            STKHGT="75.0",
+            STKTEMP="400.0",
+            LONGITUDE="-87.65000",
+            LATITUDE="41.85000",
+        ),  # blank DESIGN_CAPACITY et al -> NaN
     ]
     other_rows = [
-        row(COUNTRY_CD="US", REGION_CD="99999", FACILITY_ID="F999", POLID="NOX",
-            ANN_VALUE="999.9", FACILITY_NAME="Excluded Nonpoint-ish"),
+        row(
+            COUNTRY_CD="US",
+            REGION_CD="99999",
+            FACILITY_ID="F999",
+            POLID="NOX",
+            ANN_VALUE="999.9",
+            FACILITY_NAME="Excluded Nonpoint-ish",
+        ),
     ]
     members = {
         "point/egu_2016fd_alpha.csv": member_text(alpha_rows),
@@ -639,7 +848,7 @@ def build_ff10_zip() -> tuple[bytes, dict, dict]:
         zf.writestr(zdir, b"")
         for name in sorted(members):
             zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            zi.create_system = 3            # pinned (else platform-dependent)
+            zi.create_system = 3  # pinned (else platform-dependent)
             zi.external_attr = 0o644 << 16  # pinned unix mode
             zi.compress_type = zipfile.ZIP_STORED  # no zlib version variance
             zf.writestr(zi, members[name])
@@ -655,21 +864,31 @@ def build_ff10_zip() -> tuple[bytes, dict, dict]:
         vals = [r[j] for r in sel_rows]
         if col in FF10_POINT_NUMERIC:
             variables[col] = {
-                "dtype": "float64", "dims": ["index"], "shape": [nrows],
+                "dtype": "float64",
+                "dims": ["index"],
+                "shape": [nrows],
                 "fill_value": None,
-                "data": [None if str(v).strip() == "" else round(float(v), 10)
-                         for v in vals],
+                "data": [None if str(v).strip() == "" else round(float(v), 10) for v in vals],
             }
         else:
             variables[col] = {
-                "dtype": "string", "dims": ["index"], "shape": [nrows],
-                "fill_value": None, "data": [str(v) for v in vals],
+                "dtype": "string",
+                "dims": ["index"],
+                "shape": [nrows],
+                "fill_value": None,
+                "data": [str(v) for v in vals],
             }
     expected = {"variables": variables, "coords": {}}
-    decode = {"kind": "point", "container": "zip", "member": None,
-              "member_glob": "*egu*", "skip_header_row": True,
-              "delimiter": ",", "comment": "#",
-              "numeric_columns": sorted(FF10_POINT_NUMERIC)}
+    decode = {
+        "kind": "point",
+        "container": "zip",
+        "member": None,
+        "member_glob": "*egu*",
+        "skip_header_row": True,
+        "delimiter": ",",
+        "comment": "#",
+        "numeric_columns": sorted(FF10_POINT_NUMERIC),
+    }
     return data, expected, decode
 
 
@@ -707,17 +926,42 @@ SHP_PRJ = (
 
 # (rings, NAME, EMIS, CODE, FLAG, deletion-flag byte)
 SHP_RECORDS = [
-    ([[(0.0, 0.0), (0.0, 2.0), (2.0, 2.0), (2.0, 0.0), (0.0, 0.0)]],
-     "Alpha", 1.5, "01001", True, b" "),
-    ([[(4.0, 0.0), (4.0, 2.0), (6.0, 2.0), (6.0, 0.0), (4.0, 0.0)],
-      [(7.0, 0.0), (7.0, 1.0), (8.0, 1.0), (7.0, 0.0)]],
-     "Bravo", 2.25, "17031", False, b" "),
-    ([[(0.0, 4.0), (0.0, 6.0), (2.0, 6.0), (0.0, 4.0)]],
-     "Charlie", None, "06037", True, b" "),
-    ([[(10.0, 10.0), (10.0, 11.0), (11.0, 11.0), (10.0, 10.0)]],
-     "Deleted", 999.0, "99999", False, b"*"),
-    ([[(0.0, 8.0), (0.0, 9.0), (1.0, 9.0), (1.0, 8.0), (0.0, 8.0)]],
-     "Echo", -3.5, "36061", True, b"\x00"),
+    (
+        [[(0.0, 0.0), (0.0, 2.0), (2.0, 2.0), (2.0, 0.0), (0.0, 0.0)]],
+        "Alpha",
+        1.5,
+        "01001",
+        True,
+        b" ",
+    ),
+    (
+        [
+            [(4.0, 0.0), (4.0, 2.0), (6.0, 2.0), (6.0, 0.0), (4.0, 0.0)],
+            [(7.0, 0.0), (7.0, 1.0), (8.0, 1.0), (7.0, 0.0)],
+        ],
+        "Bravo",
+        2.25,
+        "17031",
+        False,
+        b" ",
+    ),
+    ([[(0.0, 4.0), (0.0, 6.0), (2.0, 6.0), (0.0, 4.0)]], "Charlie", None, "06037", True, b" "),
+    (
+        [[(10.0, 10.0), (10.0, 11.0), (11.0, 11.0), (10.0, 10.0)]],
+        "Deleted",
+        999.0,
+        "99999",
+        False,
+        b"*",
+    ),
+    (
+        [[(0.0, 8.0), (0.0, 9.0), (1.0, 9.0), (1.0, 8.0), (0.0, 8.0)]],
+        "Echo",
+        -3.5,
+        "36061",
+        True,
+        b"\x00",
+    ),
 ]
 
 
@@ -757,7 +1001,7 @@ def build_shapefile_zip() -> tuple[bytes, dict, dict]:
     with zipfile.ZipFile(buf, "w") as zf:
         for name in sorted(members):
             zi = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            zi.create_system = 3            # pinned (else platform-dependent)
+            zi.create_system = 3  # pinned (else platform-dependent)
             zi.external_attr = 0o644 << 16  # pinned unix mode
             zi.compress_type = zipfile.ZIP_STORED  # no zlib version variance
             zf.writestr(zi, members[name])
@@ -785,16 +1029,30 @@ def build_shapefile_zip() -> tuple[bytes, dict, dict]:
         geom.extend([c for pt in padded for c in pt])
 
     def col(dtype, data):
-        return {"dtype": dtype, "dims": ["index"], "shape": [n],
-                "fill_value": None, "data": data}
+        return {"dtype": dtype, "dims": ["index"], "shape": [n], "fill_value": None, "data": data}
 
     variables = {
-        "geometry": {"dtype": "float64", "dims": ["index", "vertex", "xy"],
-                     "shape": [n, nvert, 2], "fill_value": None, "data": geom},
-        "shape_type": {"dtype": "string", "dims": ["meta"], "shape": [1],
-                       "fill_value": None, "data": ["Polygon"]},
-        "crs_wkt": {"dtype": "string", "dims": ["meta"], "shape": [1],
-                    "fill_value": None, "data": [SHP_PRJ]},
+        "geometry": {
+            "dtype": "float64",
+            "dims": ["index", "vertex", "xy"],
+            "shape": [n, nvert, 2],
+            "fill_value": None,
+            "data": geom,
+        },
+        "shape_type": {
+            "dtype": "string",
+            "dims": ["meta"],
+            "shape": [1],
+            "fill_value": None,
+            "data": ["Polygon"],
+        },
+        "crs_wkt": {
+            "dtype": "string",
+            "dims": ["meta"],
+            "shape": [1],
+            "fill_value": None,
+            "data": [SHP_PRJ],
+        },
         "n_vertices": col("int64", [len(r) for r in rings]),
         "shape_index": col("int64", shape_ix),
         "part_index": col("int64", part_ix),
@@ -806,13 +1064,18 @@ def build_shapefile_zip() -> tuple[bytes, dict, dict]:
         "NAME": col("string", [r[0] for r in rows]),
         "EMIS": col("float64", [None if r[1] is None else float(r[1]) for r in rows]),
         "CODE": col("float64", [float(r[2]) for r in rows]),
-        "FLAG": {"dtype": "bool", "dims": ["index"], "shape": [n],
-                 "fill_value": None, "data": [bool(r[3]) for r in rows]},
+        "FLAG": {
+            "dtype": "bool",
+            "dims": ["index"],
+            "shape": [n],
+            "fill_value": None,
+            "data": [bool(r[3]) for r in rows],
+        },
     }
     expected = {"variables": variables, "coords": {}}
-    decode = {"container": "zip", "member": "layer/emis_polygons.shp",
-              "numeric_columns": ["CODE"]}
+    decode = {"container": "zip", "member": "layer/emis_polygons.shp", "numeric_columns": ["CODE"]}
     return data, expected, decode
+
 
 # -----------------------------------------------------------------------------
 # Fixture 6 — georeferenced GeoTIFF raster (transport=file, format=geotiff).
@@ -862,10 +1125,22 @@ def build_geotiff() -> tuple[bytes, dict, dict]:
     values[1, 2] = int(TIF_NODATA)
 
     geokeys = (
-        1, 1, 0, 3,          # KeyDirectoryVersion, Revision, MinorRevision, NumberOfKeys
-        1024, 0, 1, 2,       # GTModelTypeGeoKey = 2 (geographic)
-        1025, 0, 1, 1,       # GTRasterTypeGeoKey = 1 (PixelIsArea)
-        2048, 0, 1, 4326,    # GeographicTypeGeoKey = WGS 84
+        1,
+        1,
+        0,
+        3,  # KeyDirectoryVersion, Revision, MinorRevision, NumberOfKeys
+        1024,
+        0,
+        1,
+        2,  # GTModelTypeGeoKey = 2 (geographic)
+        1025,
+        0,
+        1,
+        1,  # GTRasterTypeGeoKey = 1 (PixelIsArea)
+        2048,
+        0,
+        1,
+        4326,  # GeographicTypeGeoKey = WGS 84
     )
     # GDAL writes GDAL_NODATA as ASCII, integral for an integer band ("-9999",
     # not "-9999.0") — and tifffile parses the tag as an int, warning loudly on
@@ -873,10 +1148,10 @@ def build_geotiff() -> tuple[bytes, dict, dict]:
     # decodes without a warning in any of the three tracks.
     sentinel = f"{int(TIF_NODATA)}\x00"
     extratags = [
-        (33550, "d", 3, (TIF_SX, TIF_SY, 0.0)),                        # ModelPixelScale
-        (33922, "d", 6, (0.0, 0.0, 0.0, TIF_LON0, TIF_LAT0, 0.0)),     # ModelTiepoint
-        (34735, "H", len(geokeys), geokeys),                           # GeoKeyDirectory
-        (42113, "s", len(sentinel), sentinel.encode()),                # GDAL_NODATA
+        (33550, "d", 3, (TIF_SX, TIF_SY, 0.0)),  # ModelPixelScale
+        (33922, "d", 6, (0.0, 0.0, 0.0, TIF_LON0, TIF_LAT0, 0.0)),  # ModelTiepoint
+        (34735, "H", len(geokeys), geokeys),  # GeoKeyDirectory
+        (42113, "s", len(sentinel), sentinel.encode()),  # GDAL_NODATA
     ]
     buf = io.BytesIO()
     # `software=False` and no datetime keep the bytes reproducible: a committed
@@ -956,10 +1231,24 @@ PQ_ROWS_PER_GROUP = 3
 #: and `ignoredNote` (a perfectly readable string column) are deliberately left
 #: out: the projection must narrow the result to exactly this list.
 PQ_PROJECTION = [
-    "sourceTypeID", "roadTypeID", "linkID", "zoneID", "pollutantID",
-    "fuelTypeDesc", "countyName", "isRamp", "meanBaseRate", "emissionQuant",
-    "energyRate", "massFraction", "modelYearID", "startDate", "updateTime",
-    "startTime", "microTime", "notApplicable",
+    "sourceTypeID",
+    "roadTypeID",
+    "linkID",
+    "zoneID",
+    "pollutantID",
+    "fuelTypeDesc",
+    "countyName",
+    "isRamp",
+    "meanBaseRate",
+    "emissionQuant",
+    "energyRate",
+    "massFraction",
+    "modelYearID",
+    "startDate",
+    "updateTime",
+    "startTime",
+    "microTime",
+    "notApplicable",
 ]
 
 
@@ -1007,101 +1296,161 @@ def build_parquet_moves() -> tuple[bytes, dict, dict]:
     # the fixture and its oracle cannot drift apart.
     cols: list[tuple[str, object, str, list]] = [
         # --- the narrow/wide integer split (the NetCDF reader's, verbatim) ---
-        ("sourceTypeID", pa.array([11, 21, 31, 32, 52, 62], pa.int16()),
-         "int32", [11, 21, 31, 32, 52, 62]),
+        (
+            "sourceTypeID",
+            pa.array([11, 21, 31, 32, 52, 62], pa.int16()),
+            "int32",
+            [11, 21, 31, 32, 52, 62],
+        ),
         # uint8 is narrow -> int32; 255 proves it is read UNSIGNED.
-        ("roadTypeID", pa.array([1, 2, 3, 4, 5, 255], pa.uint8()),
-         "int32", [1, 2, 3, 4, 5, 255]),
-        ("linkID", pa.array([4294967296, -4294967296, 3, 4, 5, 6], pa.int64()),
-         "int64", [4294967296, -4294967296, 3, 4, 5, 6]),
+        ("roadTypeID", pa.array([1, 2, 3, 4, 5, 255], pa.uint8()), "int32", [1, 2, 3, 4, 5, 255]),
+        (
+            "linkID",
+            pa.array([4294967296, -4294967296, 3, 4, 5, 6], pa.int64()),
+            "int64",
+            [4294967296, -4294967296, 3, 4, 5, 6],
+        ),
         # uint32 is WIDE -> int64; 4294967295 does not fit an int32 and proves it.
-        ("zoneID", pa.array([4294967295, 1, 2, 3, 4, 5], pa.uint32()),
-         "int64", [4294967295, 1, 2, 3, 4, 5]),
+        (
+            "zoneID",
+            pa.array([4294967295, 1, 2, 3, 4, 5], pa.uint32()),
+            "int64",
+            [4294967295, 1, 2, 3, 4, 5],
+        ),
         # --- the null policy: an integer null takes the declared sentinel, and
         # the sentinel is REPORTED BACK in fill_value ---
-        ("pollutantID", pa.array([2, 3, None, 110, 100, 31], pa.int32()),
-         "int32", [2, 3, PQ_NULL_INT, 110, 100, 31]),
+        (
+            "pollutantID",
+            pa.array([2, 3, None, 110, 100, 31], pa.int32()),
+            "int32",
+            [2, 3, PQ_NULL_INT, 110, 100, 31],
+        ),
         # --- a text null takes the declared substitute, and is then
         # indistinguishable from a real cell holding it. Row 3 holds a real
         # EMPTY string, which is NOT a null and must survive as "" ---
-        ("fuelTypeDesc",
-         pa.array(["Gasoline", None, "Diesel", "", "Electricity", "Gasoline"],
-                  pa.string()),
-         "string", ["Gasoline", PQ_NULL_STRING, "Diesel", "", "Electricity",
-                    "Gasoline"]),
+        (
+            "fuelTypeDesc",
+            pa.array(["Gasoline", None, "Diesel", "", "Electricity", "Gasoline"], pa.string()),
+            "string",
+            ["Gasoline", PQ_NULL_STRING, "Diesel", "", "Electricity", "Gasoline"],
+        ),
         # --- a categorical is EXPANDED to one value per row; the key encoding
         # is storage and never reaches the native array. Its null takes
         # null_string too (a null key and a key pointing at a null value are the
         # same null) ---
-        ("countyName",
-         pa.array(["Cook", "Cook", "DuPage", None, "Cook", "DuPage"]).dictionary_encode(),
-         "string", ["Cook", "Cook", "DuPage", PQ_NULL_STRING, "Cook", "DuPage"]),
-        ("isRamp", pa.array([False, True, False, False, True, True], pa.bool_()),
-         "bool", [False, True, False, False, True, True]),
+        (
+            "countyName",
+            pa.array(["Cook", "Cook", "DuPage", None, "Cook", "DuPage"]).dictionary_encode(),
+            "string",
+            ["Cook", "Cook", "DuPage", PQ_NULL_STRING, "Cook", "DuPage"],
+        ),
+        (
+            "isRamp",
+            pa.array([False, True, False, False, True, True], pa.bool_()),
+            "bool",
+            [False, True, False, False, True, True],
+        ),
         # --- float_columns, job 2: floats stored as fixed-decimal TEXT (the
         # MOVES snapshots' `meanBaseRate`). Trimmed and parsed; an
         # all-whitespace cell is NaN (the FF10/shapefile blank->NaN rule).
         # Without the option this column stays `string` ---
-        ("meanBaseRate",
-         pa.array(["261.000000000000", "-1.500000000000", "0.000000000000",
-                   "   ", "1e3", "0.062500000000"], pa.string()),
-         "float64", [261.0, -1.5, 0.0, None, 1000.0, 0.0625]),
+        (
+            "meanBaseRate",
+            pa.array(
+                [
+                    "261.000000000000",
+                    "-1.500000000000",
+                    "0.000000000000",
+                    "   ",
+                    "1e3",
+                    "0.062500000000",
+                ],
+                pa.string(),
+            ),
+            "float64",
+            [261.0, -1.5, 0.0, None, 1000.0, 0.0625],
+        ),
         # --- every float width is float64; 1e10 and 0.125 are exact in binary32
         # so the widening is bit-exact ---
-        ("emissionQuant",
-         pa.array([1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125], pa.float32()),
-         "float64", [1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125]),
+        (
+            "emissionQuant",
+            pa.array([1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125], pa.float32()),
+            "float64",
+            [1.5, 2.5, -3.25, 0.0, 1.0e10, 0.125],
+        ),
         # --- a null in a FLOAT column is NaN, and no sentinel survives ---
-        ("energyRate",
-         pa.array([3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5], pa.float64()),
-         "float64", [3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5]),
+        (
+            "energyRate",
+            pa.array([3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5], pa.float64()),
+            "float64",
+            [3.14159, None, -0.5, 6.02214076e23, 0.0, 2.5],
+        ),
         # --- Decimal128 -> float64 as unscaled / 10^scale. Max |unscaled| here
         # is 1e12 (< 2^53) and the scale is 6 (<= 22), which is exactly the
         # range where Julia's Dec64 and the other two tracks' division agree
         # bit for bit ---
-        ("massFraction",
-         pa.array(["0.123456", "-9.000000", "0.031250", "1000000.000000",
-                   "0.500000", "-0.000123"]).cast(pa.decimal128(18, 6)),
-         "float64", [0.123456, -9.0, 0.03125, 1000000.0, 0.5, -0.000123]),
+        (
+            "massFraction",
+            pa.array(
+                ["0.123456", "-9.000000", "0.031250", "1000000.000000", "0.500000", "-0.000123"]
+            ).cast(pa.decimal128(18, 6)),
+            "float64",
+            [0.123456, -9.0, 0.03125, 1000000.0, 0.5, -0.000123],
+        ),
         # --- float_columns, job 1: an INTEGER column that is really a
         # measurement. Its nulls become NaN, NOT the declared null_int, and no
         # fill_value survives — a float carries its missing values itself ---
-        ("modelYearID", pa.array([1995, 2000, None, 2010, 2020, None], pa.int32()),
-         "float64", [1995.0, 2000.0, None, 2010.0, 2020.0, None]),
+        (
+            "modelYearID",
+            pa.array([1995, 2000, None, 2010, 2020, None], pa.int32()),
+            "float64",
+            [1995.0, 2000.0, None, 2010.0, 2020.0, None],
+        ),
         # --- temporal columns ride as their RAW stored integer at their stored
         # width, undecoded: the unit and any timezone are not applied and not
         # reported, because an epoch offset -> instant is ESS's job (R3) ---
-        ("startDate", pa.array([19000, 19001, 0, -1, 19723, 12345], pa.date32()),
-         "int32", [19000, 19001, 0, -1, 19723, 12345]),
-        ("updateTime",
-         pa.array([1700000000000, 0, -5, 1, 1234567890123, -86400000],
-                  pa.timestamp("ms")),
-         "int64", [1700000000000, 0, -5, 1, 1234567890123, -86400000]),
-        ("startTime",
-         pa.array([0, 3600000, 43200000, 86399999, 1000, 2000], pa.time32("ms")),
-         "int32", [0, 3600000, 43200000, 86399999, 1000, 2000]),
-        ("microTime",
-         pa.array([0, 1, 999999, 86399999999, 123456, 7], pa.time64("us")),
-         "int64", [0, 1, 999999, 86399999999, 123456, 7]),
+        (
+            "startDate",
+            pa.array([19000, 19001, 0, -1, 19723, 12345], pa.date32()),
+            "int32",
+            [19000, 19001, 0, -1, 19723, 12345],
+        ),
+        (
+            "updateTime",
+            pa.array([1700000000000, 0, -5, 1, 1234567890123, -86400000], pa.timestamp("ms")),
+            "int64",
+            [1700000000000, 0, -5, 1, 1234567890123, -86400000],
+        ),
+        (
+            "startTime",
+            pa.array([0, 3600000, 43200000, 86399999, 1000, 2000], pa.time32("ms")),
+            "int32",
+            [0, 3600000, 43200000, 86399999, 1000, 2000],
+        ),
+        (
+            "microTime",
+            pa.array([0, 1, 999999, 86399999999, 123456, 7], pa.time64("us")),
+            "int64",
+            [0, 1, 999999, 86399999999, 123456, 7],
+        ),
         # --- an all-null column has no type of its own: float64, every cell NaN ---
-        ("notApplicable", pa.array([None] * n, pa.null()),
-         "float64", [None] * n),
+        ("notApplicable", pa.array([None] * n, pa.null()), "float64", [None] * n),
         # --- NOT in the projection. A binary column has no rank-1 reading, so
         # unrequested it is simply not a field (never an error) ---
-        ("internalKey",
-         pa.array([b"\x00", b"\x01", b"\x02", b"\x03", b"\x04", b"\x05"],
-                  pa.binary()),
-         None, None),
+        (
+            "internalKey",
+            pa.array([b"\x00", b"\x01", b"\x02", b"\x03", b"\x04", b"\x05"], pa.binary()),
+            None,
+            None,
+        ),
         # --- NOT in the projection, and perfectly readable: the projection must
         # narrow the result, not just drop what it could not read ---
-        ("ignoredNote", pa.array(["a", "b", "c", "d", "e", "f"], pa.string()),
-         None, None),
+        ("ignoredNote", pa.array(["a", "b", "c", "d", "e", "f"], pa.string()), None, None),
     ]
 
     table = pa.table({name: arr for name, arr, _dt, _exp in cols})
     buf = pa.BufferOutputStream()
-    pq.write_table(table, buf, compression="snappy",
-                   row_group_size=PQ_ROWS_PER_GROUP)
+    pq.write_table(table, buf, compression="snappy", row_group_size=PQ_ROWS_PER_GROUP)
     data = buf.getvalue().to_pybytes()
 
     forced = set(PQ_FLOAT_COLUMNS)
@@ -1140,9 +1489,7 @@ def _blosc_codec():
     """The pinned numcodecs Blosc codec (matches the .zarray compressor)."""
     import numcodecs
 
-    return numcodecs.Blosc(
-        cname="lz4", clevel=5, shuffle=numcodecs.Blosc.SHUFFLE, blocksize=0
-    )
+    return numcodecs.Blosc(cname="lz4", clevel=5, shuffle=numcodecs.Blosc.SHUFFLE, blocksize=0)
 
 
 def _zarr_compressor():
@@ -1196,26 +1543,38 @@ def build_zarr_store():
 
     # field3d: [2,5,4] chunked [1,2,4], <f4. value = layer*100 + y*10 + x.
     f3_shape, f3_chunks = (2, 5, 4), (1, 2, 4)
-    objects.append(("field3d/.zarray",
-                    json.dumps(_zarray_meta(f3_shape, f3_chunks, "<f4"),
-                               sort_keys=True).encode("utf-8")))
-    objects.append(("field3d/.zattrs",
-                    json.dumps({"_ARRAY_DIMENSIONS": ["layer", "y", "x"]},
-                               sort_keys=True).encode("utf-8")))
-    for key, enc in _zarr_chunks(f3_shape, f3_chunks, np.dtype("<f4"),
-                                 lambda g: g[0] * 100 + g[1] * 10 + g[2]):
+    objects.append(
+        (
+            "field3d/.zarray",
+            json.dumps(_zarray_meta(f3_shape, f3_chunks, "<f4"), sort_keys=True).encode("utf-8"),
+        )
+    )
+    objects.append(
+        (
+            "field3d/.zattrs",
+            json.dumps({"_ARRAY_DIMENSIONS": ["layer", "y", "x"]}, sort_keys=True).encode("utf-8"),
+        )
+    )
+    for key, enc in _zarr_chunks(
+        f3_shape, f3_chunks, np.dtype("<f4"), lambda g: g[0] * 100 + g[1] * 10 + g[2]
+    ):
         objects.append((f"field3d/{key}", enc))
 
     # pop1d: [8] chunked [8], <f8. value = 2*i + 1.
     p_shape, p_chunks = (8,), (8,)
-    objects.append(("pop1d/.zarray",
-                    json.dumps(_zarray_meta(p_shape, p_chunks, "<f8"),
-                               sort_keys=True).encode("utf-8")))
-    objects.append(("pop1d/.zattrs",
-                    json.dumps({"_ARRAY_DIMENSIONS": ["cell"]},
-                               sort_keys=True).encode("utf-8")))
-    for key, enc in _zarr_chunks(p_shape, p_chunks, np.dtype("<f8"),
-                                 lambda g: 2 * g[0] + 1):
+    objects.append(
+        (
+            "pop1d/.zarray",
+            json.dumps(_zarray_meta(p_shape, p_chunks, "<f8"), sort_keys=True).encode("utf-8"),
+        )
+    )
+    objects.append(
+        (
+            "pop1d/.zattrs",
+            json.dumps({"_ARRAY_DIMENSIONS": ["cell"]}, sort_keys=True).encode("utf-8"),
+        )
+    )
+    for key, enc in _zarr_chunks(p_shape, p_chunks, np.dtype("<f8"), lambda g: 2 * g[0] + 1):
         objects.append((f"pop1d/{key}", enc))
 
     # Expected sub-selected arrays (float64; fill_value 0.0 is NOT mapped to NaN).
@@ -1226,8 +1585,7 @@ def build_zarr_store():
                 "dims": ["layer", "y", "x"],
                 "shape": [1, 2, 4],
                 "fill_value": None,
-                "data": [[[110.0, 111.0, 112.0, 113.0],
-                          [140.0, 141.0, 142.0, 143.0]]],
+                "data": [[[110.0, 111.0, 112.0, 113.0], [140.0, 141.0, 142.0, 143.0]]],
             },
             "pop1d": {
                 "dtype": "float64",
@@ -1266,14 +1624,23 @@ def build_zarr_permuted():
     """Return ``(objects, expected)`` for the ordered-selection Zarr v2 store."""
     objects = []
     shape, chunks = (3, 50, 4), (1, 10, 4)
-    objects.append(("sr/.zarray",
-                    json.dumps(_zarray_meta(shape, chunks, "<f4"),
-                               sort_keys=True).encode("utf-8")))
-    objects.append(("sr/.zattrs",
-                    json.dumps({"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]},
-                               sort_keys=True).encode("utf-8")))
-    for key, enc in _zarr_chunks(shape, chunks, np.dtype("<f4"),
-                                 lambda g: g[0] * 100000 + g[1] * 100 + g[2]):
+    objects.append(
+        (
+            "sr/.zarray",
+            json.dumps(_zarray_meta(shape, chunks, "<f4"), sort_keys=True).encode("utf-8"),
+        )
+    )
+    objects.append(
+        (
+            "sr/.zattrs",
+            json.dumps(
+                {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}, sort_keys=True
+            ).encode("utf-8"),
+        )
+    )
+    for key, enc in _zarr_chunks(
+        shape, chunks, np.dtype("<f4"), lambda g: g[0] * 100000 + g[1] * 100 + g[2]
+    ):
         objects.append((f"sr/{key}", enc))
 
     # Expected: layer 0, sources [24,2,9,6] (permuted), all 4 receptors — rows in
@@ -1309,12 +1676,14 @@ def build_zarr_permuted():
 # -----------------------------------------------------------------------------
 GEOSFP_MIXED_URL = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc"
 
-GEOSFP_NAMED_WINDOW = {"dims": {
-    "lat": {"slice": [1, 3]},
-    "lon": {"indices": [4, 0, 2]},       # permuted: returned in this order
-    "lev": {"slice": [0, 3, 2]},         # stepped
-    "lon_edge": {"slice": [2, 5]},       # the staggered dim, independently
-}}
+GEOSFP_NAMED_WINDOW = {
+    "dims": {
+        "lat": {"slice": [1, 3]},
+        "lon": {"indices": [4, 0, 2]},  # permuted: returned in this order
+        "lev": {"slice": [0, 3, 2]},  # stepped
+        "lon_edge": {"slice": [2, 5]},  # the staggered dim, independently
+    }
+}
 
 GEOSFP_WRAP_WINDOW = {"dims": {"lon": {"indices": [3, 4, 0, 1]}}}
 
@@ -1334,24 +1703,27 @@ def _slice_by_name(arr, dims, window, sizes):
     sliced by name afterwards", which is exactly the acceptance gate."""
     for axis, dim in enumerate(dims):
         if dim in window["dims"]:
-            arr = np.take(arr, _named_axis_indices(window["dims"][dim], sizes[dim]),
-                          axis=axis)
+            arr = np.take(arr, _named_axis_indices(window["dims"][dim], sizes[dim]), axis=axis)
     return arr
 
 
 def _nested(arr, dtype):
     """A numpy array as the corpus's nested-list encoding (NaN -> null)."""
     if dtype == "float64":
+
         def cell(v):
             return None if np.isnan(v) else round(float(v), 10)
     else:
+
         def cell(v):
             return int(v)
+
     if arr.ndim == 0:
         return cell(arr[()])
 
     def rec(a):
         return [cell(v) for v in a] if a.ndim == 1 else [rec(s) for s in a]
+
     return rec(arr)
 
 
@@ -1359,15 +1731,22 @@ def _fields_expected(variables, coords, window, sizes):
     """Expected native fields for every variable + coordinate under ``window``
     (``None`` = the whole read). ``variables``/``coords`` map a name to
     ``(decoded numpy array, dims, dtype, extra)``."""
+
     def enc(arr, dims, dtype, extra, is_coord):
         if window is not None:
             arr = _slice_by_name(arr, dims, window, sizes)
         out = {"dtype": dtype, "data": _nested(arr, dtype)}
         if not is_coord:
-            out = {"dtype": dtype, "dims": list(dims), "shape": list(arr.shape),
-                   "fill_value": None, "data": out["data"]}
+            out = {
+                "dtype": dtype,
+                "dims": list(dims),
+                "shape": list(arr.shape),
+                "fill_value": None,
+                "data": out["data"],
+            }
         out.update(extra)
         return out
+
     return {
         "variables": {n: enc(*v, False) for n, v in variables.items()},
         "coords": {n: enc(*c, True) for n, c in coords.items()},
@@ -1382,24 +1761,23 @@ def build_geosfp_mixed_netcdf():
 
     nt, nlev, nlat, nlon, nedge = 2, 3, 4, 5, 6
     sizes = {"time": nt, "lev": nlev, "lat": nlat, "lon": nlon, "lon_edge": nedge}
-    time = np.array([0, 3], dtype="i4")                   # hours since 2024-01-01
+    time = np.array([0, 3], dtype="i4")  # hours since 2024-01-01
     lev = np.array([1.0, 2.0, 3.0])
     lat = np.array([-1.5, -0.5, 0.5, 1.5])
-    lon = np.array([0.0, 72.0, 144.0, 216.0, 288.0])      # periodic: 288 -> 0 wraps
+    lon = np.array([0.0, 72.0, 144.0, 216.0, 288.0])  # periodic: 288 -> 0 wraps
     lon_edge = np.array([-36.0, 36.0, 108.0, 180.0, 252.0, 324.0])
 
     # T: int16-packed (scale/offset/_FillValue) on [time, lev, lat, lon]. The raw
     # value self-encodes its indices; one cell INSIDE the named window is masked.
     scale, offset, fill = 0.01, 250.0, np.int16(-32767)
-    t_raw = np.fromfunction(lambda t, l, y, x: t * 1000 + l * 100 + y * 10 + x,
-                            (nt, nlev, nlat, nlon), dtype=int).astype("i2")
+    t_raw = np.fromfunction(
+        lambda t, l, y, x: t * 1000 + l * 100 + y * 10 + x, (nt, nlev, nlat, nlon), dtype=int
+    ).astype("i2")
     t_raw[1, 2, 2, 4] = fill
     t_dec = t_raw.astype("f8") * scale + offset
     t_dec[t_raw == fill] = np.nan
-    ps = np.fromfunction(lambda t, y, x: 100000.0 + t * 1000 + y * 10 + x,
-                         (nt, nlat, nlon))
-    u_edge = np.fromfunction(lambda t, y, e: t * 1000 + y * 10 + e + 0.5,
-                             (nt, nlat, nedge))
+    ps = np.fromfunction(lambda t, y, x: 100000.0 + t * 1000 + y * 10 + x, (nt, nlat, nlon))
+    u_edge = np.fromfunction(lambda t, y, e: t * 1000 + y * 10 + e + 0.5, (nt, nlat, nedge))
     phis = np.fromfunction(lambda y, x: y * 10 + x + 0.25, (nlat, nlon))
     area = np.array([10.0, 20.0, 30.0, 40.0])
 
@@ -1411,9 +1789,12 @@ def build_geosfp_mixed_netcdf():
     v = ds.createVariable("time", "i4", ("time",))
     v.units, v.calendar = "hours since 2024-01-01 00:00:00", "standard"
     v[:] = time
-    for name, vals, units in (("lev", lev, "level"), ("lat", lat, "degrees_north"),
-                              ("lon", lon, "degrees_east"),
-                              ("lon_edge", lon_edge, "degrees_east")):
+    for name, vals, units in (
+        ("lev", lev, "level"),
+        ("lat", lat, "degrees_north"),
+        ("lon", lon, "degrees_east"),
+        ("lon_edge", lon_edge, "degrees_east"),
+    ):
         v = ds.createVariable(name, "f8", (name,))
         v.units = units
         v[:] = vals
@@ -1442,8 +1823,12 @@ def build_geosfp_mixed_netcdf():
         "AREA_LAT": (area, ("lat",), "float64", {}),
     }
     coords = {
-        "time": (time, ("time",), "int32",
-                 {"units": "hours since 2024-01-01 00:00:00", "calendar": "standard"}),
+        "time": (
+            time,
+            ("time",),
+            "int32",
+            {"units": "hours since 2024-01-01 00:00:00", "calendar": "standard"},
+        ),
         "lev": (lev, ("lev",), "float64", {}),
         "lat": (lat, ("lat",), "float64", {}),
         "lon": (lon, ("lon",), "float64", {}),
@@ -1462,36 +1847,56 @@ def build_geosfp_mixed_netcdf():
 # reader that over-fetched would just get `fill_value` outside the window and
 # pass. A poisoned one cannot be fetched without failing the case.
 GEOSFP_ZARR_URL = "s3://earthsci-fixtures/geosfp-mini.zarr"
-GEOSFP_ZARR_WINDOW = {"dims": {
-    "lev": "all",
-    "lat": {"slice": [2, 4]},
-    "lon": {"indices": [5, 3]},
-}}
+GEOSFP_ZARR_WINDOW = {
+    "dims": {
+        "lev": "all",
+        "lat": {"slice": [2, 4]},
+        "lon": {"indices": [5, 3]},
+    }
+}
 
 
 def build_geosfp_named_zarr():
     """``(objects, expected)`` for the named-window zarr store; ``objects`` rows
     are ``(relpath, bytes, poisoned)``."""
     codec = _blosc_codec()
-    poison = bytes(codec.encode(np.zeros(1, dtype="<f4")))   # decodes to 4 bytes
+    poison = bytes(codec.encode(np.zeros(1, dtype="<f4")))  # decodes to 4 bytes
     arrays = {
-        "T3": ((3, 4, 6), (1, 2, 3), "<f4", ["lev", "lat", "lon"],
-               lambda g: g[0] * 100 + g[1] * 10 + g[2]),
-        "PS2": ((4, 6), (2, 3), "<f8", ["lat", "lon"],
-                lambda g: 1000 + g[0] * 10 + g[1]),
+        "T3": (
+            (3, 4, 6),
+            (1, 2, 3),
+            "<f4",
+            ["lev", "lat", "lon"],
+            lambda g: g[0] * 100 + g[1] * 10 + g[2],
+        ),
+        "PS2": ((4, 6), (2, 3), "<f8", ["lat", "lon"], lambda g: 1000 + g[0] * 10 + g[1]),
     }
     objects, variables = [], {}
     for name, (shape, chunks, dt, dims, fn) in arrays.items():
-        objects.append((f"{name}/.zarray",
-                        json.dumps(_zarray_meta(shape, chunks, dt),
-                                   sort_keys=True).encode("utf-8"), False))
-        objects.append((f"{name}/.zattrs",
-                        json.dumps({"_ARRAY_DIMENSIONS": dims},
-                                   sort_keys=True).encode("utf-8"), False))
+        objects.append(
+            (
+                f"{name}/.zarray",
+                json.dumps(_zarray_meta(shape, chunks, dt), sort_keys=True).encode("utf-8"),
+                False,
+            )
+        )
+        objects.append(
+            (
+                f"{name}/.zattrs",
+                json.dumps({"_ARRAY_DIMENSIONS": dims}, sort_keys=True).encode("utf-8"),
+                False,
+            )
+        )
         sizes = dict(zip(dims, shape))
-        wanted = [sorted({g // c for g in _named_axis_indices(
-                     GEOSFP_ZARR_WINDOW["dims"].get(d, "all"), sizes[d])})
-                  for d, c in zip(dims, chunks)]
+        wanted = [
+            sorted(
+                {
+                    g // c
+                    for g in _named_axis_indices(GEOSFP_ZARR_WINDOW["dims"].get(d, "all"), sizes[d])
+                }
+            )
+            for d, c in zip(dims, chunks)
+        ]
         for key, enc in _zarr_chunks(shape, chunks, np.dtype(dt), fn):
             cidx = [int(c) for c in key.split(".")]
             hit = all(ci in w for ci, w in zip(cidx, wanted))
@@ -1515,22 +1920,34 @@ def build_geosfp_named_zarr():
 # 16Z) than the corpus holds, so its fourth file is a CacheMiss offline.
 # -----------------------------------------------------------------------------
 PREFETCH_BASE = "https://data.earthsci.dev/prefetch"
-PREFETCH_T0 = 1704067200                    # 2024-01-01T00:00:00Z
+PREFETCH_T0 = 1704067200  # 2024-01-01T00:00:00Z
 PREFETCH_SOURCES = {
-    "hourly": {"stem": "geosfp-hourly", "frequency_s": 3600, "file_period_s": 14400,
-               "files": 3, "variables": ["Q", "TP"]},
-    "two_hourly": {"stem": "geosfp-2hourly", "frequency_s": 7200, "file_period_s": 21600,
-                   "files": 2, "variables": ["PS"]},
+    "hourly": {
+        "stem": "geosfp-hourly",
+        "frequency_s": 3600,
+        "file_period_s": 14400,
+        "files": 3,
+        "variables": ["Q", "TP"],
+    },
+    "two_hourly": {
+        "stem": "geosfp-2hourly",
+        "frequency_s": 7200,
+        "file_period_s": 21600,
+        "files": 2,
+        "variables": ["PS"],
+    },
 }
 
 
 def _iso(epoch_s):
     import datetime as dt
+
     return dt.datetime.fromtimestamp(epoch_s, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _prefetch_url(stem, epoch_s):
     import datetime as dt
+
     stamp = dt.datetime.fromtimestamp(epoch_s, dt.timezone.utc).strftime("%Y%m%d_%H%M")
     return f"{PREFETCH_BASE}/{stem}.{stamp}.nc"
 
@@ -1545,8 +1962,9 @@ def build_prefetch_file(source, file_index):
     nrec = src["file_period_s"] // src["frequency_s"]
     nlat, nlon = 2, 3
     rec0 = file_index * nrec
-    times = np.array([PREFETCH_T0 + (rec0 + r) * src["frequency_s"]
-                      for r in range(nrec)], dtype="i4")
+    times = np.array(
+        [PREFETCH_T0 + (rec0 + r) * src["frequency_s"] for r in range(nrec)], dtype="i4"
+    )
     tmp = CORPUS / f".tmp_{source}_{file_index}.nc"
     ds = Dataset(tmp, "w", format="NETCDF3_CLASSIC")
     ds.createDimension("time", None)
@@ -1561,15 +1979,14 @@ def build_prefetch_file(source, file_index):
     v = ds.createVariable("lon", "f8", ("lon",))
     v.units = "degrees_east"
     v[:] = np.array([0.0, 120.0, 240.0])
-    grid = np.fromfunction(lambda r, y, x: (rec0 + r) * 100 + y * 10 + x,
-                           (nrec, nlat, nlon))
+    grid = np.fromfunction(lambda r, y, x: (rec0 + r) * 100 + y * 10 + x, (nrec, nlat, nlon))
     if source == "hourly":
         v = ds.createVariable("Q", "f8", ("time", "lat", "lon"))
         v.units = "kg kg-1"
         v[:] = grid + 0.5
         fill = np.int16(-32767)
         raw = grid.astype("i2")
-        raw[nrec - 1, 1, 2] = fill        # the last record of every file: a seam cell
+        raw[nrec - 1, 1, 2] = fill  # the last record of every file: a seam cell
         v = ds.createVariable("TP", "i2", ("time", "lat", "lon"), fill_value=fill)
         v.set_auto_maskandscale(False)
         v.scale_factor, v.add_offset, v.units = 0.5, 200.0, "K"
@@ -1589,13 +2006,27 @@ def emit_scenario_blob(url, data, loader, ext="nc"):
     key = cache_key(url)
     sha = sha256_bytes(data)
     rel = write_blob(key, ext, data)
-    write_manifest(key, {
-        "schema": "earthsciio/manifest/v1", "url": url, "etag": None,
-        "last_modified": None, "sha256_content": sha, "bytes": len(data),
-        "fetched_at": FIXED_FETCHED_AT, "source_loader": loader, "auth_realm": None,
-    })
-    return {"url": url, "cache_key": key, "blob_path": rel,
-            "content_sha256": sha, "bytes": len(data)}
+    write_manifest(
+        key,
+        {
+            "schema": "earthsciio/manifest/v1",
+            "url": url,
+            "etag": None,
+            "last_modified": None,
+            "sha256_content": sha,
+            "bytes": len(data),
+            "fetched_at": FIXED_FETCHED_AT,
+            "source_loader": loader,
+            "auth_realm": None,
+        },
+    )
+    return {
+        "url": url,
+        "cache_key": key,
+        "blob_path": rel,
+        "content_sha256": sha,
+        "bytes": len(data),
+    }
 
 
 def _scenario_source(name, *, files):
@@ -1607,19 +2038,28 @@ def _scenario_source(name, *, files):
     file_list = []
     for i in range(files):
         anchor = PREFETCH_T0 + i * src["file_period_s"]
-        file_list.append({"anchor": _iso(anchor), "anchor_s": anchor,
-                          "url": _prefetch_url(src["stem"], anchor),
-                          "in_corpus": i < src["files"]})
+        file_list.append(
+            {
+                "anchor": _iso(anchor),
+                "anchor_s": anchor,
+                "url": _prefetch_url(src["stem"], anchor),
+                "in_corpus": i < src["files"],
+            }
+        )
     return {
         "format": "netcdf",
         "url_template": {
             "strftime": f"{PREFETCH_BASE}/{src['stem']}.%Y%m%d_%H%M.nc",
             "rust": f"{PREFETCH_BASE}/{src['stem']}.[year][month][day]_[hour][minute].nc",
         },
-        "start": _iso(PREFETCH_T0), "start_s": PREFETCH_T0,
-        "end": _iso(end), "end_s": end,
-        "frequency_s": src["frequency_s"], "file_period_s": src["file_period_s"],
-        "time_dim": "time", "variables": list(src["variables"]),
+        "start": _iso(PREFETCH_T0),
+        "start_s": PREFETCH_T0,
+        "end": _iso(end),
+        "end_s": end,
+        "frequency_s": src["frequency_s"],
+        "file_period_s": src["file_period_s"],
+        "time_dim": "time",
+        "variables": list(src["variables"]),
         "refresh_times_s": list(range(PREFETCH_T0, end, src["frequency_s"])),
         "files": file_list,
     }
@@ -1631,9 +2071,15 @@ def emit_scenarios(mixed_blob_record):
     for name, src in PREFETCH_SOURCES.items():
         for i in range(src["files"]):
             anchor = PREFETCH_T0 + i * src["file_period_s"]
-            blobs.append(emit_scenario_blob(_prefetch_url(src["stem"], anchor),
-                                            build_prefetch_file(name, i), "geosfp"))
-    hourly, two_hourly = _scenario_source("hourly", files=3), _scenario_source("two_hourly", files=2)
+            blobs.append(
+                emit_scenario_blob(
+                    _prefetch_url(src["stem"], anchor), build_prefetch_file(name, i), "geosfp"
+                )
+            )
+    hourly, two_hourly = (
+        _scenario_source("hourly", files=3),
+        _scenario_source("two_hourly", files=2),
+    )
     union = sorted(set(hourly["refresh_times_s"]) | set(two_hourly["refresh_times_s"]))
     sdir = CORPUS / "scenarios"
     hourly_windows = [
@@ -1641,96 +2087,126 @@ def emit_scenarios(mixed_blob_record):
         {"dims": {"lon": {"slice": [0, 3, 2]}}},
     ]
 
-    write_json(sdir / "multi-window.json", {
-        "schema": "earthsciio/scenario/v1",
-        "id": "multi-window",
-        "description": (
-            "sample_windows_at(t, W) must equal [with_window(w).sample_at(t) for w in W] "
-            "BITWISE -- variables, coordinates, dims, dtypes, NaN for NaN -- and each must "
-            "equal the whole read sliced by name. `const` runs the mixed-rank blob as a "
-            "CONST provider (overlapping, permuted, repeated, wrapping and EMPTY windows); "
-            "`discrete` runs the hourly source with records_per_sample 1 and 2 at every "
-            "refresh time, file seams included."),
-        "blobs": [mixed_blob_record] + [b for b in blobs if "geosfp-hourly" in b["url"]],
-        "const": {
-            "format": "netcdf", "url": GEOSFP_MIXED_URL, "variables": [],
-            "windows": [
-                {"dims": {"lat": {"slice": [0, 2]}, "lon": {"indices": [3, 4, 0]},
-                          "lev": {"indices": [2, 0]}}},
-                {"dims": {"lat": {"slice": [1, 4]}, "lon": {"indices": [4, 4, 1]},
-                          "lon_edge": {"slice": [0, 6, 2]}}},
-                {"dims": {"lat": {"indices": []}, "lon": "all"}},
-                {"dims": {"lon": {"indices": [4, 0]}, "lev": "all"}},
-            ],
+    write_json(
+        sdir / "multi-window.json",
+        {
+            "schema": "earthsciio/scenario/v1",
+            "id": "multi-window",
+            "description": (
+                "sample_windows_at(t, W) must equal [with_window(w).sample_at(t) for w in W] "
+                "BITWISE -- variables, coordinates, dims, dtypes, NaN for NaN -- and each must "
+                "equal the whole read sliced by name. `const` runs the mixed-rank blob as a "
+                "CONST provider (overlapping, permuted, repeated, wrapping and EMPTY windows); "
+                "`discrete` runs the hourly source with records_per_sample 1 and 2 at every "
+                "refresh time, file seams included."
+            ),
+            "blobs": [mixed_blob_record] + [b for b in blobs if "geosfp-hourly" in b["url"]],
+            "const": {
+                "format": "netcdf",
+                "url": GEOSFP_MIXED_URL,
+                "variables": [],
+                "windows": [
+                    {
+                        "dims": {
+                            "lat": {"slice": [0, 2]},
+                            "lon": {"indices": [3, 4, 0]},
+                            "lev": {"indices": [2, 0]},
+                        }
+                    },
+                    {
+                        "dims": {
+                            "lat": {"slice": [1, 4]},
+                            "lon": {"indices": [4, 4, 1]},
+                            "lon_edge": {"slice": [0, 6, 2]},
+                        }
+                    },
+                    {"dims": {"lat": {"indices": []}, "lon": "all"}},
+                    {"dims": {"lon": {"indices": [4, 0]}, "lev": "all"}},
+                ],
+            },
+            "discrete": {"source": hourly, "records_per_sample": [1, 2], "windows": hourly_windows},
         },
-        "discrete": {"source": hourly, "records_per_sample": [1, 2],
-                     "windows": hourly_windows},
-    })
+    )
 
-    write_json(sdir / "prefetch-equivalence.json", {
-        "schema": "earthsciio/scenario/v1",
-        "id": "prefetch-equivalence",
-        "description": (
-            "For every combination of order x depth x workers x max_bytes (and once with "
-            "`windows`), the PrefetchGroup take(k) sequence must equal, member by member "
-            "and BITWISE, the synchronous sequence of a FRESH provider's refresh(B[k]) "
-            "(Rust: refresh's variables + coords()). Randomize decode latency with the "
-            "binding's test hook so completion order varies. `expect` pins boundaries and, "
-            "per member, the anchor of every epoch and which epochs are `changed` in a "
-            "forward order; epochs are 0-based here (Julia adds 1)."),
-        "blobs": blobs,
-        "sources": {"hourly": hourly, "two_hourly": two_hourly},
-        "members": [
-            {"key": "Q1", "source": "hourly", "records_per_sample": 1},
-            {"key": "Q2", "source": "hourly", "records_per_sample": 2},
-            {"key": "PS", "source": "two_hourly", "records_per_sample": 1},
-        ],
-        "orders": ["forward", "reverse", [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 0, 11, 11, 10, 7, 8]],
-        "depth": [1, 2, 3],
-        "workers": [1, 4],
-        "max_bytes": [None, 1],
-        "windows": hourly_windows,
-        "expect": {
-            "boundaries_s": union,
-            "anchors_s": {
-                "Q1": union, "Q2": union,
-                "PS": [t - (t - PREFETCH_T0) % 7200 for t in union],
-            },
-            "changed_forward": {
-                "Q1": [True] * len(union), "Q2": [True] * len(union),
-                "PS": [(t - PREFETCH_T0) % 7200 == 0 for t in union],
+    write_json(
+        sdir / "prefetch-equivalence.json",
+        {
+            "schema": "earthsciio/scenario/v1",
+            "id": "prefetch-equivalence",
+            "description": (
+                "For every combination of order x depth x workers x max_bytes (and once with "
+                "`windows`), the PrefetchGroup take(k) sequence must equal, member by member "
+                "and BITWISE, the synchronous sequence of a FRESH provider's refresh(B[k]) "
+                "(Rust: refresh's variables + coords()). Randomize decode latency with the "
+                "binding's test hook so completion order varies. `expect` pins boundaries and, "
+                "per member, the anchor of every epoch and which epochs are `changed` in a "
+                "forward order; epochs are 0-based here (Julia adds 1)."
+            ),
+            "blobs": blobs,
+            "sources": {"hourly": hourly, "two_hourly": two_hourly},
+            "members": [
+                {"key": "Q1", "source": "hourly", "records_per_sample": 1},
+                {"key": "Q2", "source": "hourly", "records_per_sample": 2},
+                {"key": "PS", "source": "two_hourly", "records_per_sample": 1},
+            ],
+            "orders": [
+                "forward",
+                "reverse",
+                [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 0, 11, 11, 10, 7, 8],
+            ],
+            "depth": [1, 2, 3],
+            "workers": [1, 4],
+            "max_bytes": [None, 1],
+            "windows": hourly_windows,
+            "expect": {
+                "boundaries_s": union,
+                "anchors_s": {
+                    "Q1": union,
+                    "Q2": union,
+                    "PS": [t - (t - PREFETCH_T0) % 7200 for t in union],
+                },
+                "changed_forward": {
+                    "Q1": [True] * len(union),
+                    "Q2": [True] * len(union),
+                    "PS": [(t - PREFETCH_T0) % 7200 == 0 for t in union],
+                },
             },
         },
-    })
+    )
 
     long_hourly = _scenario_source("hourly", files=4)
     missing_first = long_hourly["refresh_times_s"].index(long_hourly["files"][3]["anchor_s"])
-    write_json(sdir / "prefetch-errors.json", {
-        "schema": "earthsciio/scenario/v1",
-        "id": "prefetch-errors",
-        "description": (
-            "The hourly source declared one file LONGER than the corpus holds (to 16Z): "
-            "offline, its fourth file is a CacheMiss. (1) For depth in {1, 3} and workers "
-            "in {1, 4}, a forward order's take(k) succeeds for every k < `missing_from` and "
-            "raises CacheMiss (the binding's own cache-miss error, never a wrapper) at "
-            "take(missing_from), not before -- although the workers reach it early; the "
-            "next take is an error telling the caller to start again. (2) Take `cancel_after` "
-            "epochs, cancel(), start(forward, from=`cancel_after`): the rest equals the "
-            "uninterrupted sequence. (3) A COLD cache (an empty offline root) raises "
-            "CacheMiss at take(0)."),
-        "blobs": [b for b in blobs if "geosfp-hourly" in b["url"]],
-        "source": long_hourly,
-        "records_per_sample": 1,
-        "depth": [1, 3],
-        "workers": [1, 4],
-        "missing_from": missing_first,
-        "cancel_after": 5,
-    })
+    write_json(
+        sdir / "prefetch-errors.json",
+        {
+            "schema": "earthsciio/scenario/v1",
+            "id": "prefetch-errors",
+            "description": (
+                "The hourly source declared one file LONGER than the corpus holds (to 16Z): "
+                "offline, its fourth file is a CacheMiss. (1) For depth in {1, 3} and workers "
+                "in {1, 4}, a forward order's take(k) succeeds for every k < `missing_from` and "
+                "raises CacheMiss (the binding's own cache-miss error, never a wrapper) at "
+                "take(missing_from), not before -- although the workers reach it early; the "
+                "next take is an error telling the caller to start again. (2) Take `cancel_after` "
+                "epochs, cancel(), start(forward, from=`cancel_after`): the rest equals the "
+                "uninterrupted sequence. (3) A COLD cache (an empty offline root) raises "
+                "CacheMiss at take(0)."
+            ),
+            "blobs": [b for b in blobs if "geosfp-hourly" in b["url"]],
+            "source": long_hourly,
+            "records_per_sample": 1,
+            "depth": [1, 3],
+            "workers": [1, 4],
+            "missing_from": missing_first,
+            "cancel_after": 5,
+        },
+    )
     return blobs
 
 
-def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
-                   decode, select, notes):
+def emit_zarr_case(
+    case_id, *, loader, base_url, objects, variables, expected, decode, select, notes
+):
     """Write every store object as a cache blob + manifest, then the case JSON.
 
     A Zarr case's ``blob_path``/``content_sha256``/``bytes``/``cache_key`` anchor
@@ -1758,8 +2234,13 @@ def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
             "auth_realm": None,
         }
         write_manifest(key, manifest)
-        rec = {"url": url, "cache_key": key, "blob_path": blob_rel,
-               "content_sha256": content_sha, "bytes": len(data)}
+        rec = {
+            "url": url,
+            "cache_key": key,
+            "blob_path": blob_rel,
+            "content_sha256": content_sha,
+            "bytes": len(data),
+        }
         if poisoned:
             # Outside the case's selection, and undecodable on purpose: a reader
             # that fetches it fails (the oracle skips it, as a lazy reader must).
@@ -1791,12 +2272,26 @@ def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
         "notes": notes,
     }
     write_json(CASES_DIR / f"{case_id}.json", case)
-    return (primary["cache_key"], primary["content_sha256"], primary["bytes"],
-            primary["blob_path"])
+    return (primary["cache_key"], primary["content_sha256"], primary["bytes"], primary["blob_path"])
 
 
-def emit_case(case_id, *, loader, kind, fmt, transport, store, resolved_url,
-              ext, data, expected, decode, select, notes, variables=None):
+def emit_case(
+    case_id,
+    *,
+    loader,
+    kind,
+    fmt,
+    transport,
+    store,
+    resolved_url,
+    ext,
+    data,
+    expected,
+    decode,
+    select,
+    notes,
+    variables=None,
+):
     key = cache_key(resolved_url)
     content_sha = sha256_bytes(data)
     blob_rel = write_blob(key, ext, data)
@@ -1844,301 +2339,480 @@ def main() -> None:
     summary = []
 
     nc_data, nc_expected, nc_decode = build_era5_netcdf()
-    summary.append(("era5-grid-sub-tile",) + emit_case(
-        "era5-grid-sub-tile",
-        loader="era5", kind="grid", fmt="netcdf", transport="file", store="local",
-        resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
-        ext="nc", data=nc_data, expected=nc_expected, decode=nc_decode,
-        select={"all_records": True},
-        notes=("ERA5-like 2x3x3 sub-tile. t2m is int16-packed (scale_factor/"
-               "add_offset/_FillValue) -> decoded float64; one masked cell. sp "
-               "is plain float64. Pins CF scale/offset/fill decode parity."),
-    ))
+    summary.append(
+        ("era5-grid-sub-tile",)
+        + emit_case(
+            "era5-grid-sub-tile",
+            loader="era5",
+            kind="grid",
+            fmt="netcdf",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
+            ext="nc",
+            data=nc_data,
+            expected=nc_expected,
+            decode=nc_decode,
+            select={"all_records": True},
+            notes=(
+                "ERA5-like 2x3x3 sub-tile. t2m is int16-packed (scale_factor/"
+                "add_offset/_FillValue) -> decoded float64; one masked cell. sp "
+                "is plain float64. Pins CF scale/offset/fill decode parity."
+            ),
+        )
+    )
 
-    summary.append(("era5-window-slice",) + emit_case(
-        "era5-window-slice",
-        loader="era5", kind="grid", fmt="netcdf", transport="file", store="local",
-        resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
-        ext="nc", data=nc_data,
-        expected=window_era5_expected(nc_expected),
-        decode=dict(nc_decode, decode_time_select=True),
-        select=ERA5_WINDOW,
-        notes=("The SAME blob and cache key as era5-grid-sub-tile, read through a "
-               "decode-time orthogonal `select`: lat {slice:[1,3]}, lon "
-               "{indices:[0,2]}, time \"all\". Pins that a whole-file reader "
-               "materialises only the hyperslab and returns arrays identical to "
-               "the full read sliced afterwards, that the lat/lon COORDINATES are "
-               "sliced with the data (a windowed variable beside a full-length "
-               "axis is the trap), that the masked cell still decodes to NaN "
-               "inside the window, and that the time axis is untouched and raw. "
-               "One blob, one sha256(url) key: a selection changes the decode, "
-               "never the fetch."),
-    ))
+    summary.append(
+        ("era5-window-slice",)
+        + emit_case(
+            "era5-window-slice",
+            loader="era5",
+            kind="grid",
+            fmt="netcdf",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
+            ext="nc",
+            data=nc_data,
+            expected=window_era5_expected(nc_expected),
+            decode=dict(nc_decode, decode_time_select=True),
+            select=ERA5_WINDOW,
+            notes=(
+                "The SAME blob and cache key as era5-grid-sub-tile, read through a "
+                "decode-time orthogonal `select`: lat {slice:[1,3]}, lon "
+                '{indices:[0,2]}, time "all". Pins that a whole-file reader '
+                "materialises only the hyperslab and returns arrays identical to "
+                "the full read sliced afterwards, that the lat/lon COORDINATES are "
+                "sliced with the data (a windowed variable beside a full-length "
+                "axis is the trap), that the masked cell still decodes to NaN "
+                "inside the window, and that the time axis is untouched and raw. "
+                "One blob, one sha256(url) key: a selection changes the decode, "
+                "never the fetch."
+            ),
+        )
+    )
 
     text_data, text_expected, text_decode = build_text_netcdf()
-    summary.append(("station-labels-text",) + emit_case(
-        "station-labels-text",
-        loader="openaq", kind="points", fmt="netcdf", transport="file", store="local",
-        resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
-        ext="nc", data=text_data, expected=text_expected, decode=text_decode,
-        select={"all_records": True},
-        notes=("NetCDF TEXT variables in all three of their readings, in ONE blob "
-               "(spec/conformance.md §3). `char site_id(site, strlen)` on a "
-               "PRIVATE strlen is 4 STRINGS on dims [site] — the length dimension "
-               "is consumed, trailing NULs are stripped, a trailing SPACE is data "
-               "(\"cd  \") and an all-NUL row is \"\". `char flag(site)` shares "
-               "`site` with `float64 value(site)`, so `site` is a real axis and "
-               "every cell is its own ONE-character string, with the NUL cell the "
-               "EMPTY string. `char title(titlelen)` alone on a private dimension "
-               "is a SCALAR string (dims []). The rule is about the FILE, not the "
-               "variable: the same spelling means different things here depending "
-               "on what else uses the dimension."),
-    ))
+    summary.append(
+        ("station-labels-text",)
+        + emit_case(
+            "station-labels-text",
+            loader="openaq",
+            kind="points",
+            fmt="netcdf",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
+            ext="nc",
+            data=text_data,
+            expected=text_expected,
+            decode=text_decode,
+            select={"all_records": True},
+            notes=(
+                "NetCDF TEXT variables in all three of their readings, in ONE blob "
+                "(spec/conformance.md §3). `char site_id(site, strlen)` on a "
+                "PRIVATE strlen is 4 STRINGS on dims [site] — the length dimension "
+                "is consumed, trailing NULs are stripped, a trailing SPACE is data "
+                '("cd  ") and an all-NUL row is "". `char flag(site)` shares '
+                "`site` with `float64 value(site)`, so `site` is a real axis and "
+                "every cell is its own ONE-character string, with the NUL cell the "
+                "EMPTY string. `char title(titlelen)` alone on a private dimension "
+                "is a SCALAR string (dims []). The rule is about the FILE, not the "
+                "variable: the same spelling means different things here depending "
+                "on what else uses the dimension."
+            ),
+        )
+    )
 
-    summary.append(("station-labels-window",) + emit_case(
-        "station-labels-window",
-        loader="openaq", kind="points", fmt="netcdf", transport="file", store="local",
-        resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
-        ext="nc", data=text_data,
-        expected=window_text_expected(text_expected),
-        decode=dict(text_decode, decode_time_select=True),
-        select=TEXT_WINDOW,
-        notes=("The SAME blob and cache key as station-labels-text, read through a "
-               "ONE-axis decode-time `select` ({indices:[0,2]}). Pins that a text "
-               "field is windowed like any other — `site_id` and `flag` lose the "
-               "same cells `value` loses — and that the positional axis match is "
-               "over the DECODED field's dims: `site_id` is RANK 1 on TWO on-disk "
-               "dimensions, and the scalar `title` is RANK 0 and untouched. A "
-               "track that counted on-disk dimensions would bind this selector to "
-               "`titlelen` as well and hand back \"h\" for `title` — a wrong "
-               "STRING, invisible to every shape assertion."),
-    ))
+    summary.append(
+        ("station-labels-window",)
+        + emit_case(
+            "station-labels-window",
+            loader="openaq",
+            kind="points",
+            fmt="netcdf",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
+            ext="nc",
+            data=text_data,
+            expected=window_text_expected(text_expected),
+            decode=dict(text_decode, decode_time_select=True),
+            select=TEXT_WINDOW,
+            notes=(
+                "The SAME blob and cache key as station-labels-text, read through a "
+                "ONE-axis decode-time `select` ({indices:[0,2]}). Pins that a text "
+                "field is windowed like any other — `site_id` and `flag` lose the "
+                "same cells `value` loses — and that the positional axis match is "
+                "over the DECODED field's dims: `site_id` is RANK 1 on TWO on-disk "
+                "dimensions, and the scalar `title` is RANK 0 and untouched. A "
+                "track that counted on-disk dimensions would bind this selector to "
+                '`titlelen` as well and hand back "h" for `title` — a wrong '
+                "STRING, invisible to every shape assertion."
+            ),
+        )
+    )
 
     csv_data, csv_expected, csv_decode = build_openaq_csv()
-    summary.append(("openaq-points-slice",) + emit_case(
-        "openaq-points-slice",
-        loader="openaq", kind="points", fmt="csv", transport="file", store="local",
-        resolved_url="https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv",
-        ext="csv", data=csv_data, expected=csv_expected, decode=csv_decode,
-        select={"all_rows": True},
-        notes=("OpenAQ-like points CSV. Numeric columns -> float64 1-D arrays; "
-               "others -> string arrays. Second reader behind the FORMAT "
-               "registry; proves a non-NetCDF format plugs in unchanged."),
-    ))
+    summary.append(
+        ("openaq-points-slice",)
+        + emit_case(
+            "openaq-points-slice",
+            loader="openaq",
+            kind="points",
+            fmt="csv",
+            transport="file",
+            store="local",
+            resolved_url="https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv",
+            ext="csv",
+            data=csv_data,
+            expected=csv_expected,
+            decode=csv_decode,
+            select={"all_rows": True},
+            notes=(
+                "OpenAQ-like points CSV. Numeric columns -> float64 1-D arrays; "
+                "others -> string arrays. Second reader behind the FORMAT "
+                "registry; proves a non-NetCDF format plugs in unchanged."
+            ),
+        )
+    )
 
     ff10_data, ff10_expected, ff10_decode = build_ff10_point()
-    summary.append(("ff10-point-slice",) + emit_case(
-        "ff10-point-slice",
-        loader="nei2016", kind="points", fmt="ff10", transport="file", store="local",
-        resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
-        ext="csv", data=ff10_data, expected=ff10_expected, decode=ff10_decode,
-        select={"all_rows": True},
-        notes=("FF10 point long-format slice (NEI 2016). '#' header skipped; fixed "
-               "77-col FF10_POINT schema applied positionally; 42 numeric cols -> "
-               "float64 (blank->NaN), 35 ids/codes/text -> string; RFC-4180 quoted "
-               "FACILITY_NAME with an embedded comma. 3 rows share one stack, "
-               "differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/"
-               "filter). member=null decodes the bare extracted CSV member."),
-    ))
+    summary.append(
+        ("ff10-point-slice",)
+        + emit_case(
+            "ff10-point-slice",
+            loader="nei2016",
+            kind="points",
+            fmt="ff10",
+            transport="file",
+            store="local",
+            resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
+            ext="csv",
+            data=ff10_data,
+            expected=ff10_expected,
+            decode=ff10_decode,
+            select={"all_rows": True},
+            notes=(
+                "FF10 point long-format slice (NEI 2016). '#' header skipped; fixed "
+                "77-col FF10_POINT schema applied positionally; 42 numeric cols -> "
+                "float64 (blank->NaN), 35 ids/codes/text -> string; RFC-4180 quoted "
+                "FACILITY_NAME with an embedded comma. 3 rows share one stack, "
+                "differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/"
+                "filter). member=null decodes the bare extracted CSV member."
+            ),
+        )
+    )
 
     zf_data, zf_expected, zf_decode = build_ff10_zip()
-    summary.append(("ff10-zip-egu-glob",) + emit_case(
-        "ff10-zip-egu-glob",
-        loader="nei2016", kind="points", fmt="ff10", transport="file", store="local",
-        resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip",
-        ext="zip", data=zf_data, expected=zf_expected, decode=zf_decode,
-        select={"all_rows": True},
-        notes=("EPA-2016fd-shaped zip of FF10 point members: two `*egu*` members "
-               "+ one excluded member + a glob-matching DIRECTORY placeholder "
-               "entry (`point_egu/`, ignored — file members only), each member "
-               "with a `#` comment block AND a non-comment `country_cd,…` "
-               "column-header line (77 fields). Pins member_glob selection "
-               "(glob `*egu*`, exclusion of the third member, sorted "
-               "member-name concatenation: alpha rows then beta) and "
-               "skip_header_row (exactly one asserted header line dropped per "
-               "member). The blob is the WHOLE zip; member selection is reader "
-               "config, never part of the cache key."),
-    ))
+    summary.append(
+        ("ff10-zip-egu-glob",)
+        + emit_case(
+            "ff10-zip-egu-glob",
+            loader="nei2016",
+            kind="points",
+            fmt="ff10",
+            transport="file",
+            store="local",
+            resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip",
+            ext="zip",
+            data=zf_data,
+            expected=zf_expected,
+            decode=zf_decode,
+            select={"all_rows": True},
+            notes=(
+                "EPA-2016fd-shaped zip of FF10 point members: two `*egu*` members "
+                "+ one excluded member + a glob-matching DIRECTORY placeholder "
+                "entry (`point_egu/`, ignored — file members only), each member "
+                "with a `#` comment block AND a non-comment `country_cd,…` "
+                "column-header line (77 fields). Pins member_glob selection "
+                "(glob `*egu*`, exclusion of the third member, sorted "
+                "member-name concatenation: alpha rows then beta) and "
+                "skip_header_row (exactly one asserted header line dropped per "
+                "member). The blob is the WHOLE zip; member selection is reader "
+                "config, never part of the cache key."
+            ),
+        )
+    )
 
     zarr_objects, zarr_expected = build_zarr_store()
-    summary.append(("isrm-zarr-tile",) + emit_zarr_case(
-        "isrm-zarr-tile",
-        loader="isrm", base_url=ZARR_BASE_URL, objects=zarr_objects,
-        variables=["field3d", "pop1d"], expected=zarr_expected,
-        decode={"compressor": "blosc-lz4-shuffle", "fill_to_nan": False,
-                "order": "C", "zarr_format": 2},
-        select=ZARR_SELECT,
-        notes=("Synthetic Zarr v2 store. field3d [2,5,4] chunked [1,2,4] (partial "
-               "edge chunk on dim1); pop1d [8] chunked [8]. Orthogonal selection "
-               "layer=[1], y=[1,4], x=all fetches ONLY field3d/1.0.0 + field3d/"
-               "1.2.0 (2 of 6 chunks) — never layer 0, never the middle y-chunk "
-               "field3d/1.1.0; pop1d (rank 1) reads whole. fill_value 0.0 is real "
-               "data, NOT mapped to NaN. No coordinate arrays."),
-    ))
+    summary.append(
+        ("isrm-zarr-tile",)
+        + emit_zarr_case(
+            "isrm-zarr-tile",
+            loader="isrm",
+            base_url=ZARR_BASE_URL,
+            objects=zarr_objects,
+            variables=["field3d", "pop1d"],
+            expected=zarr_expected,
+            decode={
+                "compressor": "blosc-lz4-shuffle",
+                "fill_to_nan": False,
+                "order": "C",
+                "zarr_format": 2,
+            },
+            select=ZARR_SELECT,
+            notes=(
+                "Synthetic Zarr v2 store. field3d [2,5,4] chunked [1,2,4] (partial "
+                "edge chunk on dim1); pop1d [8] chunked [8]. Orthogonal selection "
+                "layer=[1], y=[1,4], x=all fetches ONLY field3d/1.0.0 + field3d/"
+                "1.2.0 (2 of 6 chunks) — never layer 0, never the middle y-chunk "
+                "field3d/1.1.0; pop1d (rank 1) reads whole. fill_value 0.0 is real "
+                "data, NOT mapped to NaN. No coordinate arrays."
+            ),
+        )
+    )
 
     zp_objects, zp_expected = build_zarr_permuted()
-    summary.append(("permuted-order-tile",) + emit_zarr_case(
-        "permuted-order-tile",
-        loader="isrm", base_url=ZARR_PERMUTED_URL, objects=zp_objects,
-        variables=["sr"], expected=zp_expected,
-        decode={"compressor": "blosc-lz4-shuffle", "fill_to_nan": False,
-                "order": "C", "zarr_format": 2},
-        select=ZARR_PERMUTED_SELECT,
-        notes=("Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. "
-               "sr [3,50,4] chunked [1,10,4]; select layer=[0], source=[24,2,9,6] "
-               "(NON-CONTIGUOUS, PERMUTED — not sorted), receptor=all fetches ONLY "
-               "sr/0.0.0 + sr/0.2.0 (2 of 15 chunks) and returns the source axis in "
-               "[24,2,9,6] order EXACTLY (a reader that sorted the indices would "
-               "return [2,6,9,24] and fail). Proven byte-identical across "
-               "Python/Julia/Rust — the Phase-1 3-way selection conformance gate."),
-    ))
+    summary.append(
+        ("permuted-order-tile",)
+        + emit_zarr_case(
+            "permuted-order-tile",
+            loader="isrm",
+            base_url=ZARR_PERMUTED_URL,
+            objects=zp_objects,
+            variables=["sr"],
+            expected=zp_expected,
+            decode={
+                "compressor": "blosc-lz4-shuffle",
+                "fill_to_nan": False,
+                "order": "C",
+                "zarr_format": 2,
+            },
+            select=ZARR_PERMUTED_SELECT,
+            notes=(
+                "Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. "
+                "sr [3,50,4] chunked [1,10,4]; select layer=[0], source=[24,2,9,6] "
+                "(NON-CONTIGUOUS, PERMUTED — not sorted), receptor=all fetches ONLY "
+                "sr/0.0.0 + sr/0.2.0 (2 of 15 chunks) and returns the source axis in "
+                "[24,2,9,6] order EXACTLY (a reader that sorted the indices would "
+                "return [2,6,9,24] and fail). Proven byte-identical across "
+                "Python/Julia/Rust — the Phase-1 3-way selection conformance gate."
+            ),
+        )
+    )
 
     shp_data, shp_expected, shp_decode = build_shapefile_zip()
-    summary.append(("shapefile-polygon-zip",) + emit_case(
-        "shapefile-polygon-zip",
-        loader="emis_polygons", kind="points", fmt="shapefile", transport="file",
-        store="local",
-        resolved_url="https://data.earthsci.dev/fixtures/emis_polygons.zip",
-        ext="zip", data=shp_data, expected=shp_expected, decode=shp_decode,
-        select={"all_records": True},
-        notes=("ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. "
-               "Pins the whole reader contract in one layer: ONE ROW PER PART "
-               "(record 1 is a mainland + an island, so 4 live records decode to "
-               "5 rows with the .dbf attributes replicated); the esm-spec 8.6.1 "
-               "padding (a 4-vertex ring in a 5-vertex stack repeats its FINAL "
-               "vertex, never NaN); a `*` deletion flag dropping the row AND its "
-               "shape while a NUL flag byte keeps it (pyshp treats any non-space "
-               "flag as deleted — the Python reader normalizes); the stored "
-               "per-record bbox replicated to parts; and the dtype rules — C -> "
-               "string, N -> float64 with a blank -> NaN, L -> bool, and a C code "
-               "column forced to float64 by numeric_columns. shape_type/crs_wkt "
-               "are one-element `meta` string fields, not field attrs, because "
-               "the Rust NativeField has none and equality compares fields."),
-    ))
+    summary.append(
+        ("shapefile-polygon-zip",)
+        + emit_case(
+            "shapefile-polygon-zip",
+            loader="emis_polygons",
+            kind="points",
+            fmt="shapefile",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/fixtures/emis_polygons.zip",
+            ext="zip",
+            data=shp_data,
+            expected=shp_expected,
+            decode=shp_decode,
+            select={"all_records": True},
+            notes=(
+                "ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. "
+                "Pins the whole reader contract in one layer: ONE ROW PER PART "
+                "(record 1 is a mainland + an island, so 4 live records decode to "
+                "5 rows with the .dbf attributes replicated); the esm-spec 8.6.1 "
+                "padding (a 4-vertex ring in a 5-vertex stack repeats its FINAL "
+                "vertex, never NaN); a `*` deletion flag dropping the row AND its "
+                "shape while a NUL flag byte keeps it (pyshp treats any non-space "
+                "flag as deleted — the Python reader normalizes); the stored "
+                "per-record bbox replicated to parts; and the dtype rules — C -> "
+                "string, N -> float64 with a blank -> NaN, L -> bool, and a C code "
+                "column forced to float64 by numeric_columns. shape_type/crs_wkt "
+                "are one-element `meta` string fields, not field attrs, because "
+                "the Rust NativeField has none and equality compares fields."
+            ),
+        )
+    )
 
     pq_data, pq_expected, pq_decode = build_parquet_moves()
-    summary.append(("moves-rate-table-parquet",) + emit_case(
-        "moves-rate-table-parquet",
-        loader="moves", kind="points", fmt="parquet", transport="file",
-        store="local",
-        resolved_url="https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
-        ext="parquet", data=pq_data, expected=pq_expected, decode=pq_decode,
-        select={"all_rows": True}, variables=PQ_PROJECTION,
-        notes=("MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every "
-               "track concatenates two batches and the row order across the seam "
-               "is pinned), snappy-compressed. One column per supported Arrow "
-               "family: the narrow/wide integer split (uint8 255 read unsigned, "
-               "uint32 4294967295 not fitting an int32), a categorical EXPANDED "
-               "to one string per row, float32 widened bit-exactly, Decimal128 "
-               "as unscaled/10^scale, temporal columns as their RAW stored "
-               "integer at their stored width (date32/time32[ms] -> int32; "
-               "timestamp[ms]/time64[us] -> int64), and an all-Null column as "
-               "float64/all-NaN. Null policy: a float null -> NaN with no "
-               "surviving sentinel; a declared null_int=-1 fills the integer "
-               "nulls AND is reported back in fill_value on every int column; "
-               "null_string fills a text null (and a DICTIONARY null) while a "
-               "real empty string stays \"\". float_columns does both of its "
-               "jobs at once — `meanBaseRate` is fixed-decimal TEXT (blank -> "
-               "NaN) and `modelYearID` is an integer measurement whose nulls "
-               "become NaN rather than the sentinel, so no fill_value survives "
-               "it. `variables` is the PROJECTION: `ignoredNote` (readable) and "
-               "`internalKey` (binary, no rank-1 reading) are both left out. "
-               "Deliberately carries NO nested column, ms-aligned timestamps "
-               "only, and decimals inside Dec64's exact range — the three "
-               "Parquet2.jl limits spec/conformance.md §3 records."),
-    ))
+    summary.append(
+        ("moves-rate-table-parquet",)
+        + emit_case(
+            "moves-rate-table-parquet",
+            loader="moves",
+            kind="points",
+            fmt="parquet",
+            transport="file",
+            store="local",
+            resolved_url="https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
+            ext="parquet",
+            data=pq_data,
+            expected=pq_expected,
+            decode=pq_decode,
+            select={"all_rows": True},
+            variables=PQ_PROJECTION,
+            notes=(
+                "MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every "
+                "track concatenates two batches and the row order across the seam "
+                "is pinned), snappy-compressed. One column per supported Arrow "
+                "family: the narrow/wide integer split (uint8 255 read unsigned, "
+                "uint32 4294967295 not fitting an int32), a categorical EXPANDED "
+                "to one string per row, float32 widened bit-exactly, Decimal128 "
+                "as unscaled/10^scale, temporal columns as their RAW stored "
+                "integer at their stored width (date32/time32[ms] -> int32; "
+                "timestamp[ms]/time64[us] -> int64), and an all-Null column as "
+                "float64/all-NaN. Null policy: a float null -> NaN with no "
+                "surviving sentinel; a declared null_int=-1 fills the integer "
+                "nulls AND is reported back in fill_value on every int column; "
+                "null_string fills a text null (and a DICTIONARY null) while a "
+                'real empty string stays "". float_columns does both of its '
+                "jobs at once — `meanBaseRate` is fixed-decimal TEXT (blank -> "
+                "NaN) and `modelYearID` is an integer measurement whose nulls "
+                "become NaN rather than the sentinel, so no fill_value survives "
+                "it. `variables` is the PROJECTION: `ignoredNote` (readable) and "
+                "`internalKey` (binary, no rank-1 reading) are both left out. "
+                "Deliberately carries NO nested column, ms-aligned timestamps "
+                "only, and decimals inside Dec64's exact range — the three "
+                "Parquet2.jl limits spec/conformance.md §3 records."
+            ),
+        )
+    )
 
     tif_data, tif_expected, tif_decode = build_geotiff()
-    summary.append(("landfire-raster-tile",) + emit_case(
-        "landfire-raster-tile",
-        loader="landfire", kind="grid", fmt="geotiff", transport="file",
-        store="local",
-        resolved_url=TIF_URL,
-        ext="tif", data=tif_data, expected=tif_expected, decode=tif_decode,
-        select={"all_cells": True},
-        notes=("Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the "
-               "shape the LANDFIRE / USGS 3DEP ImageServer `exportImage` "
-               "responses have. Pins the georef contract the three readers each "
-               "implement separately and had never been compared on: Band1 "
-               "naming; lat/lon axis names from GTModelTypeGeoKey=2 (a projected "
-               "raster would be y/x); CELL-CENTRE axes offset half a cell from "
-               "the tiepoint's top-left CORNER; NON-SQUARE cells (sx=0.5, "
-               "sy=0.25) so a reader assuming square pixels fails; lat "
-               "DECREASING with row index (y-up model space, y-down rows); "
-               "GDAL_NODATA -> NaN on an INTERIOR cell; and int16 storage "
-               "widened to float64. Single-band on purpose — multi-band "
-               "interleaving is not agreed across tifffile/rasterio/the Rust "
-               "tiff crate, so pinning it here would invent a convention."),
-    ))
+    summary.append(
+        ("landfire-raster-tile",)
+        + emit_case(
+            "landfire-raster-tile",
+            loader="landfire",
+            kind="grid",
+            fmt="geotiff",
+            transport="file",
+            store="local",
+            resolved_url=TIF_URL,
+            ext="tif",
+            data=tif_data,
+            expected=tif_expected,
+            decode=tif_decode,
+            select={"all_cells": True},
+            notes=(
+                "Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the "
+                "shape the LANDFIRE / USGS 3DEP ImageServer `exportImage` "
+                "responses have. Pins the georef contract the three readers each "
+                "implement separately and had never been compared on: Band1 "
+                "naming; lat/lon axis names from GTModelTypeGeoKey=2 (a projected "
+                "raster would be y/x); CELL-CENTRE axes offset half a cell from "
+                "the tiepoint's top-left CORNER; NON-SQUARE cells (sx=0.5, "
+                "sy=0.25) so a reader assuming square pixels fails; lat "
+                "DECREASING with row index (y-up model space, y-down rows); "
+                "GDAL_NODATA -> NaN on an INTERIOR cell; and int16 storage "
+                "widened to float64. Single-band on purpose — multi-band "
+                "interleaving is not agreed across tifffile/rasterio/the Rust "
+                "tiff crate, so pinning it here would invent a convention."
+            ),
+        )
+    )
 
     mixed_data, mixed_vars, mixed_coords, mixed_sizes = build_geosfp_mixed_netcdf()
-    mixed_decode = {"scale_factor_offset": True, "fill_to_nan": True,
-                    "time_decoded": False, "decode_time_select": True,
-                    "select_form": "dims"}
+    mixed_decode = {
+        "scale_factor_offset": True,
+        "fill_to_nan": True,
+        "time_decoded": False,
+        "decode_time_select": True,
+        "select_form": "dims",
+    }
     mixed = emit_case(
         "named-window-mixed-rank",
-        loader="geosfp", kind="grid", fmt="netcdf", transport="file", store="local",
-        resolved_url=GEOSFP_MIXED_URL, ext="nc", data=mixed_data,
-        expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_NAMED_WINDOW,
-                                  mixed_sizes),
-        decode=mixed_decode, select=GEOSFP_NAMED_WINDOW,
-        notes=("GEOS-FP-shaped blob with fields of rank 1 (AREA_LAT[lat]), 2 "
-               "(PHIS[lat,lon]), 3 (PS[time,lat,lon] AND U_EDGE[time,lat,lon_edge] "
-               "on the STAGGERED lon_edge) and 4 (T[time,lev,lat,lon], int16-packed "
-               "with one masked cell inside the window), read through ONE "
-               "named-dimension select (spec/prefetch.md 2.1): lat {slice:[1,3]}, "
-               "lon {indices:[4,0,2]} (permuted), lev {slice:[0,3,2]} (stepped), "
-               "lon_edge {slice:[2,5]}; time unnamed, so whole and raw. No "
-               "positional `axes` can say this: rank 3 is [time,lat,lon] for PS and "
-               "[time,lat,lon_edge] for U_EDGE. Every field and every coordinate "
-               "carrying a named dim is sliced by name; the expectation is the full "
-               "read sliced afterwards."),
+        loader="geosfp",
+        kind="grid",
+        fmt="netcdf",
+        transport="file",
+        store="local",
+        resolved_url=GEOSFP_MIXED_URL,
+        ext="nc",
+        data=mixed_data,
+        expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_NAMED_WINDOW, mixed_sizes),
+        decode=mixed_decode,
+        select=GEOSFP_NAMED_WINDOW,
+        notes=(
+            "GEOS-FP-shaped blob with fields of rank 1 (AREA_LAT[lat]), 2 "
+            "(PHIS[lat,lon]), 3 (PS[time,lat,lon] AND U_EDGE[time,lat,lon_edge] "
+            "on the STAGGERED lon_edge) and 4 (T[time,lev,lat,lon], int16-packed "
+            "with one masked cell inside the window), read through ONE "
+            "named-dimension select (spec/prefetch.md 2.1): lat {slice:[1,3]}, "
+            "lon {indices:[4,0,2]} (permuted), lev {slice:[0,3,2]} (stepped), "
+            "lon_edge {slice:[2,5]}; time unnamed, so whole and raw. No "
+            "positional `axes` can say this: rank 3 is [time,lat,lon] for PS and "
+            "[time,lat,lon_edge] for U_EDGE. Every field and every coordinate "
+            "carrying a named dim is sliced by name; the expectation is the full "
+            "read sliced afterwards."
+        ),
     )
     summary.append(("named-window-mixed-rank",) + mixed)
 
-    summary.append(("window-wrap",) + emit_case(
-        "window-wrap",
-        loader="geosfp", kind="grid", fmt="netcdf", transport="file", store="local",
-        resolved_url=GEOSFP_MIXED_URL, ext="nc", data=mixed_data,
-        expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_WRAP_WINDOW,
-                                  mixed_sizes),
-        decode=mixed_decode, select=GEOSFP_WRAP_WINDOW,
-        notes=("The SAME blob and cache key as named-window-mixed-rank under "
-               "{dims: {lon: {indices: [3, 4, 0, 1]}}}: a window ACROSS the periodic "
-               "longitude seam (216, 288, 0, 72), returned in the order given -- the "
-               "spelling a rank whose halo wraps uses. Applied to `lon` and every "
-               "field on it; `lon_edge` is a different dimension and stays whole."),
-    ))
+    summary.append(
+        ("window-wrap",)
+        + emit_case(
+            "window-wrap",
+            loader="geosfp",
+            kind="grid",
+            fmt="netcdf",
+            transport="file",
+            store="local",
+            resolved_url=GEOSFP_MIXED_URL,
+            ext="nc",
+            data=mixed_data,
+            expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_WRAP_WINDOW, mixed_sizes),
+            decode=mixed_decode,
+            select=GEOSFP_WRAP_WINDOW,
+            notes=(
+                "The SAME blob and cache key as named-window-mixed-rank under "
+                "{dims: {lon: {indices: [3, 4, 0, 1]}}}: a window ACROSS the periodic "
+                "longitude seam (216, 288, 0, 72), returned in the order given -- the "
+                "spelling a rank whose halo wraps uses. Applied to `lon` and every "
+                "field on it; `lon_edge` is a different dimension and stays whole."
+            ),
+        )
+    )
 
     gz_objects, gz_expected = build_geosfp_named_zarr()
-    summary.append(("named-window-zarr",) + emit_zarr_case(
-        "named-window-zarr",
-        loader="geosfp", base_url=GEOSFP_ZARR_URL, objects=gz_objects,
-        variables=["T3", "PS2"], expected=gz_expected,
-        decode={"compressor": "blosc-lz4-shuffle", "fill_to_nan": False,
-                "order": "C", "zarr_format": 2, "select_form": "dims"},
-        select=GEOSFP_ZARR_WINDOW,
-        notes=("Store-backed Zarr v2 store read through a NAMED-dimension select: "
-               "T3 [lev,lat,lon] chunked [1,2,3] and PS2 [lat,lon] chunked [2,3] "
-               "under {lev: all, lat: {slice:[2,4]}, lon: {indices:[5,3]}} -- one "
-               "window, two ranks. It intersects T3/0.1.1, T3/1.1.1, T3/2.1.1 and "
-               "PS2/1.1 only; the other 12 chunk objects are POISONED (committed, "
-               "manifest-valid, a well-formed blosc container of the WRONG size), so "
-               "a reader that fetches one fails rather than quietly discarding it. "
-               "fill_value 0.0 is not NaN; no coordinate arrays."),
-    ))
+    summary.append(
+        ("named-window-zarr",)
+        + emit_zarr_case(
+            "named-window-zarr",
+            loader="geosfp",
+            base_url=GEOSFP_ZARR_URL,
+            objects=gz_objects,
+            variables=["T3", "PS2"],
+            expected=gz_expected,
+            decode={
+                "compressor": "blosc-lz4-shuffle",
+                "fill_to_nan": False,
+                "order": "C",
+                "zarr_format": 2,
+                "select_form": "dims",
+            },
+            select=GEOSFP_ZARR_WINDOW,
+            notes=(
+                "Store-backed Zarr v2 store read through a NAMED-dimension select: "
+                "T3 [lev,lat,lon] chunked [1,2,3] and PS2 [lat,lon] chunked [2,3] "
+                "under {lev: all, lat: {slice:[2,4]}, lon: {indices:[5,3]}} -- one "
+                "window, two ranks. It intersects T3/0.1.1, T3/1.1.1, T3/2.1.1 and "
+                "PS2/1.1 only; the other 12 chunk objects are POISONED (committed, "
+                "manifest-valid, a well-formed blosc container of the WRONG size), so "
+                "a reader that fetches one fails rather than quietly discarding it. "
+                "fill_value 0.0 is not NaN; no coordinate arrays."
+            ),
+        )
+    )
 
-    emit_scenarios({"url": GEOSFP_MIXED_URL, "cache_key": mixed[0],
-                    "blob_path": mixed[3], "content_sha256": mixed[1],
-                    "bytes": mixed[2]})
+    emit_scenarios(
+        {
+            "url": GEOSFP_MIXED_URL,
+            "cache_key": mixed[0],
+            "blob_path": mixed[3],
+            "content_sha256": mixed[1],
+            "bytes": mixed[2],
+        }
+    )
 
     index = {
         "schema": "earthsciio/cases-index/v1",
         "cache_format_version": CACHE_FORMAT_VERSION,
         "cache_root": f"cache/{CACHE_FORMAT_VERSION}",
         "cases": [
-            {"id": cid, "file": f"cases/{cid}.json", "cache_key": key,
-             "blob_path": blob_rel}
+            {"id": cid, "file": f"cases/{cid}.json", "cache_key": key, "blob_path": blob_rel}
             for (cid, key, _sha, _n, blob_rel) in summary
         ],
     }

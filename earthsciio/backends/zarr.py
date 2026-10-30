@@ -139,9 +139,7 @@ def _make_cache_store(cache: Any, base_url: str):
             meta = json.loads(raw.decode("utf-8"))
         except Exception:
             return raw
-        if int(meta.get("zarr_format", 0)) == 2 and meta.get(
-            "dimension_separator"
-        ) in (None, ""):
+        if int(meta.get("zarr_format", 0)) == 2 and meta.get("dimension_separator") in (None, ""):
             meta["dimension_separator"] = "."
             return json.dumps(meta).encode("utf-8")
         return raw
@@ -390,9 +388,7 @@ class ZarrReader:
                 key = tuple(
                     slice(None)
                     if axes[d][0] == "all"
-                    else np.asarray(
-                        _resolve_axis_indices(axes[d], arr.shape[d]), dtype=np.intp
-                    )
+                    else np.asarray(_resolve_axis_indices(axes[d], arr.shape[d]), dtype=np.intp)
                     for d in range(ndim)
                 )
                 data = arr.oindex[key]
@@ -420,8 +416,7 @@ class ZarrReader:
         which asks zarr-python for exactly the chunks the per-axis index arrays
         intersect (``named-window-zarr`` poisons every other chunk object).
         """
-        arrays = [(str(a), zarr.open_array(store=store, path=str(a), mode="r"))
-                  for a in variables]
+        arrays = [(str(a), zarr.open_array(store=store, path=str(a), mode="r")) for a in variables]
         dims_of = {name: _dims_of(arr) for name, arr in arrays}
         present = {d for dims in dims_of.values() for d in dims}
         absent = [d for d in named if d not in present]
@@ -440,8 +435,7 @@ class ZarrReader:
             key = tuple(
                 slice(None)
                 if dim not in named or named[dim][0] == "all"
-                else np.asarray(_resolve_axis_indices(named[dim], arr.shape[d]),
-                                dtype=np.intp)
+                else np.asarray(_resolve_axis_indices(named[dim], arr.shape[d]), dtype=np.intp)
                 for d, dim in enumerate(dims_of[name])
             )
             plans.append((name, arr, key))

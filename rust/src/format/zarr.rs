@@ -230,13 +230,26 @@ where
             .map_err(|e| zarr_err(format!("chunk shape of '{array_name}': {e}")))?;
         let dims = dim_names(&array, ndim);
         let (dtype, is_f32) = float_dtype(&array, array_name)?;
-        plans.push(ArrayPlan { array_name, array, shape, chunk_shape, dims, dtype, is_f32 });
+        plans.push(ArrayPlan {
+            array_name,
+            array,
+            shape,
+            chunk_shape,
+            dims,
+            dtype,
+            is_f32,
+        });
     }
     if let Selection::Named(named) = select {
-        let carried: BTreeSet<&str> =
-            plans.iter().flat_map(|p| p.dims.iter().map(String::as_str)).collect();
-        let unknown: Vec<&str> =
-            named.keys().map(String::as_str).filter(|d| !carried.contains(d)).collect();
+        let carried: BTreeSet<&str> = plans
+            .iter()
+            .flat_map(|p| p.dims.iter().map(String::as_str))
+            .collect();
+        let unknown: Vec<&str> = named
+            .keys()
+            .map(String::as_str)
+            .filter(|d| !carried.contains(d))
+            .collect();
         if !unknown.is_empty() {
             return Err(zarr_err(format!(
                 "select names dimension(s) {unknown:?}, which no array of this read \
@@ -252,101 +265,113 @@ where
 
     let mut out_vars = HashMap::new();
     for (plan, sel_idx) in resolved {
-            let ArrayPlan { array_name, array, chunk_shape, dims, dtype, is_f32, .. } = plan;
+        let ArrayPlan {
+            array_name,
+            array,
+            chunk_shape,
+            dims,
+            dtype,
+            is_f32,
+            ..
+        } = plan;
 
-            // Allocate the output FIRST; a position no retrieved chunk covers stays
-            // 0.0 (never reached for a valid selection). `fill_value` is NOT mapped
-            // to NaN — zarrs already materializes it for an absent chunk object.
-            let out_shape: Vec<usize> = sel_idx.iter().map(Vec::len).collect();
-            let total: usize = out_shape.iter().product();
-            let mut data = vec![0.0f64; total];
-            let out_stride = c_strides(&out_shape);
-            // Which output cells each chunk coordinate owns, per dimension.
-            // Built ONCE per array — the mapping is chunk-invariant (a 52k-entry
-            // list per "All" axis in the ISRM reads) — and shared read-only by
-            // the workers; only the boundary-clipped chunk stride is per-chunk.
-            let owners = chunk_owners(&sel_idx, &chunk_shape, &out_stride);
+        // Allocate the output FIRST; a position no retrieved chunk covers stays
+        // 0.0 (never reached for a valid selection). `fill_value` is NOT mapped
+        // to NaN — zarrs already materializes it for an absent chunk object.
+        let out_shape: Vec<usize> = sel_idx.iter().map(Vec::len).collect();
+        let total: usize = out_shape.iter().product();
+        let mut data = vec![0.0f64; total];
+        let out_stride = c_strides(&out_shape);
+        // Which output cells each chunk coordinate owns, per dimension.
+        // Built ONCE per array — the mapping is chunk-invariant (a 52k-entry
+        // list per "All" axis in the ISRM reads) — and shared read-only by
+        // the workers; only the boundary-clipped chunk stride is per-chunk.
+        let owners = chunk_owners(&sel_idx, &chunk_shape, &out_stride);
 
-            // Fetch + decode ONLY the chunk objects the selection intersects, and
-            // scatter each one into `data` immediately so it can be dropped before
-            // the next is fetched (peak = output + one decoded chunk PER WORKER).
-            //
-            // Chunk objects are independent URLs fetched over a high-latency
-            // transport, so they are retrieved CONCURRENTLY: a fixed pool of
-            // scoped workers drains the chunk-id list, each fetching + decoding
-            // with no lock held and taking the `data` mutex only for the (cheap)
-            // scatter. Every output cell belongs to exactly one chunk id, so the
-            // writes are disjoint and the result is byte-identical to the serial
-            // order. A measured ISRM prepare spent ~85% of its wall time waiting
-            // on these GETs one at a time.
-            let cids: Vec<Vec<usize>> = needed_chunks(&sel_idx, &chunk_shape);
-            let fetch_one = |cid: &Vec<usize>, out: &std::sync::Mutex<&mut [f64]>| -> Result<()> {
-                let cid_u64: Vec<u64> = cid.iter().map(|&c| c as u64).collect();
-                let subset = array
-                    .chunk_subset(&cid_u64)
-                    .map_err(|e| zarr_err(format!("chunk subset {cid:?} of '{array_name}': {e}")))?;
-                let cshape: Vec<usize> = subset.shape().iter().map(|&s| s as usize).collect();
-                // The `f32` buffer is scattered AS f32 (widened per element, which is
-                // exact) — never materialized as a full `f64` chunk.
-                if is_f32 {
-                    let elems = array
-                        .retrieve_array_subset::<Vec<f32>>(&subset)
-                        .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
-                    let mut g = out.lock().expect("zarr scatter mutex poisoned");
-                    scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
-                } else {
-                    let elems = array
-                        .retrieve_array_subset::<Vec<f64>>(&subset)
-                        .map_err(|e| zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}")))?;
-                    let mut g = out.lock().expect("zarr scatter mutex poisoned");
-                    scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
-                }
-                // `elems` drops HERE, before this worker fetches its next chunk.
-                Ok(())
-            };
-            let workers = fetch_concurrency().min(cids.len());
-            let out = std::sync::Mutex::new(&mut data[..]);
-            if workers <= 1 {
-                for cid in &cids {
-                    fetch_one(cid, &out)?;
-                }
+        // Fetch + decode ONLY the chunk objects the selection intersects, and
+        // scatter each one into `data` immediately so it can be dropped before
+        // the next is fetched (peak = output + one decoded chunk PER WORKER).
+        //
+        // Chunk objects are independent URLs fetched over a high-latency
+        // transport, so they are retrieved CONCURRENTLY: a fixed pool of
+        // scoped workers drains the chunk-id list, each fetching + decoding
+        // with no lock held and taking the `data` mutex only for the (cheap)
+        // scatter. Every output cell belongs to exactly one chunk id, so the
+        // writes are disjoint and the result is byte-identical to the serial
+        // order. A measured ISRM prepare spent ~85% of its wall time waiting
+        // on these GETs one at a time.
+        let cids: Vec<Vec<usize>> = needed_chunks(&sel_idx, &chunk_shape);
+        let fetch_one = |cid: &Vec<usize>, out: &std::sync::Mutex<&mut [f64]>| -> Result<()> {
+            let cid_u64: Vec<u64> = cid.iter().map(|&c| c as u64).collect();
+            let subset = array
+                .chunk_subset(&cid_u64)
+                .map_err(|e| zarr_err(format!("chunk subset {cid:?} of '{array_name}': {e}")))?;
+            let cshape: Vec<usize> = subset.shape().iter().map(|&s| s as usize).collect();
+            // The `f32` buffer is scattered AS f32 (widened per element, which is
+            // exact) — never materialized as a full `f64` chunk.
+            if is_f32 {
+                let elems = array
+                    .retrieve_array_subset::<Vec<f32>>(&subset)
+                    .map_err(|e| {
+                        zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}"))
+                    })?;
+                let mut g = out.lock().expect("zarr scatter mutex poisoned");
+                scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
             } else {
-                use std::sync::atomic::{AtomicUsize, Ordering};
-                let next = AtomicUsize::new(0);
-                let fail: std::sync::Mutex<Option<Error>> = std::sync::Mutex::new(None);
-                std::thread::scope(|s| {
-                    for _ in 0..workers {
-                        s.spawn(|| loop {
-                            let i = next.fetch_add(1, Ordering::Relaxed);
-                            if i >= cids.len() {
-                                break;
-                            }
-                            if let Err(e) = fetch_one(&cids[i], &out) {
-                                *fail.lock().expect("zarr error mutex poisoned") = Some(e);
-                                // Claim every remaining chunk so the pool drains
-                                // promptly after the first failure.
-                                next.store(cids.len(), Ordering::Relaxed);
-                                break;
-                            }
-                        });
-                    }
-                });
-                if let Some(e) = fail.into_inner().expect("zarr error mutex poisoned") {
-                    return Err(e);
-                }
+                let elems = array
+                    .retrieve_array_subset::<Vec<f64>>(&subset)
+                    .map_err(|e| {
+                        zarr_err(format!("decode chunk {cid:?} of '{array_name}': {e}"))
+                    })?;
+                let mut g = out.lock().expect("zarr scatter mutex poisoned");
+                scatter_chunk(&mut g, &elems, cid, &cshape, &owners);
             }
-            drop(out);
+            // `elems` drops HERE, before this worker fetches its next chunk.
+            Ok(())
+        };
+        let workers = fetch_concurrency().min(cids.len());
+        let out = std::sync::Mutex::new(&mut data[..]);
+        if workers <= 1 {
+            for cid in &cids {
+                fetch_one(cid, &out)?;
+            }
+        } else {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            let next = AtomicUsize::new(0);
+            let fail: std::sync::Mutex<Option<Error>> = std::sync::Mutex::new(None);
+            std::thread::scope(|s| {
+                for _ in 0..workers {
+                    s.spawn(|| loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= cids.len() {
+                            break;
+                        }
+                        if let Err(e) = fetch_one(&cids[i], &out) {
+                            *fail.lock().expect("zarr error mutex poisoned") = Some(e);
+                            // Claim every remaining chunk so the pool drains
+                            // promptly after the first failure.
+                            next.store(cids.len(), Ordering::Relaxed);
+                            break;
+                        }
+                    });
+                }
+            });
+            if let Some(e) = fail.into_inner().expect("zarr error mutex poisoned") {
+                return Err(e);
+            }
+        }
+        drop(out);
 
-            out_vars.insert(
-                array_name.clone(),
-                NativeField {
-                    dtype,
-                    dims,
-                    shape: out_shape,
-                    data: ArrayData::F64(data),
-                    fill_value: None,
-                },
-            );
+        out_vars.insert(
+            array_name.clone(),
+            NativeField {
+                dtype,
+                dims,
+                shape: out_shape,
+                data: ArrayData::F64(data),
+                fill_value: None,
+            },
+        );
     }
     Ok(NativeDataset {
         variables: out_vars,
@@ -377,12 +402,18 @@ struct ArrayPlan<'a, S> {
 ///   selector on a dimension named `time` is refused, as the netcdf reader
 ///   refuses one: choosing records is the Provider's (a store carries no
 ///   coordinate variables here, so the name is the whole of the rule).
-fn array_selection(select: &Selection, dims: &[String], shape: &[usize]) -> Result<Vec<Vec<usize>>> {
+fn array_selection(
+    select: &Selection,
+    dims: &[String],
+    shape: &[usize],
+) -> Result<Vec<Vec<usize>>> {
     let whole = |d: usize| (0..shape[d]).collect::<Vec<usize>>();
     match select {
-        Selection::Orthogonal(a) if a.len() == shape.len() => {
-            a.iter().zip(shape).map(|(ax, &len)| ax.resolve(len)).collect()
-        }
+        Selection::Orthogonal(a) if a.len() == shape.len() => a
+            .iter()
+            .zip(shape)
+            .map(|(ax, &len)| ax.resolve(len))
+            .collect(),
         Selection::Named(named) => (0..shape.len())
             .map(|d| match named.get(&dims[d]) {
                 None | Some(AxisSelect::All) => Ok(whole(d)),
@@ -440,7 +471,10 @@ fn dim_names<S>(array: &Array<S>, ndim: usize) -> Vec<String> {
 /// former reader.
 fn float_dtype<S>(array: &Array<S>, name: &str) -> Result<(DType, bool)> {
     let dt = array.data_type();
-    let n = dt.name(ZarrVersion::V3).map(|c| c.to_string()).unwrap_or_default();
+    let n = dt
+        .name(ZarrVersion::V3)
+        .map(|c| c.to_string())
+        .unwrap_or_default();
     match n.as_str() {
         "float64" => Ok((DType::Float64, false)),
         "float32" => Ok((DType::Float64, true)),
@@ -599,7 +633,10 @@ mod tests {
 
     #[test]
     fn needed_chunks_never_scans_whole_array() {
-        let got = needed_chunks(&[vec![0], vec![50, 12345, 52000], vec![0]], &[1, 100, 52411]);
+        let got = needed_chunks(
+            &[vec![0], vec![50, 12345, 52000], vec![0]],
+            &[1, 100, 52411],
+        );
         let dim1: BTreeSet<usize> = got.iter().map(|c| c[1]).collect();
         assert_eq!(dim1, BTreeSet::from([0, 123, 520]));
         assert_eq!(got.len(), 3); // never 525
@@ -613,7 +650,13 @@ mod tests {
             vec![3, 0, 1]
         );
         assert_eq!(
-            AxisSelect::Range { start: 1, stop: 8, step: 2 }.resolve(10).unwrap(),
+            AxisSelect::Range {
+                start: 1,
+                stop: 8,
+                step: 2
+            }
+            .resolve(10)
+            .unwrap(),
             vec![1, 3, 5, 7]
         );
         assert!(AxisSelect::Indices(vec![9]).resolve(4).is_err());
@@ -702,14 +745,16 @@ mod tests {
     ) -> (Vec<usize>, Vec<usize>, Vec<f32>) {
         let ndim = shape.len();
         let cstart: Vec<usize> = (0..ndim).map(|d| cid[d] * chunk_shape[d]).collect();
-        let cshape: Vec<usize> =
-            (0..ndim).map(|d| chunk_shape[d].min(shape[d] - cstart[d])).collect();
+        let cshape: Vec<usize> = (0..ndim)
+            .map(|d| chunk_shape[d].min(shape[d] - cstart[d]))
+            .collect();
         let n: usize = cshape.iter().product();
         let strides = c_strides(&cshape);
         let mut elems = vec![0.0f32; n];
         for (lin, slot) in elems.iter_mut().enumerate() {
-            let global: Vec<usize> =
-                (0..ndim).map(|d| cstart[d] + (lin / strides[d]) % cshape[d]).collect();
+            let global: Vec<usize> = (0..ndim)
+                .map(|d| cstart[d] + (lin / strides[d]) % cshape[d])
+                .collect();
             *slot = synthetic(&global);
         }
         (cstart, cshape, elems)
@@ -745,7 +790,14 @@ mod tests {
         for cid in &cids {
             let (cstart, cshape, elems) = synth_chunk(cid, shape, chunk_shape);
             let elems: Vec<f64> = elems.into_iter().map(|x| x as f64).collect();
-            chunks.insert(cid.clone(), ChunkBuf { cstart, cshape, elems });
+            chunks.insert(
+                cid.clone(),
+                ChunkBuf {
+                    cstart,
+                    cshape,
+                    elems,
+                },
+            );
         }
         let old_out = assemble_reference(sel_idx, chunk_shape, &chunks);
         (new_out, old_out, written)
@@ -774,11 +826,23 @@ mod tests {
                 vec![vec![6, 0, 3, 3], vec![4, 1], vec![10, 0, 5, 5, 9]],
             ),
             // Whole-array read (many chunks, every cell selected).
-            (vec![7, 5, 11], vec![3, 2, 4], vec![(0..7).collect(), (0..5).collect(), (0..11).collect()]),
+            (
+                vec![7, 5, 11],
+                vec![3, 2, 4],
+                vec![(0..7).collect(), (0..5).collect(), (0..11).collect()],
+            ),
             // A single index on the leading axis, all of the others (the ISRM shape).
-            (vec![4, 9, 6], vec![1, 4, 3], vec![vec![2], (0..9).collect(), (0..6).collect()]),
+            (
+                vec![4, 9, 6],
+                vec![1, 4, 3],
+                vec![vec![2], (0..9).collect(), (0..6).collect()],
+            ),
             // Strided range.
-            (vec![10, 10], vec![4, 3], vec![(0..10).step_by(3).collect(), vec![9, 2, 2, 0]]),
+            (
+                vec![10, 10],
+                vec![4, 3],
+                vec![(0..10).step_by(3).collect(), vec![9, 2, 2, 0]],
+            ),
             // Rank 1, chunk larger than the array (one clipped chunk).
             (vec![5], vec![8], vec![vec![4, 0, 2]]),
             // Rank 1, chunk length 1 (one chunk per element).

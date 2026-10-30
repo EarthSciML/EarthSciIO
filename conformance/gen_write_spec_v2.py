@@ -162,12 +162,14 @@ def cases():
     single += [flush("w0", "a")]
     single += [rec("w0", r) for r in range(3, 5)]
     single += [{"op": "close", "writer": "w0", "tokens": []}]
-    out.append({
-        "name": "region-tiling-single",
-        "schema": base_schema(),
-        "ops": single,
-        "expect": expect([(i, i) for i in range(5)], schema="v1"),
-    })
+    out.append(
+        {
+            "name": "region-tiling-single",
+            "schema": base_schema(),
+            "ops": single,
+            "expect": expect([(i, i) for i in range(5)], schema="v1"),
+        }
+    )
 
     quad = open_quad()
     for r in range(3):
@@ -179,29 +181,47 @@ def cases():
     quad += [flush(w, f"{w}b") for w, _, _ in QUAD[1:]]
     quad += [{"op": "close", "writer": w, "tokens": []} for w, _, _ in QUAD[1:]]
     quad += [{"op": "close", "writer": "w0", "tokens": [f"{w}b" for w, _, _ in QUAD[1:]]}]
-    out.append({
-        "name": "region-tiling-2x2",
-        "schema": base_schema(),
-        "ops": quad,
-        "expect": expect([(i, i) for i in range(5)], commit_seq=2),
-    })
+    out.append(
+        {
+            "name": "region-tiling-2x2",
+            "schema": base_schema(),
+            "ops": quad,
+            "expect": expect([(i, i) for i in range(5)], commit_seq=2),
+        }
+    )
 
     # 2. misaligned regions are refused at open, before any I/O.
-    out.append({
-        "name": "region-misaligned",
-        "schema": base_schema(),
-        "ops": [
-            {"op": "create", "writer": "bad", "role": {"owner": 2},
-             "region": {"lat": [0, 3]}, "expect_error": "RegionNotShardAligned"},
-            {"op": "create", "writer": "w0", "role": {"owner": 2},
-             "region": {"lat": [0, 2]}},
-            {"op": "join", "writer": "w1", "role": {"contributor": 1},
-             "region": {"lat": [1, 6]}, "expect_error": "RegionNotShardAligned"},
-            {"op": "join", "writer": "w2", "role": {"contributor": 1},
-             "region": {"lon": [2, 5]}, "expect_error": "RegionNotShardAligned"},
-        ],
-        "expect": expect([], commit_seq=0),
-    })
+    out.append(
+        {
+            "name": "region-misaligned",
+            "schema": base_schema(),
+            "ops": [
+                {
+                    "op": "create",
+                    "writer": "bad",
+                    "role": {"owner": 2},
+                    "region": {"lat": [0, 3]},
+                    "expect_error": "RegionNotShardAligned",
+                },
+                {"op": "create", "writer": "w0", "role": {"owner": 2}, "region": {"lat": [0, 2]}},
+                {
+                    "op": "join",
+                    "writer": "w1",
+                    "role": {"contributor": 1},
+                    "region": {"lat": [1, 6]},
+                    "expect_error": "RegionNotShardAligned",
+                },
+                {
+                    "op": "join",
+                    "writer": "w2",
+                    "role": {"contributor": 1},
+                    "region": {"lon": [2, 5]},
+                    "expect_error": "RegionNotShardAligned",
+                },
+            ],
+            "expect": expect([], commit_seq=0),
+        }
+    )
 
     # 3. a gap and an overlap are CommitErrors; the committed prefix (one good
     #    commit of record 0) is unchanged.
@@ -209,20 +229,26 @@ def cases():
         ops = [
             {"op": "create", "writer": "w0", "role": {"owner": 2}, "region": {"lat": [0, 2]}},
             {"op": "join", "writer": "w1", "role": {"contributor": 1}, "region": {"lat": [2, 6]}},
-            rec("w0", 0), rec("w1", 0),
-            flush("w0", "a0"), flush("w1", "a1"),
+            rec("w0", 0),
+            rec("w1", 0),
+            flush("w0", "a0"),
+            flush("w1", "a1"),
             {"op": "commit", "writer": "w0", "tokens": ["a0", "a1"]},
             {"op": "join", "writer": "w9", "role": {"contributor": 1}, "region": {"lat": r1}},
-            rec("w0", 1), rec("w9", 1),
-            flush("w0", "b0"), flush("w9", "b1"),
+            rec("w0", 1),
+            rec("w9", 1),
+            flush("w0", "b0"),
+            flush("w9", "b1"),
             {"op": "commit", "writer": "w0", "tokens": ["b0", "b1"], "expect_error": "CommitError"},
         ]
-        out.append({
-            "name": name,
-            "schema": base_schema(),
-            "ops": ops,
-            "expect": expect([(0, 0)], commit_seq=1),
-        })
+        out.append(
+            {
+                "name": name,
+                "schema": base_schema(),
+                "ops": ops,
+                "expect": expect([(0, 0)], commit_seq=1),
+            }
+        )
 
     # 4. indexed records written in descending order equal forward append.
     n = 5
@@ -230,13 +256,16 @@ def cases():
     ops = [{"op": "create", "writer": "w0", "role": "single", "region": {}}]
     ops += [rec_at("w0", i, i) for i in reversed(range(n))]
     ops += [{"op": "close", "writer": "w0", "tokens": []}]
-    out.append({
-        "name": "indexed-reverse",
-        "schema": base_schema(time_mode={"kind": "indexed", "times": times}),
-        "ops": ops,
-        "expect": expect([(i, i) for i in range(n)], commit_seq=1,
-                         generations={i: 1 for i in range(n)}),
-    })
+    out.append(
+        {
+            "name": "indexed-reverse",
+            "schema": base_schema(time_mode={"kind": "indexed", "times": times}),
+            "ops": ops,
+            "expect": expect(
+                [(i, i) for i in range(n)], commit_seq=1, generations={i: 1 for i in range(n)}
+            ),
+        }
+    )
 
     # ... and the same with two region writers, committed in two batches, the
     # second batch holding the earlier indices (reverse order across commits).
@@ -246,36 +275,50 @@ def cases():
     ]
     for i in (4, 3):
         ops += [rec_at("w0", i, i), rec_at("w1", i, i)]
-    ops += [flush("w0", "a0"), flush("w1", "a1"),
-            {"op": "commit", "writer": "w0", "tokens": ["a0", "a1"]}]
+    ops += [
+        flush("w0", "a0"),
+        flush("w1", "a1"),
+        {"op": "commit", "writer": "w0", "tokens": ["a0", "a1"]},
+    ]
     for i in (2, 1, 0):
         ops += [rec_at("w0", i, i), rec_at("w1", i, i)]
-    ops += [flush("w1", "b1"), {"op": "close", "writer": "w1", "tokens": []},
-            {"op": "close", "writer": "w0", "tokens": ["b1"]}]
-    out.append({
-        "name": "indexed-reverse-regions",
-        "schema": base_schema(time_mode={"kind": "indexed", "times": times}),
-        "ops": ops,
-        "expect": expect([(i, i) for i in range(n)], commit_seq=2,
-                         generations={i: 1 for i in range(n)}),
-    })
+    ops += [
+        flush("w1", "b1"),
+        {"op": "close", "writer": "w1", "tokens": []},
+        {"op": "close", "writer": "w0", "tokens": ["b1"]},
+    ]
+    out.append(
+        {
+            "name": "indexed-reverse-regions",
+            "schema": base_schema(time_mode={"kind": "indexed", "times": times}),
+            "ops": ops,
+            "expect": expect(
+                [(i, i) for i in range(n)], commit_seq=2, generations={i: 1 for i in range(n)}
+            ),
+        }
+    )
 
     # 5. indexed ring: rewriting a committed record needs invalidate first.
     ops = [
         {"op": "create", "writer": "w0", "role": "single", "region": {}},
-        rec_at("w0", 0, 0), rec_at("w0", 1, 1), flush("w0", "a"),
+        rec_at("w0", 0, 0),
+        rec_at("w0", 1, 1),
+        flush("w0", "a"),
         {**rec_at("w0", 0, 7), "expect_error": "Error"},
         {"op": "invalidate", "writer": "w0", "indices": [0]},
-        rec_at("w0", 0, 7), flush("w0", "b"),
+        rec_at("w0", 0, 7),
+        flush("w0", "b"),
         {"op": "close", "writer": "w0", "tokens": []},
     ]
-    out.append({
-        "name": "indexed-invalidate",
-        "schema": base_schema(time_mode={"kind": "indexed", "times": [0.0, DT]}),
-        "ops": ops,
-        # commit a (1), invalidate (2), commit b (3); close has nothing pending.
-        "expect": expect([(0, 7), (1, 1)], commit_seq=3, generations={0: 2, 1: 1}),
-    })
+    out.append(
+        {
+            "name": "indexed-invalidate",
+            "schema": base_schema(time_mode={"kind": "indexed", "times": [0.0, DT]}),
+            "ops": ops,
+            # commit a (1), invalidate (2), commit b (3); close has nothing pending.
+            "expect": expect([(0, 7), (1, 1)], commit_seq=3, generations={0: 2, 1: 1}),
+        }
+    )
 
     # 6. flush mid-shard, drop every handle uncommitted, resume, continue.
     ops = [{"op": "create", "writer": "w0", "role": "single", "region": {}}]
@@ -284,12 +327,14 @@ def cases():
     ops += [{"op": "resume", "writer": "w0b", "role": "single", "region": {}, "at": None}]
     ops += [rec("w0b", r) for r in range(3, 5)]
     ops += [{"op": "close", "writer": "w0b", "tokens": []}]
-    out.append({
-        "name": "partial-shard-resume",
-        "schema": base_schema(),
-        "ops": ops,
-        "expect": expect([(i, i) for i in range(5)], schema="v1"),
-    })
+    out.append(
+        {
+            "name": "partial-shard-resume",
+            "schema": base_schema(),
+            "ops": ops,
+            "expect": expect([(i, i) for i in range(5)], schema="v1"),
+        }
+    )
 
     ops = [
         {"op": "create", "writer": "w0", "role": {"owner": 2}, "region": {"lat": LAT_A}},
@@ -297,25 +342,51 @@ def cases():
     ]
     for r in range(3):
         ops += [rec("w0", r), rec("w1", r)]
-    ops += [flush("w0", "a0"), flush("w1", "a1"),
-            {"op": "commit", "writer": "w0", "tokens": ["a0", "a1"]}]
-    ops += [rec("w0", 3), rec("w1", 3), flush("w0", "x0"), flush("w1", "x1"),
-            {"op": "drop", "writer": "w0"}, {"op": "drop", "writer": "w1"}]
     ops += [
-        {"op": "resume", "writer": "v0", "role": {"owner": 2}, "region": {"lat": LAT_A}, "at": None},
-        {"op": "resume", "writer": "v1", "role": {"contributor": 1}, "region": {"lat": LAT_B}, "at": None},
+        flush("w0", "a0"),
+        flush("w1", "a1"),
+        {"op": "commit", "writer": "w0", "tokens": ["a0", "a1"]},
+    ]
+    ops += [
+        rec("w0", 3),
+        rec("w1", 3),
+        flush("w0", "x0"),
+        flush("w1", "x1"),
+        {"op": "drop", "writer": "w0"},
+        {"op": "drop", "writer": "w1"},
+    ]
+    ops += [
+        {
+            "op": "resume",
+            "writer": "v0",
+            "role": {"owner": 2},
+            "region": {"lat": LAT_A},
+            "at": None,
+        },
+        {
+            "op": "resume",
+            "writer": "v1",
+            "role": {"contributor": 1},
+            "region": {"lat": LAT_B},
+            "at": None,
+        },
     ]
     for r in range(3, 5):
         ops += [rec("v0", r), rec("v1", r)]
-    ops += [flush("v1", "b1"), {"op": "close", "writer": "v1", "tokens": []},
-            {"op": "close", "writer": "v0", "tokens": ["b1"]}]
-    out.append({
-        "name": "partial-shard-resume-regions",
-        "schema": base_schema(),
-        "ops": ops,
-        # commit (1), close-commit (2); a resume that truncates nothing is not a commit
-        "expect": expect([(i, i) for i in range(5)], commit_seq=2),
-    })
+    ops += [
+        flush("v1", "b1"),
+        {"op": "close", "writer": "v1", "tokens": []},
+        {"op": "close", "writer": "v0", "tokens": ["b1"]},
+    ]
+    out.append(
+        {
+            "name": "partial-shard-resume-regions",
+            "schema": base_schema(),
+            "ops": ops,
+            # commit (1), close-commit (2); a resume that truncates nothing is not a commit
+            "expect": expect([(i, i) for i in range(5)], commit_seq=2),
+        }
+    )
 
     # 7. truncate-on-resume: records after `at` are discarded; the re-emitted
     #    record 3 holds new data.
@@ -325,12 +396,14 @@ def cases():
     ops += [{"op": "resume", "writer": "w1", "role": "single", "region": {}, "at": 2 * DT}]
     ops += [{"op": "write_record", "writer": "w1", "t": 3 * DT, "r": 13}]
     ops += [{"op": "close", "writer": "w1", "tokens": []}]
-    out.append({
-        "name": "truncate-on-resume",
-        "schema": base_schema(),
-        "ops": ops,
-        "expect": expect([(0, 0), (1, 1), (2, 2), (3, 13)], schema="v1"),
-    })
+    out.append(
+        {
+            "name": "truncate-on-resume",
+            "schema": base_schema(),
+            "ops": ops,
+            "expect": expect([(0, 0), (1, 1), (2, 2), (3, 13)], schema="v1"),
+        }
+    )
 
     # 8. dtypes round-trip bitwise.
     dvars = [
@@ -340,17 +413,24 @@ def cases():
     ops = [{"op": "create", "writer": "w0", "role": "single", "region": {}}]
     ops += [rec("w0", r) for r in range(3)]
     ops += [{"op": "close", "writer": "w0", "tokens": []}]
-    out.append({
-        "name": "dtypes",
-        "schema": base_schema(vars_=dvars),
-        "ops": ops,
-        "expect": expect([(i, i) for i in range(3)], schema="v1"),
-    })
+    out.append(
+        {
+            "name": "dtypes",
+            "schema": base_schema(vars_=dvars),
+            "ops": ops,
+            "expect": expect([(i, i) for i in range(3)], schema="v1"),
+        }
+    )
 
     # 9. statics and blobs over two region writers.
     statics = [
-        {"name": "dJ_dfield", "dims": ["lat", "lon"], "dtype": "float64", "seed": 500,
-         "attrs": {"long_name": "gradient wrt field"}},
+        {
+            "name": "dJ_dfield",
+            "dims": ["lat", "lon"],
+            "dtype": "float64",
+            "seed": 500,
+            "attrs": {"long_name": "gradient wrt field"},
+        },
         {"name": "dJ_dlon", "dims": ["lon"], "dtype": "float64", "seed": 600},
         {"name": "step_count", "dims": ["lat", "lon"], "dtype": "int64", "seed": 700},
     ]
@@ -358,47 +438,85 @@ def cases():
         {"op": "create", "writer": "w0", "role": {"owner": 2}, "region": {"lat": LAT_A}},
         {"op": "join", "writer": "w1", "role": {"contributor": 1}, "region": {"lat": LAT_B}},
         {"op": "write_static", "writer": "w1", "name": "dJ_dlon", "expect_error": "Error"},
-        rec("w0", 0), rec("w1", 0), rec("w0", 1), rec("w1", 1),
+        rec("w0", 0),
+        rec("w1", 0),
+        rec("w0", 1),
+        rec("w1", 1),
         {"op": "write_static", "writer": "w0", "name": "dJ_dfield"},
         {"op": "write_static", "writer": "w1", "name": "dJ_dfield"},
         {"op": "write_static", "writer": "w0", "name": "dJ_dlon"},
         {"op": "write_static", "writer": "w0", "name": "step_count"},
         {"op": "write_static", "writer": "w1", "name": "step_count"},
-        {"op": "write_blob", "writer": "w0", "scope": "static", "record": None,
-         "key": "rng", "hex": "00010203"},
-        {"op": "write_blob", "writer": "w1", "scope": "static", "record": None,
-         "key": "rng", "hex": "ff10"},
-        {"op": "write_blob", "writer": "w1", "scope": "record", "record": 1,
-         "key": "ctrl.state", "hex": "deadbeef"},
+        {
+            "op": "write_blob",
+            "writer": "w0",
+            "scope": "static",
+            "record": None,
+            "key": "rng",
+            "hex": "00010203",
+        },
+        {
+            "op": "write_blob",
+            "writer": "w1",
+            "scope": "static",
+            "record": None,
+            "key": "rng",
+            "hex": "ff10",
+        },
+        {
+            "op": "write_blob",
+            "writer": "w1",
+            "scope": "record",
+            "record": 1,
+            "key": "ctrl.state",
+            "hex": "deadbeef",
+        },
         flush("w1", "a1"),
         {"op": "close", "writer": "w1", "tokens": []},
         {"op": "close", "writer": "w0", "tokens": ["a1"]},
     ]
-    out.append({
-        "name": "statics-and-blobs",
-        "schema": base_schema(statics=statics),
-        "ops": ops,
-        "expect": expect(
-            [(0, 0), (1, 1)], commit_seq=1,
-            statics=["dJ_dfield", "dJ_dlon", "step_count"],
-            blobs=[
-                {"scope": "record", "record": 1, "writer": 1, "key": "ctrl.state", "hex": "deadbeef"},
-                {"scope": "static", "record": None, "writer": 0, "key": "rng", "hex": "00010203"},
-                {"scope": "static", "record": None, "writer": 1, "key": "rng", "hex": "ff10"},
-            ],
-        ),
-    })
+    out.append(
+        {
+            "name": "statics-and-blobs",
+            "schema": base_schema(statics=statics),
+            "ops": ops,
+            "expect": expect(
+                [(0, 0), (1, 1)],
+                commit_seq=1,
+                statics=["dJ_dfield", "dJ_dlon", "step_count"],
+                blobs=[
+                    {
+                        "scope": "record",
+                        "record": 1,
+                        "writer": 1,
+                        "key": "ctrl.state",
+                        "hex": "deadbeef",
+                    },
+                    {
+                        "scope": "static",
+                        "record": None,
+                        "writer": 0,
+                        "key": "rng",
+                        "hex": "00010203",
+                    },
+                    {"scope": "static", "record": None, "writer": 1, "key": "rng", "hex": "ff10"},
+                ],
+            ),
+        }
+    )
 
     # 10. a single-writer append store still writes the v1 manifest.
     ops = [{"op": "create", "writer": "w0", "role": "single", "region": {}}]
     ops += [rec("w0", r) for r in range(3)]
     ops += [{"op": "close", "writer": "w0", "tokens": []}]
-    out.append({
-        "name": "manifest-v1-compat",
-        "schema": base_schema(),
-        "ops": ops,
-        "expect": expect([(i, i) for i in range(3)], schema="v1"),
-    })
+    out.append(
+        {
+            "name": "manifest-v1-compat",
+            "schema": base_schema(),
+            "ops": ops,
+            "expect": expect([(i, i) for i in range(3)], schema="v1"),
+        }
+    )
 
     for c in out:
         c["schema"] = copy.deepcopy(c["schema"])
@@ -414,8 +532,12 @@ def build() -> dict:
             "Values come from the generator base = seed + 13*r + sum_j (i_j+1)*P[j], "
             "P = [3, 5, 11, 17, 23]; floats add 0.25, uint8 takes base % 251."
         ),
-        "generator": {"P": [3, 5, 11, 17, 23], "record_stride": 13,
-                      "float_offset": 0.25, "uint8_modulus": 251},
+        "generator": {
+            "P": [3, 5, 11, 17, 23],
+            "record_stride": 13,
+            "float_offset": 0.25,
+            "uint8_modulus": 251,
+        },
         "cases": cases(),
     }
 

@@ -34,7 +34,9 @@ _zstd_decompress(raw::AbstractVector{UInt8}) =
 # frame (`ZSTD_e_end`), which is what zarr-python's `ZstdCodec` and the `zarrs`
 # crate's zstd codec both expect and produce.
 _zstd_compress(bytes::AbstractVector{UInt8}, level::Integer) =
-    transcode(CodecZstd.ZstdFrameCompressor(; level = Int(level)),
-              Vector{UInt8}(bytes))
+    transcode(
+    CodecZstd.ZstdFrameCompressor(; level = Int(level)),
+    Vector{UInt8}(bytes)
+)
 
 end # module

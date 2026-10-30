@@ -44,22 +44,26 @@ def build_schema(s: Dict[str, Any]) -> OutputSchema:
     return OutputSchema(
         dims=[(d, int(n)) for d, n in s["dims"]],
         time_dim=s["time_dim"],
-        vars=[(v["name"], OutputVar(v["dims"], v["dtype"], v.get("attrs", {})))
-              for v in s["vars"]],
+        vars=[(v["name"], OutputVar(v["dims"], v["dtype"], v.get("attrs", {}))) for v in s["vars"]],
         chunk_shape=dict(s["chunk_shape"]),
         shard_shape=dict(s["shard_shape"]),
-        coords=[(c["name"], (np.asarray(c["values"], dtype=np.float64), dict(c["attrs"])))
-                for c in s["coords"]],
+        coords=[
+            (c["name"], (np.asarray(c["values"], dtype=np.float64), dict(c["attrs"])))
+            for c in s["coords"]
+        ],
         profile=s["profile"],
         attrs=dict(s.get("group_attrs", {})),
-        statics=[(v["name"], OutputVar(v["dims"], v["dtype"], v.get("attrs", {})))
-                 for v in s.get("statics", [])],
+        statics=[
+            (v["name"], OutputVar(v["dims"], v["dtype"], v.get("attrs", {})))
+            for v in s.get("statics", [])
+        ],
         time_mode=IndexedTime(tm["times"]) if tm["kind"] == "indexed" else "append",
     )
 
 
-def gen_array(gen: Dict[str, Any], dtype: str, seed: int, r: int,
-              ranges: List[range]) -> np.ndarray:
+def gen_array(
+    gen: Dict[str, Any], dtype: str, seed: int, r: int, ranges: List[range]
+) -> np.ndarray:
     """The generator (``spec/writer.md`` §10) over global index ``ranges``."""
     P = gen["P"]
     shape = tuple(len(rg) for rg in ranges)
@@ -87,7 +91,7 @@ class Writer:
 def parse_role(role: Any):
     if role == "single":
         return dict(role="single")
-    (k, v), = role.items()
+    ((k, v),) = role.items()
     if k == "owner":
         return dict(role="owner", n_writers=int(v))
     if k == "contributor":
@@ -136,12 +140,19 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
             w = handles[name]
             contributor = w.role == "contributor"
             if kind == "write_record":
-                zw.write_record(w.h, float(op["t"]),
-                                arrays_for(w, sch["vars"], op["r"], only_partitioned=contributor))
+                zw.write_record(
+                    w.h,
+                    float(op["t"]),
+                    arrays_for(w, sch["vars"], op["r"], only_partitioned=contributor),
+                )
             elif kind == "write_record_at":
                 i = int(op["index"])
-                zw.write_record_at(w.h, i, float(times[i]),
-                                   arrays_for(w, sch["vars"], op["r"], only_partitioned=contributor))
+                zw.write_record_at(
+                    w.h,
+                    i,
+                    float(times[i]),
+                    arrays_for(w, sch["vars"], op["r"], only_partitioned=contributor),
+                )
             elif kind == "write_static":
                 st = [s for s in sch["statics"] if s["name"] == op["name"]]
                 arr = arrays_for(w, st, 0, only_partitioned=False)[op["name"]]
@@ -174,8 +185,9 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
             err, msg = "CommitError", str(e)
         except Exception as e:  # noqa: BLE001 — every other failure is "Error"
             err, msg = "Error", f"{type(e).__name__}: {e}"
-        results.append({"index": k, "op": op["op"], "ok": err is None, "error": err,
-                        "message": msg})
+        results.append(
+            {"index": k, "op": op["op"], "ok": err is None, "error": err, "message": msg}
+        )
     return {"case": case["name"], "ops": results}
 
 
@@ -192,15 +204,19 @@ def main(argv: List[str]) -> int:
         res = run_case(case, spec["generator"], out)
         (out / "result.json").write_text(json.dumps(res, indent=1) + "\n")
         unexpected = [
-            r for r, op in zip(res["ops"], case["ops"])
-            if r["ok"] == ("expect_error" in op)
+            r for r, op in zip(res["ops"], case["ops"]) if r["ok"] == ("expect_error" in op)
         ]
         n_bad += bool(unexpected)
         for r in unexpected:
-            print(f"[python-writer] {case['name']} op {r['index']} ({r['op']}): "
-                  f"ok={r['ok']} {r['error'] or ''} {r['message']}", file=sys.stderr)
-    print(f"[python-writer] ran {len(spec['cases'])} cases into {root} "
-          f"({n_bad} with unexpected outcomes)")
+            print(
+                f"[python-writer] {case['name']} op {r['index']} ({r['op']}): "
+                f"ok={r['ok']} {r['error'] or ''} {r['message']}",
+                file=sys.stderr,
+            )
+    print(
+        f"[python-writer] ran {len(spec['cases'])} cases into {root} "
+        f"({n_bad} with unexpected outcomes)"
+    )
     return 0
 
 

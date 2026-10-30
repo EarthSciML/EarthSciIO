@@ -6,9 +6,11 @@ cache = Cache(; root = mktempdir(), offline = false) # hide
 
 # region: provider ops=provider,native_dataset,native_field,csv_reader
 url = "file://" * abspath(joinpath(FIXTURES, "stations.csv"))
-p = const_provider(cache, url; format = "csv", source_loader = "stations",
-                   variables = ["value", "location_id"],
-                   reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],))
+p = const_provider(
+    cache, url; format = "csv", source_loader = "stations",
+    variables = ["value", "location_id"],
+    reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],)
+)
 @assert is_const(p) && refresh_times(p) == Float64[]  # a CONST provider never refreshes
 data = materialize(p)
 @assert data isa NativeDataset

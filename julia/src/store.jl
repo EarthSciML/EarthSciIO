@@ -25,11 +25,11 @@ LocalStore(root::AbstractString) = LocalStore(String(root))
 
 store_name(::LocalStore) = "local"
 
-_vroot(s::LocalStore)       = joinpath(s.root, CACHE_VERSION)
-_blobdir(s::LocalStore, k)  = joinpath(_vroot(s), "blobs", k[1:2])
+_vroot(s::LocalStore) = joinpath(s.root, CACHE_VERSION)
+_blobdir(s::LocalStore, k) = joinpath(_vroot(s), "blobs", k[1:2])
 _metapath(s::LocalStore, k) = joinpath(_vroot(s), "meta", string(k, ".json"))
 _lockpath(s::LocalStore, k) = joinpath(_vroot(s), "locks", string(k, ".lock"))
-_tmpdir(s::LocalStore)      = joinpath(_vroot(s), "tmp")
+_tmpdir(s::LocalStore) = joinpath(_vroot(s), "tmp")
 
 # Lookups are by <key>, never by extension (the suffix is human-debug only).
 function get_blob(s::LocalStore, key::AbstractString)
@@ -53,8 +53,10 @@ end
 
 # Atomic commit: rename(2) the staged file into blobs/. The rename is the real
 # guarantee — a reader never sees a partial file even without taking the lock.
-function put_blob!(s::LocalStore, key::AbstractString, staged::AbstractString;
-                   ext::AbstractString = "")
+function put_blob!(
+        s::LocalStore, key::AbstractString, staged::AbstractString;
+        ext::AbstractString = ""
+    )
     dir = _blobdir(s, key)
     mkpath(dir)
     fname = if isempty(ext)
@@ -121,8 +123,10 @@ end
 Atomically write `bytes` to `<base>/<relpath>`: stage under `<base>/tmp/`, then
 `rename(2)` into place (the write-path mirror of [`put_blob!`]). The rename is
 the real guarantee — a reader never sees a partial object."""
-function put_object!(base::AbstractString, relpath::AbstractString,
-                     bytes::AbstractVector{UInt8})
+function put_object!(
+        base::AbstractString, relpath::AbstractString,
+        bytes::AbstractVector{UInt8}
+    )
     staged = output_staging_path(base)
     target = joinpath(base, relpath)
     mkpath(dirname(target))
@@ -157,10 +161,10 @@ struct S3Store <: Store end
 store_name(::S3Store) = "s3"
 
 const _S3_STUB = "s3 store is a registered STUB (esio-9nb.8); no object-store impl yet"
-get_blob(::S3Store, ::AbstractString)            = error(_S3_STUB)
-blob_exists(::S3Store, ::AbstractString)         = error(_S3_STUB)
-staging_path(::S3Store)                          = error(_S3_STUB)
+get_blob(::S3Store, ::AbstractString) = error(_S3_STUB)
+blob_exists(::S3Store, ::AbstractString) = error(_S3_STUB)
+staging_path(::S3Store) = error(_S3_STUB)
 put_blob!(::S3Store, ::AbstractString, ::AbstractString; kwargs...) = error(_S3_STUB)
-get_meta(::S3Store, ::AbstractString)            = error(_S3_STUB)
+get_meta(::S3Store, ::AbstractString) = error(_S3_STUB)
 put_meta!(::S3Store, ::AbstractString, ::Manifest) = error(_S3_STUB)
 lock_key(::Function, ::S3Store, ::AbstractString) = error(_S3_STUB)

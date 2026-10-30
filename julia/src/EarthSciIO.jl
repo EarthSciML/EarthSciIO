@@ -77,7 +77,7 @@ export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
 export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ShapefileReader,
-       ParquetReader, ZarrReader, read_native
+    ParquetReader, ZarrReader, read_native
 export read_store, store_backed, supports_selection, array_shape, dim_length, reader_option_keys
 export NativeField, NativeDataset, variable_names, coord_names
 
@@ -124,8 +124,10 @@ function _register_defaults()
     register!(TRANSPORT_REGISTRY, "s3", S3Transport(); status = :active)
 
     # store registry — keyed by store name; value is a factory `(; root, …) -> Store`
-    register!(STORE_REGISTRY, "local",
-              (; root = datadir(), _kw...) -> LocalStore(root); status = :active)
+    register!(
+        STORE_REGISTRY, "local",
+        (; root = datadir(), _kw...) -> LocalStore(root); status = :active
+    )
     register!(STORE_REGISTRY, "s3", (; _kw...) -> S3Store(); status = :stub)
 
     # format registry — readers returning native arrays (component b). NetCDF
@@ -170,9 +172,11 @@ function _register_defaults()
     register!(WRITER_REGISTRY, "zarr", ZarrWriter(); status = :active)
     # netcdf output is a later wave: registered as a STUB so the write seam is
     # provable and dispatch is complete (mirrors the read-side stub discipline).
-    register!(WRITER_REGISTRY, "netcdf",
-              StubWriter("netcdf", "NetCDF streaming output is a later wave");
-              status = :stub)
+    register!(
+        WRITER_REGISTRY, "netcdf",
+        StubWriter("netcdf", "NetCDF streaming output is a later wave");
+        status = :stub
+    )
     return nothing
 end
 

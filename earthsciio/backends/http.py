@@ -75,8 +75,7 @@ class HttpTransport:
                 return FetchResult(
                     NOT_MODIFIED,
                     etag=resp.headers.get("ETag") or cond.get("etag"),
-                    last_modified=resp.headers.get("Last-Modified")
-                    or cond.get("last_modified"),
+                    last_modified=resp.headers.get("Last-Modified") or cond.get("last_modified"),
                     bytes_written=0,
                 )
             if resp.status_code != 200:

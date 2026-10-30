@@ -62,7 +62,7 @@ class _LocalDirCache:
     turns into ``fill_value`` (never NaN)."""
 
     def fetch(self, url: str, **_: Any) -> _Entry:
-        path = url[len("file://"):] if url.startswith("file://") else url
+        path = url[len("file://") :] if url.startswith("file://") else url
         if not os.path.exists(path):
             raise CacheMiss(url, "write-conformance-readback")
         return _Entry(path)

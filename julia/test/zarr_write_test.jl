@@ -12,7 +12,7 @@ import Blosc      # activates EarthSciIOBloscExt for BOTH the encode and the dec
 import CodecZstd  # activates EarthSciIOZstdExt — the plain v3 zstd (`:wasm`) codec
 import JSON
 
-const WTOL = 1e-10
+const WTOL = 1.0e-10
 
 # Build the OutputSchema for a var `temp(time, lat, lon)` over lon=4, lat=3, with
 # a static `lon` coordinate and a growing `time` axis. Inner chunks are small so
@@ -27,15 +27,15 @@ function _demo_schema_profile(profile::Symbol)
         dims = ["time" => 0, "lat" => 3, "lon" => 4],
         time_dim = "time",
         coords = [
-            "lon" => (Float64[10.0, 20.0, 30.0, 40.0], Dict{String,Any}("units" => "degrees_east")),
-            "lat" => (Float64[1.0, 2.0, 3.0], Dict{String,Any}("units" => "degrees_north")),
-            "time" => (Float64[], Dict{String,Any}("units" => "seconds")),   # attrs only
+            "lon" => (Float64[10.0, 20.0, 30.0, 40.0], Dict{String, Any}("units" => "degrees_east")),
+            "lat" => (Float64[1.0, 2.0, 3.0], Dict{String, Any}("units" => "degrees_north")),
+            "time" => (Float64[], Dict{String, Any}("units" => "seconds")),   # attrs only
         ],
         vars = ["temp" => OutputVar(["time", "lat", "lon"], Float64)],
         chunk_shape = Dict("time" => 1, "lat" => 2, "lon" => 2),
         shard_shape = Dict("time" => 2, "lat" => 2, "lon" => 4),
         profile = profile,
-        attrs = Dict{String,Any}("title" => "writer round-trip"),
+        attrs = Dict{String, Any}("title" => "writer round-trip"),
     )
 end
 
@@ -68,8 +68,10 @@ _cell(k, i, j) = 1000.0 * k + 10.0 * i + j
     # --- read back through the real reader (file:// transport, non-offline) ---
     cache = Cache(LocalStore(joinpath(dir, "cache")); offline = false)
 
-    nds = read_store(ZarrReader(), cache, base_url;
-                     variables = ["temp", "lon", "lat", "time"])
+    nds = read_store(
+        ZarrReader(), cache, base_url;
+        variables = ["temp", "lon", "lat", "time"]
+    )
 
     temp = nds.variables["temp"]
     @test temp.dims == ["time", "lat", "lon"]
@@ -122,9 +124,13 @@ end
 
     cache = Cache(LocalStore(joinpath(dir, "cache")); offline = false)
     # time index 2 (0-based), lats {0,2}, lons {1,3}
-    sel = Dict("axes" => Any[Dict("indices" => [2]),
-                             Dict("indices" => [0, 2]),
-                             Dict("indices" => [1, 3])])
+    sel = Dict(
+        "axes" => Any[
+            Dict("indices" => [2]),
+            Dict("indices" => [0, 2]),
+            Dict("indices" => [1, 3]),
+        ]
+    )
     nds = read_store(ZarrReader(), cache, base_url; variables = ["temp"], select = sel)
     t = nds.variables["temp"]
     @test size(t.data) == (1, 2, 2)
@@ -141,11 +147,12 @@ end
     schema = OutputSchema(;
         dims = ["time" => 0, "cell" => 6],
         time_dim = "time",
-        coords = Pair{String,Tuple{Vector,Dict{String,Any}}}[],
+        coords = Pair{String, Tuple{Vector, Dict{String, Any}}}[],
         vars = ["q" => OutputVar(["time", "cell"], Float64)],
         chunk_shape = Dict("time" => 2, "cell" => 3),
         shard_shape = Dict("time" => 2, "cell" => 6),
-        profile = :checkpoint)
+        profile = :checkpoint
+    )
     w = ZarrWriter()
     h = write_open!(w, nothing, base_url, schema)
     vals = [Float64[k + c / 7 for c in 1:6] for k in 1:3]
@@ -226,8 +233,10 @@ end
     write_close!(w, h)
 
     cache = Cache(LocalStore(joinpath(dir, "cache")); offline = false)
-    nds = read_store(ZarrReader(), cache, base_url;
-                     variables = ["temp", "lon", "lat", "time"])
+    nds = read_store(
+        ZarrReader(), cache, base_url;
+        variables = ["temp", "lon", "lat", "time"]
+    )
 
     temp = nds.variables["temp"]
     @test temp.dims == ["time", "lat", "lon"]
@@ -242,8 +251,10 @@ end
     @test isapprox(nds.variables["lon"].data, Float64[10, 20, 30, 40]; atol = WTOL)
     @test isapprox(nds.variables["lat"].data, Float64[1, 2, 3]; atol = WTOL)
     @test nds.variables["lon"].dims == ["lon"]
-    @test isapprox(nds.variables["time"].data,
-                   Float64[100, 200, 300, 400, 500]; atol = WTOL)
+    @test isapprox(
+        nds.variables["time"].data,
+        Float64[100, 200, 300, 400, 500]; atol = WTOL
+    )
 
     # CF attrs + dimension_names survive the codec swap
     tmeta = JSON.parsefile(joinpath(store_dir, "temp", "zarr.json"))
@@ -259,7 +270,7 @@ end
 
 @testset "zarr writer: wasm and diagnostic profiles decode to the same values" begin
     dir = mktempdir()
-    stores = Dict{Symbol,String}()
+    stores = Dict{Symbol, String}()
     for p in (:diagnostic, :wasm)
         sd = joinpath(dir, "$(p).zarr")
         stores[p] = sd
@@ -272,7 +283,7 @@ end
         write_close!(w, h)
     end
 
-    decoded = Dict{Symbol,Any}()
+    decoded = Dict{Symbol, Any}()
     for p in (:diagnostic, :wasm)
         cache = Cache(LocalStore(joinpath(dir, "cache_$(p)")); offline = false)
         nds = read_store(ZarrReader(), cache, "file://" * stores[p]; variables = ["temp"])
@@ -323,8 +334,10 @@ end
         nds = read_store(ZarrReader(), cache, base_url; variables = ["temp", "time"])
 
         # no phantom slots: the time axis is exactly the records written, in order
-        @test isapprox(nds.variables["time"].data,
-                       Float64[k * 100.0 for k in 1:nrec]; atol = WTOL)
+        @test isapprox(
+            nds.variables["time"].data,
+            Float64[k * 100.0 for k in 1:nrec]; atol = WTOL
+        )
 
         temp = nds.variables["temp"]
         @test size(temp.data) == (nrec, 3, 4)
@@ -338,5 +351,6 @@ end
     dir = mktempdir()
     @test_throws ErrorException write_open!(
         ZarrWriter(), nothing, "file://" * joinpath(dir, "bad.zarr"),
-        _demo_schema_profile(:not_a_profile))
+        _demo_schema_profile(:not_a_profile)
+    )
 end

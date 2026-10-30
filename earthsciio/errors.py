@@ -188,9 +188,7 @@ class CacheMiss(EarthSciIOError):
     def __init__(self, resolved_url: str, key: str) -> None:
         self.resolved_url = resolved_url
         self.key = key
-        super().__init__(
-            f"offline cache miss: no blob for key={key} (url={resolved_url})"
-        )
+        super().__init__(f"offline cache miss: no blob for key={key} (url={resolved_url})")
 
 
 class IntegrityError(EarthSciIOError):
@@ -274,8 +272,7 @@ class FetchError(EarthSciIOError):
         tried = ", ".join(self.attempts) if self.attempts else resolved_url
         suffix = f": {cause}" if cause is not None else ""
         super().__init__(
-            f"all mirror candidates failed to fetch {resolved_url} "
-            f"(tried: {tried}){suffix}"
+            f"all mirror candidates failed to fetch {resolved_url} (tried: {tried}){suffix}"
         )
 
 
@@ -301,8 +298,7 @@ class AuthError(EarthSciIOError):
         self.realm = realm
         self.available: List[str] = sorted(available) if available is not None else []
         super().__init__(
-            f"no auth resolver registered for realm {realm!r}; "
-            f"registered realms: {self.available}"
+            f"no auth resolver registered for realm {realm!r}; registered realms: {self.available}"
         )
 
 

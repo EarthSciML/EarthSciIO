@@ -186,8 +186,12 @@ class Cache:
             if hit is not None:
                 return hit
             return self._download(
-                resolved_url, key, source_loader, auth_realm,
-                expected_checksum, list(mirrors),
+                resolved_url,
+                key,
+                source_loader,
+                auth_realm,
+                expected_checksum,
+                list(mirrors),
             )
 
     # --------------------------------------------------------------- offline
@@ -281,9 +285,7 @@ class Cache:
             for attempt in attempt_conditionals:
                 staged = self.store.staging_path()
                 try:
-                    result = transport.fetch(
-                        candidate, os.fspath(staged), attempt, resolver
-                    )
+                    result = transport.fetch(candidate, os.fspath(staged), attempt, resolver)
                 except TransportError as exc:
                     last_err = exc
                     errs.append(exc)
@@ -298,14 +300,18 @@ class Cache:
                     break
                 try:
                     return self._commit(
-                        resolved_url, key, result, staged,
-                        source_loader, auth_realm, expected_checksum,
+                        resolved_url,
+                        key,
+                        result,
+                        staged,
+                        source_loader,
+                        auth_realm,
+                        expected_checksum,
                     )
                 except _StaleValidators as exc:
                     if attempt is None:  # already unconditional — genuinely broken
                         last_err = RuntimeError(
-                            "304 Not Modified with no cached blob, even "
-                            "unconditionally"
+                            "304 Not Modified with no cached blob, even unconditionally"
                         )
                         errs.append(last_err)
                         failed = True
@@ -318,8 +324,14 @@ class Cache:
         raise FetchError(resolved_url, attempts=candidates, cause=last_err, causes=errs)
 
     def _commit(
-        self, resolved_url, key, result, staged,
-        source_loader, auth_realm, expected_checksum,
+        self,
+        resolved_url,
+        key,
+        result,
+        staged,
+        source_loader,
+        auth_realm,
+        expected_checksum,
     ) -> CacheEntry:
         if result.status == NOT_MODIFIED:
             _safe_unlink(staged)
@@ -353,7 +365,9 @@ class Cache:
             _safe_unlink(staged)
             raise IntegrityError(
                 f"checksum mismatch for {resolved_url}",
-                key=key, expected=expected_checksum, actual=digest,
+                key=key,
+                expected=expected_checksum,
+                actual=digest,
             )
         ext = ext_from_url(resolved_url)
         blob = self.store.put_blob(key, staged, ext)
@@ -377,13 +391,17 @@ class Cache:
             raise IntegrityError(
                 f"byte-size mismatch for cached blob (key={key}): "
                 f"{size} != manifest {manifest.bytes}",
-                key=key, expected=str(manifest.bytes), actual=str(size),
+                key=key,
+                expected=str(manifest.bytes),
+                actual=str(size),
             )
         digest = sha256_file(blob)
         if digest.lower() != (manifest.sha256_content or "").lower():
             raise IntegrityError(
                 f"sha256 mismatch for cached blob (key={key})",
-                key=key, expected=manifest.sha256_content, actual=digest,
+                key=key,
+                expected=manifest.sha256_content,
+                actual=digest,
             )
 
 

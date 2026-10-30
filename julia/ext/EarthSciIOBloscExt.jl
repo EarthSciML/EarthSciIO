@@ -24,12 +24,16 @@ _blosc_decompress(raw::AbstractVector{UInt8}) =
 # applies the byte-shuffle filter over whole elements. The blosc container is
 # self-describing, so `_blosc_decompress` (and numcodecs on the Python side)
 # undoes shuffle + codec from the header — no metadata dependency.
-function _blosc_compress(bytes::AbstractVector{UInt8}, cname::AbstractString,
-                         clevel::Integer, shuffle::Bool, typesize::Integer)
+function _blosc_compress(
+        bytes::AbstractVector{UInt8}, cname::AbstractString,
+        clevel::Integer, shuffle::Bool, typesize::Integer
+    )
     Blosc.set_compressor(String(cname))
-    return Blosc.compress(Vector{UInt8}(bytes);
-                          level = Int(clevel), shuffle = shuffle,
-                          itemsize = Int(typesize))
+    return Blosc.compress(
+        Vector{UInt8}(bytes);
+        level = Int(clevel), shuffle = shuffle,
+        itemsize = Int(typesize)
+    )
 end
 
 end # module

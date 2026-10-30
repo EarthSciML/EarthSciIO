@@ -65,11 +65,7 @@ def resolve_region(region: Optional[str] = None) -> str:
     ``$AWS_REGION`` → :data:`DEFAULT_REGION`."""
     if region:
         return region
-    return (
-        os.environ.get("EARTHSCI_S3_REGION")
-        or os.environ.get("AWS_REGION")
-        or DEFAULT_REGION
-    )
+    return os.environ.get("EARTHSCI_S3_REGION") or os.environ.get("AWS_REGION") or DEFAULT_REGION
 
 
 def s3_https_url(s3_url: str, region: Optional[str] = None) -> str:
@@ -80,7 +76,7 @@ def s3_https_url(s3_url: str, region: Optional[str] = None) -> str:
     """
     if not s3_url.startswith("s3://"):
         raise ValueError(f"not an s3:// URL: {s3_url!r}")
-    rest = s3_url[len("s3://"):]
+    rest = s3_url[len("s3://") :]
     bucket, sep, key = rest.partition("/")
     if not bucket:
         raise ValueError(f"s3:// URL has an empty bucket: {s3_url!r}")

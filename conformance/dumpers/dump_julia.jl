@@ -42,16 +42,18 @@ function _load_ext(extname::Symbol, pkg::String)
     try
         @eval import $(Symbol(pkg))
     catch err
-        error("""
-              cannot import `$pkg`, the trigger for EarthSciIO's `$extname`.
-              Run this dumper in the prepared conformance environment:
-                  julia --project="\$(julia conformance/dumpers/julia_env.jl)" $(basename(@__FILE__)) ...
-              or just run conformance/run_conformance.sh.
-              active project: $(Base.active_project())
-              underlying: $err
-              """)
+        error(
+            """
+            cannot import `$pkg`, the trigger for EarthSciIO's `$extname`.
+            Run this dumper in the prepared conformance environment:
+                julia --project="\$(julia conformance/dumpers/julia_env.jl)" $(basename(@__FILE__)) ...
+            or just run conformance/run_conformance.sh.
+            active project: $(Base.active_project())
+            underlying: $err
+            """
+        )
     end
-    Base.retry_load_extensions()
+    return Base.retry_load_extensions()
 end
 
 _load_ext(:EarthSciIOBloscExt, "Blosc")
@@ -68,7 +70,7 @@ _corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
 # needs its own method: `permutedims` with an EMPTY permutation throws on Julia
 # 1.10 (`sum` of an empty tuple) while working on 1.12, so without this the dump
 # succeeds locally and dies in CI.
-_corder(a::AbstractArray{<:Any,0}) = collect(vec(a))
+_corder(a::AbstractArray{<:Any, 0}) = collect(vec(a))
 
 # Encode one NativeField to the dump schema (dtype/dims/shape/data).
 function encode_field(field)
@@ -84,9 +86,13 @@ function encode_field(field)
         # `eltype Char` used to reach the numeric branch below and error outright,
         # which is why no corpus case could carry a char variable before.
         vals = Any[String(x) for x in _corder(data)]
-        return _with_fill_value(Dict("dtype" => "string", "dims" => dims,
-                                     "shape" => collect(Int, size(data)),
-                                     "data" => vals), field)
+        return _with_fill_value(
+            Dict(
+                "dtype" => "string", "dims" => dims,
+                "shape" => collect(Int, size(data)),
+                "data" => vals
+            ), field
+        )
     end
     flat = _corder(data)
     et = eltype(data)
@@ -102,9 +108,13 @@ function encode_field(field)
     else
         error("unexpected numeric eltype $et in field with dims $dims")
     end
-    return _with_fill_value(Dict("dtype" => dtype, "dims" => dims,
-                                 "shape" => collect(Int, size(data)), "data" => vals),
-                            field)
+    return _with_fill_value(
+        Dict(
+            "dtype" => dtype, "dims" => dims,
+            "shape" => collect(Int, size(data)), "data" => vals
+        ),
+        field
+    )
 end
 
 # Carry a surviving fill/missing sentinel into the dump under ONE key.
@@ -135,8 +145,10 @@ end
 function dump_case(corpus, case)
     fmt = String(case["format"])
     if !haskey(FORMAT_REGISTRY, fmt) || status_of(FORMAT_REGISTRY, fmt) != :active
-        return Dict("format" => fmt, "status" => "skipped",
-                    "reason" => "no active reader registered for format '$fmt' in the Julia track")
+        return Dict(
+            "format" => fmt, "status" => "skipped",
+            "reason" => "no active reader registered for format '$fmt' in the Julia track"
+        )
     end
     # An OFFLINE cache rooted at the corpus: each case resolves from disk by its
     # sha256(resolved_url) key; verify=true checks the blob against its manifest.
@@ -153,7 +165,7 @@ function dump_case(corpus, case)
         # member; sorted-name concat), skip_header_row (drop one asserted
         # `country_cd` header line per member). member=null decodes the bare blob.
         dec = case["decode"]
-        kw = Dict{Symbol,Any}(
+        kw = Dict{Symbol, Any}(
             :numeric_columns => String.(dec["numeric_columns"]),
             :kind => String(get(dec, "kind", "point")),
             :member => get(dec, "member", nothing),
@@ -169,7 +181,7 @@ function dump_case(corpus, case)
         # ESRI shapefile: the case pins the `.shp` member inside the zip blob and
         # the text code column the model wants as a number.
         dec = case["decode"]
-        kw = Dict{Symbol,Any}()
+        kw = Dict{Symbol, Any}()
         m = get(dec, "member", nothing)
         m === nothing || (kw[:member] = String(m))
         nc = get(dec, "numeric_columns", nothing)
@@ -182,7 +194,7 @@ function dump_case(corpus, case)
         # integer measurement, or a column of fixed-decimal TEXT, read as
         # float64) and the two null gates `null_int` / `null_string`.
         dec = case["decode"]
-        kw = Dict{Symbol,Any}()
+        kw = Dict{Symbol, Any}()
         fc = get(dec, "float_columns", nothing)
         fc === nothing || (kw[:float_columns] = String.(fc))
         ni = get(dec, "null_int", nothing)
@@ -190,9 +202,11 @@ function dump_case(corpus, case)
         ns = get(dec, "null_string", nothing)
         ns === nothing || (kw[:null_string] = String(ns))
         vars = String[String(v) for v in get(case, "variables", String[])]
-        const_provider(cache, url; format = fmt,
-                       variables = isempty(vars) ? nothing : vars,
-                       reader_kwargs = (; kw...))
+        const_provider(
+            cache, url; format = fmt,
+            variables = isempty(vars) ? nothing : vars,
+            reader_kwargs = (; kw...)
+        )
     elseif fmt == "netcdf"
         # Whole-file, but selection-capable: a case carrying an orthogonal
         # `select` is a DECODE-TIME window — the same blob under the same cache
@@ -208,8 +222,10 @@ function dump_case(corpus, case)
         # .zmetadata to enumerate); `select` (the orthogonal selection) rides in
         # reader_kwargs and drives lazy chunk fetch.
         vars = String[String(v) for v in case["variables"]]
-        const_provider(cache, url; format = fmt, variables = vars,
-                       reader_kwargs = (; select = case["select"]))
+        const_provider(
+            cache, url; format = fmt, variables = vars,
+            reader_kwargs = (; select = case["select"])
+        )
     else
         const_provider(cache, url; format = fmt)
     end
@@ -238,15 +254,19 @@ function main()
     corpus = normpath(joinpath(@__DIR__, "..", "corpus"))
     index = JSON.parsefile(joinpath(corpus, "cases.json"))
     only = selected_ids()
-    cases = Dict{String,Any}()
+    cases = Dict{String, Any}()
     for entry in index["cases"]
         case = JSON.parsefile(joinpath(corpus, entry["file"]))
         id = String(case["id"])
         only === nothing || id in only || continue
         cases[id] = dump_case(corpus, case)
     end
-    active = sort!([n for n in registered_names(FORMAT_REGISTRY)
-                    if status_of(FORMAT_REGISTRY, n) == :active])
+    active = sort!(
+        [
+            n for n in registered_names(FORMAT_REGISTRY)
+                if status_of(FORMAT_REGISTRY, n) == :active
+        ]
+    )
     out = Dict(
         "schema" => "earthsciio/native-dump/v1",
         "language" => "julia",
@@ -255,7 +275,7 @@ function main()
         "cases" => cases,
     )
     text = JSON.json(out, 2)
-    if !isempty(ARGS)
+    return if !isempty(ARGS)
         open(ARGS[1], "w") do io
             write(io, text)
             write(io, "\n")

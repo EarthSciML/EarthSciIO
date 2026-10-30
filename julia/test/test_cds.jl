@@ -26,7 +26,7 @@ function _read_cds_http_request(io)
     parts = split(reqline)
     method = length(parts) >= 1 ? String(parts[1]) : ""
     path = length(parts) >= 2 ? String(parts[2]) : ""
-    headers = Dict{String,String}()
+    headers = Dict{String, String}()
     while true
         h = readline(io)
         isempty(h) && break
@@ -43,14 +43,18 @@ end
 
 _respond_json(conn, json::AbstractString) = begin
     body = Vector{UInt8}(json)
-    write(conn, "HTTP/1.1 200 OK\r\n", "Content-Type: application/json\r\n",
-          "Content-Length: $(length(body))\r\nConnection: close\r\n\r\n")
+    write(
+        conn, "HTTP/1.1 200 OK\r\n", "Content-Type: application/json\r\n",
+        "Content-Length: $(length(body))\r\nConnection: close\r\n\r\n"
+    )
     write(conn, body)
 end
 
 _respond_bytes(conn, payload::Vector{UInt8}) = begin
-    write(conn, "HTTP/1.1 200 OK\r\n",
-          "Content-Length: $(length(payload))\r\nConnection: close\r\n\r\n")
+    write(
+        conn, "HTTP/1.1 200 OK\r\n",
+        "Content-Length: $(length(payload))\r\nConnection: close\r\n\r\n"
+    )
     write(conn, payload)
 end
 
@@ -100,10 +104,12 @@ function _start_cds_server(payload::Vector{UInt8})
 end
 
 @testset "cds url codec + era5 request mapping (pure, no network)" begin
-    req = era5_pressure_request(2020, 3;
+    req = era5_pressure_request(
+        2020, 3;
         variables = ["temperature", "geopotential"],
         pressure_levels = [500, 1000], days = [1, 2], times = [0, 12],
-        area = era5_area(north = 50.4, west = -10.9, south = 30.1, east = 5.2))
+        area = era5_area(north = 50.4, west = -10.9, south = 30.1, east = 5.2)
+    )
     @test req["variable"] == ["temperature", "geopotential"]   # explicit order preserved
     @test req["pressure_level"] == ["1000", "500"]             # always descending
     @test req["year"] == ["2020"]
@@ -136,11 +142,13 @@ end
 
     # canonical: dict insertion order does NOT change the URL (shared-cache key
     # parity across processes/tracks)
-    shuffled = Dict{String,Any}(reverse(collect(req)))
+    shuffled = Dict{String, Any}(reverse(collect(req)))
     @test cds_url(ERA5_PL_DATASET, shuffled) == url
-    @test era5_pressure_url(2020, 3; variables = ["temperature", "geopotential"],
+    @test era5_pressure_url(
+        2020, 3; variables = ["temperature", "geopotential"],
         pressure_levels = [1000, 500], days = [1, 2], times = [0, 12],
-        area = era5_area(north = 50.4, west = -10.9, south = 30.1, east = 5.2)) == url
+        area = era5_area(north = 50.4, west = -10.9, south = 30.1, east = 5.2)
+    ) == url
 
     # the cds transport is registered + active and dispatched by URL scheme
     @test haskey(TRANSPORT_REGISTRY, "cds")
@@ -160,7 +168,7 @@ end
     # form (spec/registries.md §1) breaks the cross-language cache invariant
     # key = sha256(resolved_url) and fails one of these three suites.
     golden_dataset = "reanalysis-era5-pressure-levels"
-    golden_request = Dict{String,Any}(
+    golden_request = Dict{String, Any}(
         "variable" => ["geopotential", "temperature"],
         "pressure_level" => ["1000", "500"],
         "year" => ["2018"],
@@ -190,7 +198,7 @@ end
     @test cds_url(ds, req) == golden_url
 
     # canonical: caller key-order does not change the URL (shared-key parity)
-    shuffled = Dict{String,Any}(reverse(collect(golden_request)))
+    shuffled = Dict{String, Any}(reverse(collect(golden_request)))
     @test cds_url(golden_dataset, shuffled) == golden_url
 end
 
@@ -212,7 +220,7 @@ end
     end
     # absent everywhere ⇒ a clear setup error
     _with_env("CDSAPI_KEY" => nothing) do
-        @test_throws ErrorException EarthSciIO.cds_api_key(rc = Dict{String,String}())
+        @test_throws ErrorException EarthSciIO.cds_api_key(rc = Dict{String, String}())
     end
 end
 
@@ -220,14 +228,18 @@ end
     payload = rand(UInt8, 1500)
     server, port, tokens, bodies, polls = _start_cds_server(payload)
     try
-        _with_env("CDSAPI_URL" => "http://127.0.0.1:$port",
-                  "CDSAPI_KEY" => "secret-cds-token",
-                  "CDSAPI_POLL_SECONDS" => "0.01") do
+        _with_env(
+            "CDSAPI_URL" => "http://127.0.0.1:$port",
+            "CDSAPI_KEY" => "secret-cds-token",
+            "CDSAPI_POLL_SECONDS" => "0.01"
+        ) do
             root = mktempdir()
             c = Cache(LocalStore(root); offline = false)
-            url = era5_pressure_url(2018, 11; variables = ["temperature"],
+            url = era5_pressure_url(
+                2018, 11; variables = ["temperature"],
                 pressure_levels = [1000, 500], days = [8], times = [0, 1],
-                area = era5_area(north = 41, west = -122, south = 39, east = -120))
+                area = era5_area(north = 41, west = -122, south = 39, east = -120)
+            )
 
             # submit → poll(running→successful) → download
             e1 = fetch_blob(c, url; source_loader = "era5", auth_realm = "cds")
@@ -271,9 +283,11 @@ if lowercase(get(ENV, "EARTHSCI_LIVE", "")) in ("1", "true", "yes")
         root = mktempdir()
         c = Cache(LocalStore(root); offline = false)
         # a deliberately tiny request: one variable, one level, one hour, one cell
-        url = era5_pressure_url(2018, 1; variables = ["temperature"],
+        url = era5_pressure_url(
+            2018, 1; variables = ["temperature"],
             pressure_levels = [500], days = [1], times = [0],
-            area = era5_area(north = 41, west = -122, south = 40, east = -121))
+            area = era5_area(north = 41, west = -122, south = 40, east = -121)
+        )
         e = fetch_blob(c, url; source_loader = "era5", auth_realm = "cds")
         @test e.status in (:downloaded, :hit)
         @test filesize(e.path) > 0

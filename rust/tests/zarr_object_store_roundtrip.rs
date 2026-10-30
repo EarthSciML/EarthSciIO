@@ -11,13 +11,16 @@
 use std::collections::BTreeMap;
 
 use earthsciio::{
-    read_zarr_object_store, write_zarr_object_store, ArrayData, OutputSchema, Selection, WriteCoord,
-    WriteVar,
+    read_zarr_object_store, write_zarr_object_store, ArrayData, OutputSchema, Selection,
+    WriteCoord, WriteVar,
 };
 use serde_json::{Map, Value};
 
 fn attrs(pairs: &[(&str, Value)]) -> Map<String, Value> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }
 
 fn f64s(data: &ArrayData) -> &Vec<f64> {
@@ -37,12 +40,18 @@ fn object_store_write_then_read_roundtrip() {
     let time_vals = vec![0.0, 6.0];
     let x_vals = vec![1.0, 2.0, 3.0];
     // conc[t, x] = t*10 + x_idx  (C-order over [time, x])
-    let conc: Vec<f64> = (0..2).flat_map(|t| (0..3).map(move |xi| (t * 10 + xi) as f64)).collect();
+    let conc: Vec<f64> = (0..2)
+        .flat_map(|t| (0..3).map(move |xi| (t * 10 + xi) as f64))
+        .collect();
 
-    let chunk_shape: BTreeMap<String, usize> =
-        [("time", 1), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    let shard_shape: BTreeMap<String, usize> =
-        [("time", 2), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    let chunk_shape: BTreeMap<String, usize> = [("time", 1), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
+    let shard_shape: BTreeMap<String, usize> = [("time", 2), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
 
     let schema = OutputSchema {
         dims: vec![("time".into(), 2), ("x".into(), 3)],
@@ -50,7 +59,11 @@ fn object_store_write_then_read_roundtrip() {
         chunk_shape,
         shard_shape,
         coords: vec![
-            WriteCoord { name: "time".into(), values: time_vals.clone(), attrs: Map::new() },
+            WriteCoord {
+                name: "time".into(),
+                values: time_vals.clone(),
+                attrs: Map::new(),
+            },
             WriteCoord {
                 name: "x".into(),
                 values: x_vals.clone(),

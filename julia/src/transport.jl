@@ -7,8 +7,8 @@
 """Result of a transport fetch. `:not_modified` means a 304 — reuse the cache."""
 struct FetchResult
     status::Symbol            # :downloaded | :not_modified
-    etag::Union{String,Nothing}
-    last_modified::Union{String,Nothing}
+    etag::Union{String, Nothing}
+    last_modified::Union{String, Nothing}
     bytes_written::Int
 end
 
@@ -28,7 +28,7 @@ struct BearerAuth <: AuthResolver
     token::String
 end
 
-auth_headers(::NoAuth, ::AbstractString) = Pair{String,String}[]
+auth_headers(::NoAuth, ::AbstractString) = Pair{String, String}[]
 auth_headers(a::BearerAuth, ::AbstractString) = ["Authorization" => string("Bearer ", a.token)]
 
 # Resolve the auth for a realm from whatever the caller supplied: nothing → no
@@ -65,12 +65,12 @@ function _build_http_downloader()
     d === nothing || return d
     d = Downloads.Downloader()
     lo_limit = _http_env_int("EARTHSCIIO_HTTP_LOW_SPEED_LIMIT", 1024)  # bytes/s floor
-    lo_time  = _http_env_int("EARTHSCIIO_HTTP_LOW_SPEED_TIME", 30)     # ...for this long → abort
-    conn_to  = _http_env_int("EARTHSCIIO_HTTP_CONNECT_TIMEOUT", 30)    # connect timeout (s)
+    lo_time = _http_env_int("EARTHSCIIO_HTTP_LOW_SPEED_TIME", 30)     # ...for this long → abort
+    conn_to = _http_env_int("EARTHSCIIO_HTTP_CONNECT_TIMEOUT", 30)    # connect timeout (s)
     d.easy_hook = (easy, info) -> begin
         Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_LIMIT, lo_limit)
-        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_TIME,  lo_time)
-        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_CONNECTTIMEOUT,  conn_to)
+        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_TIME, lo_time)
+        Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_CONNECTTIMEOUT, conn_to)
     end
     _HTTP_DOWNLOADER[] = d
     return d
@@ -103,26 +103,28 @@ _reset_http_downloader!() = lock(() -> (_HTTP_DOWNLOADER[] = nothing), _HTTP_DOW
 # -- lowering it only shortens the extension ladder.
 _http_store_read_ceiling(store_read::Bool) =
     store_read ? _http_env_int("EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE", 600) :
-                 _http_env_int("EARTHSCIIO_HTTP_TIMEOUT_MAX", 7200)
+    _http_env_int("EARTHSCIIO_HTTP_TIMEOUT_MAX", 7200)
 
 """HTTP/HTTPS transport: GET with conditional-GET revalidation. Mirror failover
 is handled at the call site (the cache tries mirror URLs in order)."""
 struct HttpTransport <: Transport end
 schemes(::HttpTransport) = ["http", "https"]
 
-function fetch!(::HttpTransport, url::AbstractString, dest::AbstractString;
-                conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
-                store_read::Bool = false)
-    headers = Pair{String,String}[]
+function fetch!(
+        ::HttpTransport, url::AbstractString, dest::AbstractString;
+        conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
+        store_read::Bool = false
+    )
+    headers = Pair{String, String}[]
     append!(headers, auth_headers(auth, url))
     et = get(conditional, :etag, nothing)
     lm = get(conditional, :last_modified, nothing)
     et === nothing || push!(headers, "If-None-Match" => et)
     lm === nothing || push!(headers, "If-Modified-Since" => lm)
 
-    tries   = max(1, _http_env_int("EARTHSCIIO_HTTP_RETRIES", 5))
+    tries = max(1, _http_env_int("EARTHSCIIO_HTTP_RETRIES", 5))
     timeout = Float64(_http_env_int("EARTHSCIIO_HTTP_TIMEOUT", 90))  # per-ATTEMPT cap (s)
-    tmax    = Float64(_http_store_read_ceiling(store_read))
+    tmax = Float64(_http_store_read_ceiling(store_read))
     base_timeout = timeout
     # `timeout` is a TOTAL per-request cap, so on its own it also caps the SIZE
     # of a blob this transport can fetch: at a realistic 40 MB/s the 90 s default
@@ -152,7 +154,7 @@ function fetch!(::HttpTransport, url::AbstractString, dest::AbstractString;
     # The floor of `tries * timeout` keeps the deadline from ever taking away
     # retries the un-extended schedule would have had, so lowering `TIMEOUT_MAX`
     # only shortens the extension ladder -- it never makes plain retries worse.
-    budget   = max(tmax, tries * timeout)
+    budget = max(tmax, tries * timeout)
     deadline = time() + budget
     extensions = 0
     local resp
@@ -161,10 +163,12 @@ function fetch!(::HttpTransport, url::AbstractString, dest::AbstractString;
         attempt += 1
         ok = false
         try
-            resp = Downloads.request(url; method = "GET", output = dest,
-                                     headers = headers, throw = false,
-                                     timeout = min(timeout, max(deadline - time(), 0.001)),
-                                     downloader = _http_downloader())
+            resp = Downloads.request(
+                url; method = "GET", output = dest,
+                headers = headers, throw = false,
+                timeout = min(timeout, max(deadline - time(), 0.001)),
+                downloader = _http_downloader()
+            )
             # CRITICAL: with `throw=false`, a transport failure (stall abort, connect
             # timeout, or a Downloads-level `timeout` cancelling a lost-wakeup
             # deadlock) is RETURNED as a `Downloads.RequestError`, NOT thrown — only a
@@ -205,16 +209,20 @@ function fetch!(::HttpTransport, url::AbstractString, dest::AbstractString;
         timeout = base_timeout
         if attempt >= tries || time() >= deadline
             resp isa Exception && throw(resp)
-            error("http transport: GET $url failed after $attempt attempt(s) " *
-                  "(within a $(round(Int, budget)) s budget): $resp")
+            error(
+                "http transport: GET $url failed after $attempt attempt(s) " *
+                    "(within a $(round(Int, budget)) s budget): $resp"
+            )
         end
         sleep(min(2.0^(attempt - 1), 10.0))   # partial `dest` truncated by next open
     end
     if resp.status == 304
         return FetchResult(:not_modified, et, lm, 0)
     elseif 200 <= resp.status < 300
-        return FetchResult(:downloaded, _header(resp, "etag"),
-                           _header(resp, "last-modified"), filesize(dest))
+        return FetchResult(
+            :downloaded, _header(resp, "etag"),
+            _header(resp, "last-modified"), filesize(dest)
+        )
     else
         error("http transport: GET $url returned HTTP status $(resp.status)")
     end
@@ -235,9 +243,11 @@ pre-populated local mirror (the `nei2016` pattern) is found."""
 struct FileTransport <: Transport end
 schemes(::FileTransport) = ["file"]
 
-function fetch!(::FileTransport, url::AbstractString, dest::AbstractString;
-                conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
-                store_read::Bool = false)   # a local copy has no timeout to bound
+function fetch!(
+        ::FileTransport, url::AbstractString, dest::AbstractString;
+        conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
+        store_read::Bool = false
+    )   # a local copy has no timeout to bound
     src = file_url_to_path(url)
     isfile(src) || error("file transport: source not found: $src (from $url)")
     cp(src, dest; force = true)
@@ -266,7 +276,7 @@ const DEFAULT_S3_REGION = "us-east-2"
 
 """Resolve the S3 region: explicit arg -> `\$EARTHSCI_S3_REGION` ->
 `\$AWS_REGION` -> [`DEFAULT_S3_REGION`]."""
-function resolve_s3_region(region::Union{Nothing,AbstractString} = nothing)
+function resolve_s3_region(region::Union{Nothing, AbstractString} = nothing)
     region === nothing || return String(region)
     for k in ("EARTHSCI_S3_REGION", "AWS_REGION")
         v = get(ENV, k, "")
@@ -277,7 +287,7 @@ end
 
 """Rewrite `s3://<bucket>/<key…>` to regional virtual-hosted HTTPS
 (`https://<bucket>.s3.<region>.amazonaws.com/<key>`)."""
-function s3_https_url(s3_url::AbstractString, region::Union{Nothing,AbstractString} = nothing)
+function s3_https_url(s3_url::AbstractString, region::Union{Nothing, AbstractString} = nothing)
     startswith(s3_url, "s3://") || error("not an s3:// URL: $s3_url")
     rest = s3_url[6:end]                       # strip "s3://"
     slash = findfirst('/', rest)
@@ -294,17 +304,23 @@ SDK / SigV4). The canonical `s3://` URL stays in the cache key + manifest. The
 region defaults to us-east-2, overridable via `\$EARTHSCI_S3_REGION`/`\$AWS_REGION`
 or the `region` field. Conditional GET + auth thread through the delegate."""
 struct S3Transport <: Transport
-    region::Union{Nothing,String}
+    region::Union{Nothing, String}
     http::HttpTransport
 end
-S3Transport(; region = nothing) = S3Transport(region === nothing ? nothing : String(region),
-                                              HttpTransport())
+S3Transport(; region = nothing) = S3Transport(
+    region === nothing ? nothing : String(region),
+    HttpTransport()
+)
 schemes(::S3Transport) = ["s3"]
 
-function fetch!(t::S3Transport, url::AbstractString, dest::AbstractString;
-                conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
-                store_read::Bool = false)
+function fetch!(
+        t::S3Transport, url::AbstractString, dest::AbstractString;
+        conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
+        store_read::Bool = false
+    )
     https_url = s3_https_url(url, t.region)
-    return fetch!(t.http, https_url, dest; conditional = conditional, auth = auth,
-                  store_read = store_read)
+    return fetch!(
+        t.http, https_url, dest; conditional = conditional, auth = auth,
+        store_read = store_read
+    )
 end

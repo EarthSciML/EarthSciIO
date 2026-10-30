@@ -38,7 +38,8 @@ from earthsciio.registry import format_registry
 # `needs_format` marker in conftest.py uses.
 _missing = format_registry.missing_requirements("netcdf")
 pytestmark = pytest.mark.skipif(
-    bool(_missing), reason=f"netcdf stack unavailable: {', '.join(_missing)}")
+    bool(_missing), reason=f"netcdf stack unavailable: {', '.join(_missing)}"
+)
 
 # dim `n=3`; `float value(n)` and `char label(n) = "abc"`. `n` is a REAL axis
 # (`value` lives on it), so `label` is three ONE-character strings.
@@ -114,10 +115,14 @@ def blob(tmp_path):
 
 def _label(path):
     field = NetCDFReader().read_native(path)["label"]
-    return list(field.dims), list(np.asarray(field.data).shape), [
-        v.decode() if isinstance(v, bytes) else str(v)
-        for v in np.asarray(field.data).reshape(-1).tolist()
-    ]
+    return (
+        list(field.dims),
+        list(np.asarray(field.data).shape),
+        [
+            v.decode() if isinstance(v, bytes) else str(v)
+            for v in np.asarray(field.data).reshape(-1).tolist()
+        ],
+    )
 
 
 def test_a_char_variable_on_a_shared_axis_is_one_string_per_cell(blob):
@@ -134,7 +139,9 @@ def test_a_private_last_dimension_is_the_string_length_not_an_axis(blob):
     # The length dimension is CONSUMED: four strings, not a 4x4 character grid.
     # Trailing NULs are stripped and trailing SPACES are data.
     assert _label(blob(STRING_ROWS_CDF1)) == (
-        ["n"], [4], ["ab", "cd  ", "efgh", ""],
+        ["n"],
+        [4],
+        ["ab", "cd  ", "efgh", ""],
     )
 
 
@@ -188,9 +195,7 @@ def test_a_select_windows_the_strings_not_their_characters(blob):
     # 2-axis select matches nothing in this blob and says so rather than binding
     # an axis to a string length.
     with pytest.raises(ValueError, match="no variable in the blob has rank 2"):
-        NetCDFReader().read_native(
-            path, select={"axes": ["all", {"indices": [0, 1]}]}
-        )
+        NetCDFReader().read_native(path, select={"axes": ["all", {"indices": [0, 1]}]})
 
 
 def test_a_scalar_string_is_rank_0_under_a_select(blob):

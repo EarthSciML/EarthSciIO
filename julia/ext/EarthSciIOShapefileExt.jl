@@ -20,16 +20,16 @@ import Shapefile
 # (`missing` in Shapefile.jl) is one EMPTY part, so a null row still occupies its
 # slot in the record axis.
 function _parts(shape)
-    shape === missing && return [Tuple{Float64,Float64}[]]
+    shape === missing && return [Tuple{Float64, Float64}[]]
     if hasproperty(shape, :points)
-        pts = Tuple{Float64,Float64}[(Float64(p.x), Float64(p.y)) for p in shape.points]
+        pts = Tuple{Float64, Float64}[(Float64(p.x), Float64(p.y)) for p in shape.points]
         hasproperty(shape, :parts) || return [pts]
         offs = Int[Int(o) for o in shape.parts]
         isempty(offs) && return [pts]
         bounds = vcat(offs, length(pts))
         return [pts[(bounds[k] + 1):bounds[k + 1]] for k in 1:length(offs)]
     end
-    return [Tuple{Float64,Float64}[(Float64(shape.x), Float64(shape.y))]]
+    return [Tuple{Float64, Float64}[(Float64(shape.x), Float64(shape.y))]]
 end
 
 # A shape's bounding box: the record's own stored `MBR` where the format has one,
@@ -44,14 +44,18 @@ function _box(shape)
     return (x, y, x, y)
 end
 
-function read_native(::ShapefileReader, path::AbstractString;
-                     member = nothing, variables = nothing,
-                     numeric_columns = nothing, nvert_max = nothing, kwargs...)
+function read_native(
+        ::ShapefileReader, path::AbstractString;
+        member = nothing, variables = nothing,
+        numeric_columns = nothing, nvert_max = nothing, kwargs...
+    )
     blobs = _shapefile_members(path, member)
     shp = haskey(blobs, "shx") ?
-          read(IOBuffer(blobs["shp"]), Shapefile.Handle,
-               read(IOBuffer(blobs["shx"]), Shapefile.IndexHandle)) :
-          read(IOBuffer(blobs["shp"]), Shapefile.Handle)
+        read(
+            IOBuffer(blobs["shp"]), Shapefile.Handle,
+            read(IOBuffer(blobs["shx"]), Shapefile.IndexHandle)
+        ) :
+        read(IOBuffer(blobs["shp"]), Shapefile.Handle)
 
     parts = [_parts(s) for s in shp.shapes]
     boxes = [_box(s) for s in shp.shapes]
@@ -62,7 +66,8 @@ function read_native(::ShapefileReader, path::AbstractString;
     if haskey(blobs, "dbf")
         dbf = Shapefile.DBFTables.Table(IOBuffer(blobs["dbf"]))
         length(dbf) == length(shp.shapes) || error(
-            "shapefile has $(length(shp.shapes)) shapes but $(length(dbf)) .dbf rows")
+            "shapefile has $(length(shp.shapes)) shapes but $(length(dbf)) .dbf rows"
+        )
         deleted = collect(Shapefile.DBFTables.isdeleted(dbf))
         for name in propertynames(dbf)
             push!(colnames, String(name))
@@ -71,10 +76,12 @@ function read_native(::ShapefileReader, path::AbstractString;
     end
     crs = haskey(blobs, "prj") ? String(copy(blobs["prj"])) : nothing
 
-    return _assemble_shapefile(shp.header.shapecode, parts, boxes, colnames, colvalues,
-                               deleted, crs; variables = variables,
-                               numeric_columns = numeric_columns,
-                               nvert_max = nvert_max)
+    return _assemble_shapefile(
+        shp.header.shapecode, parts, boxes, colnames, colvalues,
+        deleted, crs; variables = variables,
+        numeric_columns = numeric_columns,
+        nvert_max = nvert_max
+    )
 end
 
 end

@@ -14,8 +14,10 @@
 # inside a `@testset begin` block.)
 struct RecordSpyReader <: EarthSciIO.Reader end
 const RECORDS_PUSHED = Vector{Any}()
-function EarthSciIO.read_native(::RecordSpyReader, path::AbstractString;
-                                variables = nothing, select = nothing, records = nothing)
+function EarthSciIO.read_native(
+        ::RecordSpyReader, path::AbstractString;
+        variables = nothing, select = nothing, records = nothing
+    )
     # Record the RESOLVED list. The Provider pushes `indices` as a
     # `len -> indices` callable (so the axis length costs no second open), so
     # resolve it here against the same length the real reader will use — that is
@@ -24,16 +26,22 @@ function EarthSciIO.read_native(::RecordSpyReader, path::AbstractString;
         d = String(records["dim"])
         want = records["indices"]
         len = dim_length(FORMAT_REGISTRY["netcdf"], path, d)
-        push!(RECORDS_PUSHED,
-              Dict{String,Any}("dim" => d,
-                               "indices" => want isa Base.Callable ?
-                                            Int[Int(i) for i in want(len)] :
-                                            Int[Int(i) for i in want]))
+        push!(
+            RECORDS_PUSHED,
+            Dict{String, Any}(
+                "dim" => d,
+                "indices" => want isa Base.Callable ?
+                    Int[Int(i) for i in want(len)] :
+                    Int[Int(i) for i in want]
+            )
+        )
     else
         push!(RECORDS_PUSHED, records)
     end
-    return read_native(FORMAT_REGISTRY["netcdf"], path; variables = variables,
-                       select = select, records = records)
+    return read_native(
+        FORMAT_REGISTRY["netcdf"], path; variables = variables,
+        select = select, records = records
+    )
 end
 EarthSciIO.dim_length(::RecordSpyReader, path::AbstractString, dim::AbstractString) =
     dim_length(FORMAT_REGISTRY["netcdf"], path, dim)
@@ -116,8 +124,10 @@ end
 
         full = materialize(const_provider(cache, era5; format = "netcdf"))
         times = Float64.(full["time"].data)                          # [0.0, 1.0]
-        p = discrete_provider(cache, era5, times; format = "netcdf",
-                              time_dim = "time", records_per_sample = 2)
+        p = discrete_provider(
+            cache, era5, times; format = "netcdf",
+            time_dim = "time", records_per_sample = 2
+        )
 
         @testset "two records, time dim retained, epoch-seconds coord" begin
             b = refresh(p, 0.0)
@@ -148,9 +158,11 @@ end
         @testset "cross-file successor (url-function, cadence past the file axis)" begin
             # 3-tick cadence over a 2-record file: hour 1 is the file's last record,
             # so its successor is record 1 of the NEXT file (same corpus blob here).
-            pc = discrete_provider(cache, _ -> era5, [0.0, 1.0, 2.0];
-                                   format = "netcdf", time_dim = "time",
-                                   records_per_sample = 2)
+            pc = discrete_provider(
+                cache, _ -> era5, [0.0, 1.0, 2.0];
+                format = "netcdf", time_dim = "time",
+                records_per_sample = 2
+            )
             b = refresh(pc, 1.0)
             @test size(b["t2m"].data) == (2, 3, 3)
             @test b["t2m"].data[1, 1, 1] ≈ 282.6      # this file, record 1 (hour 1)
@@ -174,11 +186,15 @@ end
 
         @testset "records_per_sample guards" begin
             # only nothing, 1, or 2 is accepted
-            @test_throws ArgumentError discrete_provider(cache, era5, [0.0];
-                format = "netcdf", time_dim = "time", records_per_sample = 3)
+            @test_throws ArgumentError discrete_provider(
+                cache, era5, [0.0];
+                format = "netcdf", time_dim = "time", records_per_sample = 3
+            )
             # records_per_sample=2 needs a time_dim to bracket along
-            @test_throws ArgumentError discrete_provider(cache, era5, [0.0];
-                format = "netcdf", records_per_sample = 2)
+            @test_throws ArgumentError discrete_provider(
+                cache, era5, [0.0];
+                format = "netcdf", records_per_sample = 2
+            )
         end
     end
 
@@ -195,8 +211,10 @@ end
         # record 1 = 282.5, record 2 = 282.6).
         day1, day2 = era5, "https://data.earthsci.dev/era5/2018/11/20181110.nc"
         root = mktempdir()
-        src = joinpath(CORPUS, "cache", "v1", "blobs", cache_key(era5)[1:2],
-                       cache_key(era5) * ".nc")
+        src = joinpath(
+            CORPUS, "cache", "v1", "blobs", cache_key(era5)[1:2],
+            cache_key(era5) * ".nc"
+        )
         for u in (day1, day2)
             k = cache_key(u)
             d = joinpath(root, "v1", "blobs", k[1:2]); mkpath(d)
@@ -211,12 +229,16 @@ end
         # historical path: the Provider leaves the pushdown alone when the caller
         # has spelled a `records` of its own, and the reader then reads the record
         # axis whole and the Provider slices afterwards.
-        mkspy(rps) = discrete_provider(two, urls, times; format = "netcdf-recordspy",
-                                       time_dim = "time", records_per_sample = rps)
-        mkref(rps) = discrete_provider(two, urls, times; format = "netcdf",
-                                       time_dim = "time", records_per_sample = rps,
-                                       reader_kwargs = (records = nothing,))
-        rec(idxs) = Dict{String,Any}("dim" => "time", "indices" => idxs)
+        mkspy(rps) = discrete_provider(
+            two, urls, times; format = "netcdf-recordspy",
+            time_dim = "time", records_per_sample = rps
+        )
+        mkref(rps) = discrete_provider(
+            two, urls, times; format = "netcdf",
+            time_dim = "time", records_per_sample = rps,
+            reader_kwargs = (records = nothing,)
+        )
+        rec(idxs) = Dict{String, Any}("dim" => "time", "indices" => idxs)
         spy2, ref2 = mkspy(2), mkref(2)
         spy1, ref1 = mkspy(1), mkref(1)
 
@@ -272,11 +294,19 @@ end
             # additive for every other format.
             @test !(:records in reader_option_keys(FORMAT_REGISTRY["csv"]))
             @test :records in reader_option_keys(FORMAT_REGISTRY["netcdf"])
-            @test EarthSciIO._records_pushdown(discrete_provider(two, urls, times;
-                format = "netcdf", time_dim = "time", records_per_sample = 2))
+            @test EarthSciIO._records_pushdown(
+                discrete_provider(
+                    two, urls, times;
+                    format = "netcdf", time_dim = "time", records_per_sample = 2
+                )
+            )
             @test !EarthSciIO._records_pushdown(mkref(2))          # a baked one wins
-            @test !EarthSciIO._records_pushdown(discrete_provider(two, urls, times;
-                format = "netcdf", records_per_sample = nothing))  # no time_dim
+            @test !EarthSciIO._records_pushdown(
+                discrete_provider(
+                    two, urls, times;
+                    format = "netcdf", records_per_sample = nothing
+                )
+            )  # no time_dim
         end
 
         @testset "a baked `records` beside a time_dim is refused, not honoured" begin
@@ -290,10 +320,16 @@ end
             # expected to interpolate. Silently wrong numbers, refused at
             # construction (spec/registries.md §2.1).
             e = try
-                discrete_provider(two, urls, times; format = "netcdf",
-                                  time_dim = "time", records_per_sample = 2,
-                                  reader_kwargs = (records = Dict("dim" => "time",
-                                                                  "indices" => [0]),))
+                discrete_provider(
+                    two, urls, times; format = "netcdf",
+                    time_dim = "time", records_per_sample = 2,
+                    reader_kwargs = (
+                        records = Dict(
+                            "dim" => "time",
+                            "indices" => [0]
+                        ),
+                    )
+                )
                 nothing
             catch err
                 err
@@ -304,9 +340,15 @@ end
             # ...while `nothing` (the opt-out) and a provider with no record axis
             # of its own are both fine.
             @test mkref(2) isa Provider
-            @test discrete_provider(two, urls, times; format = "netcdf",
-                reader_kwargs = (records = Dict("dim" => "time",
-                                               "indices" => [0]),)) isa Provider
+            @test discrete_provider(
+                two, urls, times; format = "netcdf",
+                reader_kwargs = (
+                    records = Dict(
+                        "dim" => "time",
+                        "indices" => [0]
+                    ),
+                )
+            ) isa Provider
         end
     end
 
@@ -359,8 +401,11 @@ end
         end
         push_ref(c, urls, ts; kw...) = (
             discrete_provider(c, urls, ts; format = "netcdf", kw...),
-            discrete_provider(c, urls, ts; format = "netcdf",
-                              reader_kwargs = (records = nothing,), kw...))
+            discrete_provider(
+                c, urls, ts; format = "netcdf",
+                reader_kwargs = (records = nothing,), kw...
+            ),
+        )
         # Every sample of every cadence, at each `records_per_sample`, must be
         # byte-identical between the two paths.
         function assert_equivalent(c, urls, ticks, probes; kw...)
@@ -384,8 +429,10 @@ end
             urls = t -> t < 4.0 ? u4a : u4b
             ticks = collect(0.0:7.0)
             # ticks, half-steps between them, and past the end of the cadence
-            assert_equivalent(c, urls, ticks,
-                              vcat(ticks, [0.5, 3.5, 4.5, 6.5, 50.0]); time_dim = "time")
+            assert_equivalent(
+                c, urls, ticks,
+                vcat(ticks, [0.5, 3.5, 4.5, 6.5, 50.0]); time_dim = "time"
+            )
             # ...and the numbers themselves, so the comparison cannot pass with
             # BOTH paths mis-bracketed. Records are base+r; file 2 is base 200.
             p, _ = push_ref(c, urls, ticks; time_dim = "time", records_per_sample = 2)
@@ -397,11 +444,17 @@ end
             @test materialize(p, 7.0)["orog"].dims == ["latitude", "longitude"]
             # The interior bracket is a genuine SUBSET here: records 1,2 of four.
             empty!(RECORDS_PUSHED)
-            spy = discrete_provider(c, urls, ticks; format = "netcdf-recordspy",
-                                    time_dim = "time", records_per_sample = 2)
+            spy = discrete_provider(
+                c, urls, ticks; format = "netcdf-recordspy",
+                time_dim = "time", records_per_sample = 2
+            )
             @test materialize(spy, 1.0)["t2m"].data[:, 1, 1] == [102.0, 103.0]
-            @test RECORDS_PUSHED == [Dict{String,Any}("dim" => "time",
-                                                      "indices" => [1, 2])]
+            @test RECORDS_PUSHED == [
+                Dict{String, Any}(
+                    "dim" => "time",
+                    "indices" => [1, 2]
+                ),
+            ]
         end
 
         @testset "files of UNEQUAL length (3 then 4 records)" begin
@@ -449,8 +502,10 @@ end
             for rps in (1, 2)
                 p, r = push_ref(c, urls, ticks; time_dim = "time", records_per_sample = rps)
                 for t in [0.0, 3.0, 4.0, 7.0]
-                    @test same_native(materialize(p, t; select = sel),
-                                      materialize(r, t; select = sel))
+                    @test same_native(
+                        materialize(p, t; select = sel),
+                        materialize(r, t; select = sel)
+                    )
                 end
                 w = materialize(p, 3.0; select = sel)
                 @test w["longitude"].data == [-88.0, -90.0]     # order given, not sorted
@@ -472,8 +527,10 @@ end
         # (values repeat per file: record 1 = 282.5, record 2 = 282.6).
         day1, day2 = era5, "https://data.earthsci.dev/era5/2018/11/20181109.nc"
         root = mktempdir()
-        src = joinpath(CORPUS, "cache", "v1", "blobs", cache_key(era5)[1:2],
-                       cache_key(era5) * ".nc")
+        src = joinpath(
+            CORPUS, "cache", "v1", "blobs", cache_key(era5)[1:2],
+            cache_key(era5) * ".nc"
+        )
         for u in (day1, day2)
             k = cache_key(u)
             d = joinpath(root, "v1", "blobs", k[1:2]); mkpath(d)
@@ -493,8 +550,10 @@ end
         end
 
         @testset "bracketed (records_per_sample=2)" begin
-            p = discrete_provider(two, urls, times; format = "netcdf",
-                                  time_dim = "time", records_per_sample = 2)
+            p = discrete_provider(
+                two, urls, times; format = "netcdf",
+                time_dim = "time", records_per_sample = 2
+            )
             seam = refresh(p, 1.0)              # last record of file 1 -> first of file 2
             @test seam["t2m"].data[1, 1, 1] ≈ 282.6
             @test seam["t2m"].data[2, 1, 1] ≈ 282.5
@@ -521,9 +580,11 @@ end
     end
 
     @testset "CSV points provider + variable selection" begin
-        p = const_provider(cache, openaq; format = "csv", source_loader = "openaq",
-                           reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],),
-                           variables = ["value", "location_id"])
+        p = const_provider(
+            cache, openaq; format = "csv", source_loader = "openaq",
+            reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],),
+            variables = ["value", "location_id"]
+        )
         nds = materialize(p)
         @test Set(variable_names(nds)) == Set(["value", "location_id"])   # restricted
         @test nds["value"].data == [152.3, 168.7, 98.1, 110.4]
@@ -569,8 +630,10 @@ end
 
         # ...and an option outside that set fails the Provider, naming it.
         e = try
-            const_provider(cache, era5; format = "ff10",
-                           reader_kwargs = (; member_filter = "*egu*"))
+            const_provider(
+                cache, era5; format = "ff10",
+                reader_kwargs = (; member_filter = "*egu*")
+            )
             nothing
         catch err
             err
@@ -580,13 +643,19 @@ end
         @test occursin("member_glob", e.msg)       # says what it DOES take
 
         # the correctly-spelled option constructs fine (the check is not a blanket ban)
-        @test const_provider(cache, era5; format = "ff10",
-                             reader_kwargs = (; member_glob = "*egu*")) isa Provider
+        @test const_provider(
+            cache, era5; format = "ff10",
+            reader_kwargs = (; member_glob = "*egu*")
+        ) isa Provider
 
         # a store-backed reader is checked through `read_store`, not `read_native`
-        @test_throws ArgumentError const_provider(cache, era5; format = "zarr",
-                                                  reader_kwargs = (; selct = nothing))
-        @test const_provider(cache, era5; format = "zarr",
-                             reader_kwargs = (; select = nothing)) isa Provider
+        @test_throws ArgumentError const_provider(
+            cache, era5; format = "zarr",
+            reader_kwargs = (; selct = nothing)
+        )
+        @test const_provider(
+            cache, era5; format = "zarr",
+            reader_kwargs = (; select = nothing)
+        ) isa Provider
     end
 end

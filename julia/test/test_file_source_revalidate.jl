@@ -27,8 +27,10 @@ mutable struct CountingFile <: EarthSciIO.Transport
     n::Int
 end
 EarthSciIO.schemes(::CountingFile) = ["file"]
-function EarthSciIO.fetch!(t::CountingFile, url::AbstractString, dest::AbstractString;
-                           kwargs...)
+function EarthSciIO.fetch!(
+        t::CountingFile, url::AbstractString, dest::AbstractString;
+        kwargs...
+    )
     t.n += 1
     return EarthSciIO.fetch!(EarthSciIO.FileTransport(), url, dest; kwargs...)
 end
@@ -171,8 +173,10 @@ mutable struct MemTransport <: EarthSciIO.Transport
     n::Int
 end
 EarthSciIO.schemes(::MemTransport) = ["mem"]
-function EarthSciIO.fetch!(t::MemTransport, url::AbstractString, dest::AbstractString;
-                           kwargs...)
+function EarthSciIO.fetch!(
+        t::MemTransport, url::AbstractString, dest::AbstractString;
+        kwargs...
+    )
     t.n += 1
     write(dest, t.body)
     return EarthSciIO.FetchResult(:downloaded, nothing, nothing, filesize(dest))
@@ -258,8 +262,10 @@ end
     root = mktempdir()
     write(src, b"old")
 
-    stale = Cache(LocalStore(root); offline = false, verify = true,
-                  revalidate_file = false)
+    stale = Cache(
+        LocalStore(root); offline = false, verify = true,
+        revalidate_file = false
+    )
     @test read(fetch_blob(stale, url).path) == b"old"
     write(src, b"new-and-longer")
     @test read(fetch_blob(stale, url).path) == b"old"   # verify passes, happily
@@ -272,9 +278,11 @@ end
 # --- the predicate itself, row by row of the §4.1 table ----------------------
 
 @testset "file_source_is_current — the §4.1 table" begin
-    mfor(body) = Manifest("file:///corpus/x.csv", nothing, nothing,
-                          bytes2hex(sha256(body)), length(body),
-                          "2026-01-01T00:00:00Z", nothing, nothing)
+    mfor(body) = Manifest(
+        "file:///corpus/x.csv", nothing, nothing,
+        bytes2hex(sha256(body)), length(body),
+        "2026-01-01T00:00:00Z", nothing, nothing
+    )
     dir = mktempdir()
     src = joinpath(dir, "x.csv")
 
@@ -359,9 +367,11 @@ end
 end
 
 @testset "only a genuine absence reads as missing" begin
-    mfor(body) = Manifest("file:///corpus/x.csv", nothing, nothing,
-                          bytes2hex(sha256(body)), length(body),
-                          "2026-01-01T00:00:00Z", nothing, nothing)
+    mfor(body) = Manifest(
+        "file:///corpus/x.csv", nothing, nothing,
+        bytes2hex(sha256(body)), length(body),
+        "2026-01-01T00:00:00Z", nothing, nothing
+    )
     dir = mktempdir()
     body = b"corpus"
     present = joinpath(dir, "present.nc")
@@ -370,14 +380,14 @@ end
 
     @test EarthSciIO.file_source_state(present, m) === EarthSciIO.SOURCE_CURRENT
     @test EarthSciIO.file_source_state(joinpath(dir, "gone.nc"), m) ===
-          EarthSciIO.SOURCE_MISSING
+        EarthSciIO.SOURCE_MISSING
     # A directory standing where the corpus was is the report's "pointed at a
     # path that is not there any more" shape.
     @test EarthSciIO.file_source_state(dir, m) === EarthSciIO.SOURCE_MISSING
     # A path *under a file* is a broken path, not a deletion: this host may
     # simply have the wrong mount.
     @test EarthSciIO.file_source_state(joinpath(present, "deeper.nc"), m) ===
-          EarthSciIO.SOURCE_UNKNOWN
+        EarthSciIO.SOURCE_UNKNOWN
 
     if _can_be_locked_out()
         locked = joinpath(dir, "locked")
@@ -401,7 +411,7 @@ _whole_second_now() = floor(time())
 # Pin a file's mtime without touching its bytes (no utime in the public API).
 function _set_mtime(path, seconds)
     fh = Base.Filesystem.open(path, Base.Filesystem.JL_O_WRONLY)
-    try
+    return try
         Base.Filesystem.futime(fh, Float64(seconds), Float64(seconds))
     finally
         close(fh)
@@ -419,8 +429,10 @@ end
     write(src, body)
     # Safely in the past: a just-written file is "racy" and is never memoised.
     _set_mtime(src, _whole_second_now() - 60)
-    m = Manifest("file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
-                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+    m = Manifest(
+        "file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
+        length(body), "2026-01-01T00:00:00Z", nothing, nothing
+    )
 
     rev = EarthSciIO.SourceRevalidator()
     for _ in 1:25
@@ -434,8 +446,10 @@ end
     src = joinpath(dir, "x.csv")
     body = b"year,value\n2016,1.0\n"
     write(src, body)
-    m = Manifest("file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
-                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+    m = Manifest(
+        "file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
+        length(body), "2026-01-01T00:00:00Z", nothing, nothing
+    )
 
     rev = EarthSciIO.SourceRevalidator()
     @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
@@ -459,8 +473,10 @@ end
     tick = _whole_second_now()
     write(src, body)
     _set_mtime(src, tick)
-    m = Manifest("file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
-                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+    m = Manifest(
+        "file:///corpus/x.csv", nothing, nothing, bytes2hex(sha256(body)),
+        length(body), "2026-01-01T00:00:00Z", nothing, nothing
+    )
 
     rev = EarthSciIO.SourceRevalidator()
     @test EarthSciIO.source_state(rev, src, m) === EarthSciIO.SOURCE_CURRENT
@@ -478,8 +494,10 @@ end
     body = rand(UInt8, 4096)
     write(src, body)
     _set_mtime(src, _whole_second_now())
-    m = Manifest("file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
-                 length(body), "2026-01-01T00:00:00Z", nothing, nothing)
+    m = Manifest(
+        "file:///corpus/x.nc", nothing, nothing, bytes2hex(sha256(body)),
+        length(body), "2026-01-01T00:00:00Z", nothing, nothing
+    )
 
     rev = EarthSciIO.SourceRevalidator()
     for _ in 1:3

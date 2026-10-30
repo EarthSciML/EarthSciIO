@@ -66,8 +66,15 @@ def dump_store(base: str) -> Dict[str, Any]:
     for b in m.get("blobs", []):
         scope = "static" if b["scope"] == "static" else ("record", int(b["record"]))
         data = read_blob(base, scope, int(b["writer"]), b["key"])
-        blobs.append({"scope": b["scope"], "record": b["record"], "writer": int(b["writer"]),
-                      "key": b["key"], "hex": data.hex()})
+        blobs.append(
+            {
+                "scope": b["scope"],
+                "record": b["record"],
+                "writer": int(b["writer"]),
+                "key": b["key"],
+                "hex": data.hex(),
+            }
+        )
     return {
         "manifest_schema": m["schema"],
         "commit_seq": int(m["commit_seq"]) if v2 else None,
@@ -81,8 +88,10 @@ def dump_store(base: str) -> Dict[str, Any]:
 
 def main(argv: List[str]) -> int:
     if len(argv) != 5:
-        print("usage: read_v2_python.py SPEC.json STORES_ROOT WRITER_LABEL OUT_DUMP.json",
-              file=sys.stderr)
+        print(
+            "usage: read_v2_python.py SPEC.json STORES_ROOT WRITER_LABEL OUT_DUMP.json",
+            file=sys.stderr,
+        )
         return 2
     spec = json.loads(pathlib.Path(argv[1]).read_text())
     root = pathlib.Path(argv[2]).resolve()
@@ -93,8 +102,12 @@ def main(argv: List[str]) -> int:
             cases[case["name"]] = dump_store(str(store))
         except Exception as e:  # noqa: BLE001 — a missing case fails the crosscheck
             print(f"[python-reader] {case['name']}: {type(e).__name__}: {e}", file=sys.stderr)
-    out = {"schema": "earthsciio/write-v2-dump/v1", "reader": "python",
-           "writer": argv[3], "cases": cases}
+    out = {
+        "schema": "earthsciio/write-v2-dump/v1",
+        "reader": "python",
+        "writer": argv[3],
+        "cases": cases,
+    }
     pathlib.Path(argv[4]).write_text(json.dumps(out, indent=1) + "\n")
     print(f"[python-reader] dumped {len(cases)}/{len(spec['cases'])} cases from {root}")
     return 0

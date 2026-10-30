@@ -49,9 +49,7 @@ def test_coerce_auth_accepts_resolver_iterable_dict_and_none():
     assert coerce_auth(None).realms() == []
     single = coerce_auth(StaticHeaderAuth.bearer("rda", "t"))
     assert single.realms() == ["rda"]
-    many = coerce_auth(
-        [StaticHeaderAuth.bearer("a", "1"), StaticHeaderAuth.bearer("b", "2")]
-    )
+    many = coerce_auth([StaticHeaderAuth.bearer("a", "1"), StaticHeaderAuth.bearer("b", "2")])
     assert many.realms() == ["a", "b"]
     # an AuthRegistry passes through unchanged
     reg = AuthRegistry()

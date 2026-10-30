@@ -102,10 +102,7 @@ def _values_equal(got: List[Any], exp: List[Any], dtype: str) -> Optional[str]:
                 return f"int differs at [{i}]: {g} != {e}"
         else:
             if abs(float(g) - float(e)) > ATOL + RTOL * abs(float(e)):
-                return (
-                    f"value differs at [{i}]: {g} != {e} "
-                    f"(beyond atol={ATOL:g}, rtol={RTOL:g})"
-                )
+                return f"value differs at [{i}]: {g} != {e} (beyond atol={ATOL:g}, rtol={RTOL:g})"
     return None
 
 
@@ -176,8 +173,7 @@ def _fill_value(field: Dict[str, Any]) -> Optional[float]:
     return None if fv is None else float(fv)
 
 
-def _cmp_fill_value(a: Dict[str, Any], b: Dict[str, Any], label: str,
-                    bname: str) -> List[str]:
+def _cmp_fill_value(a: Dict[str, Any], b: Dict[str, Any], label: str, bname: str) -> List[str]:
     """Fill-value agreement. A track that DROPS a declared sentinel while another
     reports it is exactly the failure §3 warns about: invisible until a document
     reads a fill-bearing integer column and gets a real value where a missing one
@@ -303,7 +299,10 @@ def crosscheck(dump_paths: List[str]) -> int:
         for lang in skipped:
             reason = dumps[lang]["cases"][case_id].get("reason", "skipped")
             skip_notes.append(f"{lang} [{reason}]")
-        print(f"  decoders: {', '.join(decoded)}" + (f"   skipped: {', '.join(skip_notes)}" if skip_notes else ""))
+        print(
+            f"  decoders: {', '.join(decoded)}"
+            + (f"   skipped: {', '.join(skip_notes)}" if skip_notes else "")
+        )
 
         # Coverage: a track that registers a reader for this format MUST decode it.
         for lang in present:
@@ -369,8 +368,10 @@ def crosscheck(dump_paths: List[str]) -> int:
     if failures:
         print(f"RESULT: FAIL ({failures} problem(s))")
         return 1
-    print("RESULT: PASS — all decoded providers agree with the oracle and pairwise; "
-          "three-way equality demonstrated.")
+    print(
+        "RESULT: PASS — all decoded providers agree with the oracle and pairwise; "
+        "three-way equality demonstrated."
+    )
     return 0
 
 

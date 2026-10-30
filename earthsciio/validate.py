@@ -282,11 +282,7 @@ class SourceRevalidator:
 
 
 def _verdict(digest: str, manifest: Manifest) -> str:
-    return (
-        CURRENT
-        if digest.lower() == (manifest.sha256_content or "").lower()
-        else REPLACED
-    )
+    return CURRENT if digest.lower() == (manifest.sha256_content or "").lower() else REPLACED
 
 
 def file_source_state(source: os.PathLike, manifest: Manifest) -> str:

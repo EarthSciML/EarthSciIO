@@ -85,8 +85,16 @@ fn build_schema(spec: &Value) -> OutputSchema {
         .iter()
         .map(|c| {
             let name = c["name"].as_str().unwrap().to_string();
-            let values = if name == time_dim { time_vals.clone() } else { f64s(&c["values"]) };
-            WriteCoord { name, values, attrs: as_map(&c["attrs"]) }
+            let values = if name == time_dim {
+                time_vals.clone()
+            } else {
+                f64s(&c["values"])
+            };
+            WriteCoord {
+                name,
+                values,
+                attrs: as_map(&c["attrs"]),
+            }
         })
         .collect();
 
@@ -97,8 +105,12 @@ fn build_schema(spec: &Value) -> OutputSchema {
         .iter()
         .map(|v| {
             let name = v["name"].as_str().unwrap().to_string();
-            let vdims: Vec<String> =
-                v["dims"].as_array().unwrap().iter().map(|d| d.as_str().unwrap().to_string()).collect();
+            let vdims: Vec<String> = v["dims"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap().to_string())
+                .collect();
             assert_eq!(
                 vdims,
                 vec![time_dim.clone(), "lat".to_string(), "lon".to_string()],
@@ -113,7 +125,12 @@ fn build_schema(spec: &Value) -> OutputSchema {
                     }
                 }
             }
-            WriteVar { name, dims: vdims, attrs: as_map(&v["attrs"]), data }
+            WriteVar {
+                name,
+                dims: vdims,
+                attrs: as_map(&v["attrs"]),
+                data,
+            }
         })
         .collect();
 
@@ -131,7 +148,10 @@ fn build_schema(spec: &Value) -> OutputSchema {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let out_dir = PathBuf::from(args.get(1).expect("usage: conformance_write OUT_DIR [SPEC.json]"));
+    let out_dir = PathBuf::from(
+        args.get(1)
+            .expect("usage: conformance_write OUT_DIR [SPEC.json]"),
+    );
     let spec = read_json(&spec_path(args.get(2)));
 
     let schema = build_schema(&spec);

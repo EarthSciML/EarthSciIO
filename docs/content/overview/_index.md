@@ -38,17 +38,17 @@ transports and the `local` store into the three registries, alongside the
 ```python
 from earthsciio import Cache
 
-cache = Cache()                                   # root = $EARTHSCIDATADIR
+cache = Cache()  # root = $EARTHSCIDATADIR
 entry = cache.fetch(
     "https://data.earthsci.dev/era5/2018/11/20181108.nc",
     source_loader="era5",
-    mirrors=["https://mirror.example/era5/20181108.nc"],   # tried in order
+    mirrors=["https://mirror.example/era5/20181108.nc"],  # tried in order
 )
-entry.path        # local blob (fetched once, shared across processes + languages)
-entry.status      # "downloaded" | "hit" | "not_modified"
+entry.path  # local blob (fetched once, shared across processes + languages)
+entry.status  # "downloaded" | "hit" | "not_modified"
 
 # Offline (cache-only, hermetic) — never touches the network:
-hit = Cache(offline=True).fetch(...)              # raises CacheMiss on a miss
+hit = Cache(offline=True).fetch(...)  # raises CacheMiss on a miss
 ```
 
 `fetch` is content-addressed by `sha256(resolved_url)`, validates via
@@ -72,10 +72,14 @@ span), ported from `EarthSciData.jl`.
 from earthsciio import Cache, cds_auth, era5
 
 url = era5.era5_cds_url(
-    2018, 11, [8], ["temperature", "u_component_of_wind"], [1000, 850, 500],
-    era5.era5_area_from_bbox(-100.5, 39.0, -80.2, 45.7),   # [N, W, S, E]
+    2018,
+    11,
+    [8],
+    ["temperature", "u_component_of_wind"],
+    [1000, 850, 500],
+    era5.era5_area_from_bbox(-100.5, 39.0, -80.2, 45.7),  # [N, W, S, E]
 )
-cache = Cache(auth={"cds": cds_auth()})                    # key from ~/.cdsapirc / $CDSAPI_KEY
+cache = Cache(auth={"cds": cds_auth()})  # key from ~/.cdsapirc / $CDSAPI_KEY
 entry = cache.fetch(url, source_loader="era5", auth_realm="cds")
 ```
 

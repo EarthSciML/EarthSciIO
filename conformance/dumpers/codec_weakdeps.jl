@@ -34,11 +34,11 @@ function _load_weakdep!(name::AbstractString)
         return true
     catch err
         @warn """
-              cannot import codec weakdep $name; stores using it will fail.
-              Run this driver in the prepared conformance environment:
-                  julia --project="\$(julia conformance/dumpers/julia_env.jl)" ...
-              or just run conformance/run_write_conformance.sh.
-              """ active_project = Base.active_project() err
+        cannot import codec weakdep $name; stores using it will fail.
+        Run this driver in the prepared conformance environment:
+            julia --project="\$(julia conformance/dumpers/julia_env.jl)" ...
+        or just run conformance/run_write_conformance.sh.
+        """ active_project = Base.active_project() err
         return false
     end
 end

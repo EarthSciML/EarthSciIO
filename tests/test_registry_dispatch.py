@@ -211,9 +211,7 @@ def test_registered_stubs_appear_in_spec():
     """Conversely: no Python stub is registered that the spec doesn't declare."""
     spec = _spec_entries()
     for kind, reg in earthsciio.all_registries().items():
-        spec_stub_names = {
-            e["name"] for e in spec[kind]["entries"] if e.get("status") == "stub"
-        }
+        spec_stub_names = {e["name"] for e in spec[kind]["entries"] if e.get("status") == "stub"}
         for name in reg.names():
             if reg.is_stub(name):
                 assert name in spec_stub_names, f"{kind} stub {name!r} absent from spec"
@@ -335,18 +333,34 @@ def test_selection_capability_declared_for_python_is_the_readers_own():
 _MIXED = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc"
 _ZSTORE = "s3://earthsci-fixtures/geosfp-mini.zarr"
 _SELECTION_PROBES = {
-    ("netcdf", "axes"): (_MIXED, None,
-                         {"axes": ["all", {"slice": [1, 3]}, {"indices": [4, 0, 2]}]},
-                         "PS", (2, 2, 3)),
-    ("netcdf", "dims"): (_MIXED, None,
-                         {"dims": {"lat": {"slice": [1, 3]}, "lon": {"indices": [4, 0, 2]}}},
-                         "T", (2, 3, 2, 3)),
-    ("zarr", "axes"): (_ZSTORE, ["T3"],
-                       {"axes": ["all", {"slice": [2, 4]}, {"indices": [5, 3]}]},
-                       "T3", (3, 2, 2)),
-    ("zarr", "dims"): (_ZSTORE, ["T3", "PS2"],
-                       {"dims": {"lat": {"slice": [2, 4]}, "lon": {"indices": [5, 3]}}},
-                       "PS2", (2, 2)),
+    ("netcdf", "axes"): (
+        _MIXED,
+        None,
+        {"axes": ["all", {"slice": [1, 3]}, {"indices": [4, 0, 2]}]},
+        "PS",
+        (2, 2, 3),
+    ),
+    ("netcdf", "dims"): (
+        _MIXED,
+        None,
+        {"dims": {"lat": {"slice": [1, 3]}, "lon": {"indices": [4, 0, 2]}}},
+        "T",
+        (2, 3, 2, 3),
+    ),
+    ("zarr", "axes"): (
+        _ZSTORE,
+        ["T3"],
+        {"axes": ["all", {"slice": [2, 4]}, {"indices": [5, 3]}]},
+        "T3",
+        (3, 2, 2),
+    ),
+    ("zarr", "dims"): (
+        _ZSTORE,
+        ["T3", "PS2"],
+        {"dims": {"lat": {"slice": [2, 4]}, "lon": {"indices": [5, 3]}}},
+        "PS2",
+        (2, 2),
+    ),
 }
 
 
@@ -359,8 +373,10 @@ def test_each_selection_form_declared_for_python_decodes(fmt, form):
 
     url, variables, select, var, shape = _SELECTION_PROBES[(fmt, form)]
     cache = Cache(root=REPO_ROOT / "conformance" / "corpus" / "cache", offline=True)
-    p = Provider(DataSource("probe", fmt, url, variables=variables or (),
-                            reader_kwargs={"select": select}), cache)
+    p = Provider(
+        DataSource("probe", fmt, url, variables=variables or (), reader_kwargs={"select": select}),
+        cache,
+    )
     assert p.supports_selection
     assert p.materialize()[var].shape == shape
 

@@ -35,8 +35,8 @@ covers a 2-D `ps(time, lat, lon)`, a 3-D `t(time, lev, lat, lon)` and a staggere
 already names the run window `(start, end)` in the Python and Rust tracks, hence
 `DimWindow` in every binding.)"""
 struct DimWindow
-    dims::Vector{Pair{String,Any}}      # dim => wire selector, in the order given
-    function DimWindow(dims::Vector{Pair{String,Any}})
+    dims::Vector{Pair{String, Any}}      # dim => wire selector, in the order given
+    function DimWindow(dims::Vector{Pair{String, Any}})
         seen = Set{String}()
         for (d, _) in dims
             d in seen && throw(ArgumentError("DimWindow names dimension '$d' twice"))
@@ -47,13 +47,13 @@ struct DimWindow
 end
 
 DimWindow(ps::Pair...) =
-    DimWindow(Pair{String,Any}[String(d) => _wire_selector(String(d), s) for (d, s) in ps])
+    DimWindow(Pair{String, Any}[String(d) => _wire_selector(String(d), s) for (d, s) in ps])
 DimWindow(d::AbstractDict) = DimWindow(pairs(d)...)
 
 function Base.show(io::IO, w::DimWindow)
     print(io, "DimWindow(")
     join(io, (string(repr(d), " => ", repr(s)) for (d, s) in w.dims), ", ")
-    print(io, ")")
+    return print(io, ")")
 end
 
 Base.:(==)(a::DimWindow, b::DimWindow) = select_form(a) == select_form(b)
@@ -64,35 +64,56 @@ Base.hash(w::DimWindow, h::UInt) = hash(select_form(w), hash(DimWindow, h))
 function _wire_selector(dim::String, s)
     (s == "all" || s === :all) && return "all"
     if s isa Tuple
-        (length(s) in (2, 3) && all(x -> x isa Integer, s)) || throw(ArgumentError(
-            "DimWindow selector for '$dim': a tuple is a 0-based half-open slice " *
-            "(start, stop) or (start, stop, step) of integers, got $(repr(s))"))
-        length(s) == 3 && s[3] < 1 && throw(ArgumentError(
-            "DimWindow selector for '$dim': slice step must be >= 1, got $(s[3])"))
-        return Dict{String,Any}("slice" => Int[Int(x) for x in s])
+        (length(s) in (2, 3) && all(x -> x isa Integer, s)) || throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': a tuple is a 0-based half-open slice " *
+                    "(start, stop) or (start, stop, step) of integers, got $(repr(s))"
+            )
+        )
+        length(s) == 3 && s[3] < 1 && throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': slice step must be >= 1, got $(s[3])"
+            )
+        )
+        return Dict{String, Any}("slice" => Int[Int(x) for x in s])
     elseif s isa AbstractRange
-        throw(ArgumentError(
-            "DimWindow selector for '$dim': a Julia range ($(repr(s))) is ambiguous " *
-            "about its base and its end; a window is 0-based and half-open, so spell " *
-            "the slice as a tuple (start, stop) or list the indices"))
+        throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': a Julia range ($(repr(s))) is ambiguous " *
+                    "about its base and its end; a window is 0-based and half-open, so spell " *
+                    "the slice as a tuple (start, stop) or list the indices"
+            )
+        )
     elseif s isa AbstractVector
-        all(x -> x isa Integer, s) || throw(ArgumentError(
-            "DimWindow selector for '$dim': an index list must hold integers, got $(repr(s))"))
-        return Dict{String,Any}("indices" => Int[Int(x) for x in s])
+        all(x -> x isa Integer, s) || throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': an index list must hold integers, got $(repr(s))"
+            )
+        )
+        return Dict{String, Any}("indices" => Int[Int(x) for x in s])
     elseif s isa AbstractDict
         ks = Set(String(k) for k in keys(s))
-        (ks == Set(["slice"]) || ks == Set(["indices"])) || throw(ArgumentError(
-            "DimWindow selector for '$dim': a wire selector is {\"slice\": [...]} or " *
-            "{\"indices\": [...]}, got keys $(sort!(collect(ks)))"))
+        (ks == Set(["slice"]) || ks == Set(["indices"])) || throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': a wire selector is {\"slice\": [...]} or " *
+                    "{\"indices\": [...]}, got keys $(sort!(collect(ks)))"
+            )
+        )
         k = only(ks)
         v = Int[Int(x) for x in s[k]]
-        k == "slice" && !(length(v) in (2, 3)) && throw(ArgumentError(
-            "DimWindow selector for '$dim': a slice is [start, stop] or [start, stop, step]"))
-        return Dict{String,Any}(k => v)
+        k == "slice" && !(length(v) in (2, 3)) && throw(
+            ArgumentError(
+                "DimWindow selector for '$dim': a slice is [start, stop] or [start, stop, step]"
+            )
+        )
+        return Dict{String, Any}(k => v)
     end
-    throw(ArgumentError(
-        "DimWindow selector for '$dim' must be (start, stop[, step]), a vector of " *
-        "indices, \"all\", or a wire selector Dict; got $(repr(s))"))
+    throw(
+        ArgumentError(
+            "DimWindow selector for '$dim' must be (start, stop[, step]), a vector of " *
+                "indices, \"all\", or a wire selector Dict; got $(repr(s))"
+        )
+    )
 end
 
 """
@@ -105,22 +126,31 @@ reader's `select` option and `reader_kwargs[:select]` take (spec/prefetch.md
 named `dims` form, since a positional `axes` list cannot be applied by name and so
 is not a window."""
 select_form(w::DimWindow) =
-    Dict{String,Any}("dims" => Dict{String,Any}(d => s for (d, s) in w.dims))
+    Dict{String, Any}("dims" => Dict{String, Any}(d => s for (d, s) in w.dims))
 
 function select_form(sel::AbstractDict)
     ks = Set(String(k) for k in keys(sel))
-    ks == Set(["dims"]) || throw(ArgumentError(
-        "a window is the named form {\"dims\": {...}} (a DimWindow); got a select " *
-        "with keys $(sort!(collect(ks))) — a positional `axes` select cannot be " *
-        "applied by name, and a select carrying both is an error"))
+    ks == Set(["dims"]) || throw(
+        ArgumentError(
+            "a window is the named form {\"dims\": {...}} (a DimWindow); got a select " *
+                "with keys $(sort!(collect(ks))) — a positional `axes` select cannot be " *
+                "applied by name, and a select carrying both is an error"
+        )
+    )
     named = sel[first(k for k in keys(sel) if String(k) == "dims")]
-    named isa AbstractDict || throw(ArgumentError(
-        "select[\"dims\"] must map dimension names to selectors, got $(typeof(named))"))
+    named isa AbstractDict || throw(
+        ArgumentError(
+            "select[\"dims\"] must map dimension names to selectors, got $(typeof(named))"
+        )
+    )
     return select_form(DimWindow(named))
 end
 
-select_form(x) = throw(ArgumentError(
-    "a window is a DimWindow or a wire Dict(\"dims\" => ...), got $(typeof(x))"))
+select_form(x) = throw(
+    ArgumentError(
+        "a window is a DimWindow or a wire Dict(\"dims\" => ...), got $(typeof(x))"
+    )
+)
 
 # A DimWindow wherever a reader parses a `select` (e.g. baked straight into
 # `reader_kwargs[:select]`) means its wire form.
@@ -128,18 +158,27 @@ _select_form(w::DimWindow) = _select_form(select_form(w))
 
 # The checks `with_window` makes — before any I/O — and `sample_windows_at` and
 # `PrefetchGroup` repeat for every window (spec/prefetch.md §2.3).
-function _check_window(p::Provider, sel::Dict{String,Any})
-    get(p.reader_kwargs, :select, nothing) === nothing || throw(ArgumentError(
-        "this provider already bakes a `select` into its reader_kwargs; two windows " *
-        "do not compose — build the windowed provider from one without a select"))
-    supports_selection(p) || throw(ArgumentError(
-        "the '$(p.format)' reader does not support selection (`supports_selection` " *
-        "is false), so it cannot take a window"))
+function _check_window(p::Provider, sel::Dict{String, Any})
+    get(p.reader_kwargs, :select, nothing) === nothing || throw(
+        ArgumentError(
+            "this provider already bakes a `select` into its reader_kwargs; two windows " *
+                "do not compose — build the windowed provider from one without a select"
+        )
+    )
+    supports_selection(p) || throw(
+        ArgumentError(
+            "the '$(p.format)' reader does not support selection (`supports_selection` " *
+                "is false), so it cannot take a window"
+        )
+    )
     if p.time_dim !== nothing && haskey(sel["dims"], p.time_dim)
-        throw(ArgumentError(
-            "the window names '$(p.time_dim)', this provider's time_dim; records are " *
-            "the Provider's to choose (its cadence and records_per_sample), never a " *
-            "window's"))
+        throw(
+            ArgumentError(
+                "the window names '$(p.time_dim)', this provider's time_dim; records are " *
+                    "the Provider's to choose (its cadence and records_per_sample), never a " *
+                    "window's"
+            )
+        )
     end
     return nothing
 end
@@ -147,11 +186,13 @@ end
 # `p` with `reader_kwargs` replaced — sharing its cache, reader, resolver and
 # cadence. Bypasses the constructor's checks, which `p` already passed and which a
 # `select` cannot change.
-_with_reader_kwargs(p::Provider, kw::Dict{Symbol,Any}) =
-    Provider(p.cache, p.format, p.cadence, p.times, p.url_for, p.time_dim,
-             p.variables, kw, p.source_loader, p.auth_realm, p.records_per_sample)
+_with_reader_kwargs(p::Provider, kw::Dict{Symbol, Any}) =
+    Provider(
+    p.cache, p.format, p.cadence, p.times, p.url_for, p.time_dim,
+    p.variables, kw, p.source_loader, p.auth_realm, p.records_per_sample
+)
 
-function _with_select(p::Provider, sel::Dict{String,Any})
+function _with_select(p::Provider, sel::Dict{String, Any})
     kw = copy(p.reader_kwargs)
     kw[:select] = sel
     return _with_reader_kwargs(p, kw)
@@ -194,7 +235,7 @@ one pass and the integrator scatters them. The `with_window` preconditions apply
 to every window, before any I/O; an empty `windows` returns `NativeDataset[]`
 without fetching anything. The two-argument form is for a [`CONST`] provider."""
 function sample_windows_at(p::Provider, t::Real, windows)
-    sels = Dict{String,Any}[select_form(w) for w in windows]
+    sels = Dict{String, Any}[select_form(w) for w in windows]
     isempty(sels) && return NativeDataset[]
     foreach(s -> _check_window(p, s), sels)
     named = [_select_form(s)[2] for s in sels]
@@ -204,8 +245,11 @@ function sample_windows_at(p::Provider, t::Real, windows)
 end
 
 function sample_windows_at(p::Provider, windows)
-    p.cadence == CONST || throw(ArgumentError(
-        "a DISCRETE provider needs a time: sample_windows_at(p, t, windows)"))
+    p.cadence == CONST || throw(
+        ArgumentError(
+            "a DISCRETE provider needs a time: sample_windows_at(p, t, windows)"
+        )
+    )
     return sample_windows_at(p, 0.0, windows)
 end
 
@@ -227,20 +271,26 @@ end
 # is the whole dimension — so the reader checks each against the fields of the read
 # exactly as it would for that window alone: a window naming a dimension the read
 # lacks fails the union read with the reader's own error.
-function _window_union(named::Vector{Dict{String,Any}})
-    wire = Dict{String,Any}()
-    union_idx = Dict{String,Vector{Int}}()
+function _window_union(named::Vector{Dict{String, Any}})
+    wire = Dict{String, Any}()
+    union_idx = Dict{String, Vector{Int}}()
     for d in sort!(unique!([k for nm in named for k in keys(nm)]))
         if all(nm -> haskey(nm, d) && nm[d][1] !== :all, named)
-            idx = sort!(unique!(reduce(vcat, (_window_indices(nm[d]) for nm in named);
-                                       init = Int[])))
+            idx = sort!(
+                unique!(
+                    reduce(
+                        vcat, (_window_indices(nm[d]) for nm in named);
+                        init = Int[]
+                    )
+                )
+            )
             union_idx[d] = idx
-            wire[d] = Dict{String,Any}("indices" => idx)
+            wire[d] = Dict{String, Any}("indices" => idx)
         else
             wire[d] = "all"
         end
     end
-    return Dict{String,Any}("dims" => wire), union_idx
+    return Dict{String, Any}("dims" => wire), union_idx
 end
 
 # Window `nm` sliced out of the union read `u`. A dimension the union narrowed is
@@ -249,9 +299,11 @@ end
 # this window, so the reader's own checks run here against the decoded length,
 # which is the file length: a non-`"all"` time dimension is refused and every index
 # is bounds-checked by the same `_resolve_axis`, with the same error.
-function _slice_window(u::NativeDataset, nm::Dict{String,Any},
-                       union_idx::Dict{String,Vector{Int}})
-    pos = Dict{String,Vector{Int}}()                 # 1-based positions into `u`
+function _slice_window(
+        u::NativeDataset, nm::Dict{String, Any},
+        union_idx::Dict{String, Vector{Int}}
+    )
+    pos = Dict{String, Vector{Int}}()                 # 1-based positions into `u`
     for (d, ax) in nm
         ax[1] === :all && continue
         if haskey(union_idx, d)
@@ -259,20 +311,27 @@ function _slice_window(u::NativeDataset, nm::Dict{String,Any},
             pos[d] = Int[searchsortedfirst(ui, i) for i in _window_indices(ax)]
         else
             units = haskey(u.coords, d) ? get(u.coords[d].attrs, "units", nothing) : nothing
-            _is_time_dim_named(d, units) && throw(ArgumentError(
-                "select asks for a subset of the time dimension '$d'; record " *
-                "selection is the Provider's (it owns the cadence: " *
-                "`records_per_sample`), not the reader's — a time dimension may only " *
-                "be \"all\""))
+            _is_time_dim_named(d, units) && throw(
+                ArgumentError(
+                    "select asks for a subset of the time dimension '$d'; record " *
+                        "selection is the Provider's (it owns the cadence: " *
+                        "`records_per_sample`), not the reader's — a time dimension may only " *
+                        "be \"all\""
+                )
+            )
             pos[d] = _resolve_axis(ax, _dataset_dim_length(u, d)) .+ 1
         end
     end
     slice(f::NativeField) = any(d -> haskey(pos, d), f.dims) ?
-        NativeField(f.data[(haskey(pos, d) ? pos[d] : Colon() for d in f.dims)...],
-                    copy(f.dims), copy(f.attrs)) :
+        NativeField(
+            f.data[(haskey(pos, d) ? pos[d] : Colon() for d in f.dims)...],
+            copy(f.dims), copy(f.attrs)
+        ) :
         NativeField(copy(f.data), copy(f.dims), copy(f.attrs))
-    return NativeDataset(Dict{String,NativeField}(n => slice(f) for (n, f) in u.variables),
-                         Dict{String,NativeField}(n => slice(f) for (n, f) in u.coords))
+    return NativeDataset(
+        Dict{String, NativeField}(n => slice(f) for (n, f) in u.variables),
+        Dict{String, NativeField}(n => slice(f) for (n, f) in u.coords)
+    )
 end
 
 # The length of `nds` along dimension `d`, from whichever field carries it (the

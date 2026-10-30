@@ -25,31 +25,35 @@ import JSON
 include(joinpath(@__DIR__, "codec_weakdeps.jl"))
 load_codec_weakdeps!()
 
-const _DTYPE = Dict("float64" => Float64, "float32" => Float32,
-                    "int32" => Int32, "int64" => Int64)
+const _DTYPE = Dict(
+    "float64" => Float64, "float32" => Float32,
+    "int32" => Int32, "int64" => Int64
+)
 
 # Build the Julia `OutputSchema` from the language-neutral spec dict.
 function build_schema(spec)
     dims = [String(d[1]) => Int(d[2]) for d in spec["dims"]]
-    coords = Pair{String,Tuple{Vector,Dict{String,Any}}}[]
+    coords = Pair{String, Tuple{Vector, Dict{String, Any}}}[]
     for co in spec["coords"]
         vals = Float64[Float64(v) for v in co["values"]]
-        attrs = Dict{String,Any}(String(k) => v for (k, v) in co["attrs"])
+        attrs = Dict{String, Any}(String(k) => v for (k, v) in co["attrs"])
         push!(coords, String(co["name"]) => (vals, attrs))
     end
-    vars = Pair{String,OutputVar}[]
+    vars = Pair{String, OutputVar}[]
     for v in spec["vars"]
         vdims = String[String(d) for d in v["dims"]]
-        attrs = Dict{String,Any}(String(k) => x for (k, x) in v["attrs"])
+        attrs = Dict{String, Any}(String(k) => x for (k, x) in v["attrs"])
         push!(vars, String(v["name"]) => OutputVar(vdims, _DTYPE[String(v["dtype"])]; attrs = attrs))
     end
-    chunk = Dict{String,Int}(String(k) => Int(v) for (k, v) in spec["chunk_shape"])
-    shard = Dict{String,Int}(String(k) => Int(v) for (k, v) in spec["shard_shape"])
-    gattrs = Dict{String,Any}(String(k) => v for (k, v) in spec["group_attrs"])
-    return OutputSchema(; dims = dims, time_dim = String(spec["time_dim"]),
-                        vars = vars, chunk_shape = chunk, shard_shape = shard,
-                        coords = coords, profile = Symbol(spec["profile"]),
-                        attrs = gattrs, time_dtype = _DTYPE[String(get(spec, "time_dtype", "float64"))])
+    chunk = Dict{String, Int}(String(k) => Int(v) for (k, v) in spec["chunk_shape"])
+    shard = Dict{String, Int}(String(k) => Int(v) for (k, v) in spec["shard_shape"])
+    gattrs = Dict{String, Any}(String(k) => v for (k, v) in spec["group_attrs"])
+    return OutputSchema(;
+        dims = dims, time_dim = String(spec["time_dim"]),
+        vars = vars, chunk_shape = chunk, shard_shape = shard,
+        coords = coords, profile = Symbol(spec["profile"]),
+        attrs = gattrs, time_dtype = _DTYPE[String(get(spec, "time_dtype", "float64"))]
+    )
 end
 
 # One record's spatial slab for a var: the JSON block is [lat][lon]; the writer
@@ -72,14 +76,16 @@ function main()
     h = write_open!(w, nothing, out_dir, schema)
     for rec in spec["records"]
         t = Float64(rec["t"])
-        arrays = Dict{String,Any}(String(nm) => slab(block) for (nm, block) in rec["vars"])
+        arrays = Dict{String, Any}(String(nm) => slab(block) for (nm, block) in rec["vars"])
         write_record!(w, h, t, arrays)
     end
     m = write_close!(w, h)
     codec_id = get(m.codec, "id", "?")
-    println("[julia-writer] wrote $(m.n_records) records to $out_dir " *
+    return println(
+        "[julia-writer] wrote $(m.n_records) records to $out_dir " *
             "(profile=$(spec["profile"]), $(length(spec["vars"])) vars, " *
-            "codec=$(codec_id))")
+            "codec=$(codec_id))"
+    )
 end
 
 main()

@@ -129,9 +129,7 @@ def _netcdf_engine() -> Optional[str]:
     xarray's guess (which raises a clear error when no engine is installed)."""
     import importlib.util
 
-    for engine, module in (("netcdf4", "netCDF4"),
-                           ("h5netcdf", "h5netcdf"),
-                           ("scipy", "scipy")):
+    for engine, module in (("netcdf4", "netCDF4"), ("h5netcdf", "h5netcdf"), ("scipy", "scipy")):
         if importlib.util.find_spec(module) is not None:
             return engine
     return None
@@ -292,9 +290,7 @@ def _netcdf_merge_records(
         return isel
     if not isinstance(records, dict) or "dim" not in records or "indices" not in records:
         keys = sorted(map(str, records)) if isinstance(records, dict) else records
-        raise ValueError(
-            f'records must be a mapping with "dim" and "indices", got {keys!r}'
-        )
+        raise ValueError(f'records must be a mapping with "dim" and "indices", got {keys!r}')
     dim = str(records["dim"])
     if dim not in ds.sizes:
         raise ValueError(
@@ -334,7 +330,7 @@ def _netcdf_merge_records(
     if dim in out:
         raise ValueError(
             f"select and records both narrow dimension {dim!r}; a record "
-            'selection is the Provider\'s and a `select` must leave the record '
+            "selection is the Provider's and a `select` must leave the record "
             'axis "all"'
         )
     out[dim] = idxs
@@ -493,9 +489,12 @@ class NetCDFReader:
         want = {str(v) for v in variables} if variables else None
         out_vars: Dict[str, NativeField] = {}
         out_coords: Dict[str, NativeField] = {}
-        with _NETCDF_LOCK, xr.open_dataset(handle, decode_times=False,
-                                           mask_and_scale=True,
-                                           engine=_netcdf_engine()) as ds:
+        with (
+            _NETCDF_LOCK,
+            xr.open_dataset(
+                handle, decode_times=False, mask_and_scale=True, engine=_netcdf_engine()
+            ) as ds,
+        ):
             if want is not None:
                 missing = [v for v in want if v not in ds.data_vars]
                 if missing:
@@ -503,8 +502,7 @@ class NetCDFReader:
                         f"requested variables not in blob: {sorted(missing)}; "
                         f"present data variables: {sorted(map(str, ds.data_vars))}"
                     )
-            fields = [da for name, da in ds.data_vars.items()
-                      if want is None or str(name) in want]
+            fields = [da for name, da in ds.data_vars.items() if want is None or str(name) in want]
             fields.extend(ds.coords.values())
             isel = _netcdf_dim_selection(ds, select, fields)
             # RECORD PUSHDOWN: the cadence owner's chosen records of its own axis,
@@ -587,8 +585,7 @@ class CSVReader:
             missing = [v for v in want if v not in header]
             if missing:
                 raise KeyError(
-                    f"requested variables not in CSV: {sorted(missing)}; "
-                    f"present columns: {header}"
+                    f"requested variables not in CSV: {sorted(missing)}; present columns: {header}"
                 )
         numset = {str(c) for c in numeric_columns} if numeric_columns is not None else None
 
@@ -808,8 +805,7 @@ class GeoTIFFReader:
             names = [str(n) for n in band_names]
             if len(names) != nbands:
                 raise ValueError(
-                    f"band_names has {len(names)} entries but the GeoTIFF has "
-                    f"{nbands} band(s)"
+                    f"band_names has {len(names)} entries but the GeoTIFF has {nbands} band(s)"
                 )
         else:
             names = [f"Band{i + 1}" for i in range(nbands)]
@@ -820,8 +816,7 @@ class GeoTIFFReader:
             missing = [v for v in want if v not in names]
             if missing:
                 raise KeyError(
-                    f"requested bands not in GeoTIFF: {sorted(missing)}; "
-                    f"present bands: {names}"
+                    f"requested bands not in GeoTIFF: {sorted(missing)}; present bands: {names}"
                 )
 
         out_vars: Dict[str, NativeField] = {}
@@ -850,25 +845,82 @@ class GeoTIFFReader:
 # --------------------------------------------------------------------------- #
 
 FF10_POINT_COLUMNS = [
-    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
-    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
-    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
-    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
-    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
-    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
-    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
-    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
-    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
-    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
-    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
-    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
-    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
-    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
-    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
-    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COUNTRY_CD",
+    "REGION_CD",
+    "TRIBAL_CODE",
+    "FACILITY_ID",
+    "UNIT_ID",
+    "REL_POINT_ID",
+    "PROCESS_ID",
+    "AGY_FACILITY_ID",
+    "AGY_UNIT_ID",
+    "AGY_REL_POINT_ID",
+    "AGY_PROCESS_ID",
+    "SCC",
+    "POLID",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "FACILITY_NAME",
+    "ERPTYPE",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "NAICS",
+    "LONGITUDE",
+    "LATITUDE",
+    "LL_DATUM",
+    "HORIZ_COLL_MTHD",
+    "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS",
+    "REG_CODES",
+    "FAC_SOURCE_TYPE",
+    "UNIT_TYPE_CODE",
+    "CONTROL_IDS",
+    "CONTROL_MEASURES",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "SUBMITTER_FAC_ID",
+    "CALC_METHOD",
+    "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE",
+    "ORIS_FACILITY_CODE",
+    "ORIS_BOILER_ID",
+    "IPM_YN",
+    "CALC_YEAR",
+    "DATE_UPDATED",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ZIPCODE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
     "COMMENT",
 ]
 
@@ -876,17 +928,52 @@ FF10_POINT_COLUMNS = [
 #: other column (ids/codes/free-text/temporal tokens) stays ``str`` so leading-
 #: zero codes (REGION_CD ``"01001"``, ZIPCODE ``"00000"``, SCC, POLID) and dates
 #: (DATE_UPDATED/CALC_YEAR) never become floats. Overridable via ``numeric_columns``.
-FF10_POINT_NUMERIC = frozenset({
-    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
-    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
-    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
-    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
-    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
-    "NOV_PCTRED", "DEC_PCTRED",
-})
+FF10_POINT_NUMERIC = frozenset(
+    {
+        "ANN_VALUE",
+        "ANN_PCT_RED",
+        "STKHGT",
+        "STKDIAM",
+        "STKTEMP",
+        "STKFLOW",
+        "STKVEL",
+        "LONGITUDE",
+        "LATITUDE",
+        "DESIGN_CAPACITY",
+        "CURRENT_COST",
+        "CUMULATIVE_COST",
+        "PROJECTION_FACTOR",
+        "FUG_HEIGHT",
+        "FUG_WIDTH_XDIM",
+        "FUG_LENGTH_YDIM",
+        "FUG_ANGLE",
+        "ANNUAL_AVG_HOURS_PER_YEAR",
+        "JAN_VALUE",
+        "FEB_VALUE",
+        "MAR_VALUE",
+        "APR_VALUE",
+        "MAY_VALUE",
+        "JUN_VALUE",
+        "JUL_VALUE",
+        "AUG_VALUE",
+        "SEP_VALUE",
+        "OCT_VALUE",
+        "NOV_VALUE",
+        "DEC_VALUE",
+        "JAN_PCTRED",
+        "FEB_PCTRED",
+        "MAR_PCTRED",
+        "APR_PCTRED",
+        "MAY_PCTRED",
+        "JUN_PCTRED",
+        "JUL_PCTRED",
+        "AUG_PCTRED",
+        "SEP_PCTRED",
+        "OCT_PCTRED",
+        "NOV_PCTRED",
+        "DEC_PCTRED",
+    }
+)
 
 
 def _ff10_select_members(
@@ -910,8 +997,7 @@ def _ff10_select_members(
         missing = [m for m in members if m not in names]
         if missing:
             raise KeyError(
-                f"zip members {sorted(missing)!r} not found in archive; "
-                f"members: {sorted(names)!r}"
+                f"zip members {sorted(missing)!r} not found in archive; members: {sorted(names)!r}"
             )
         selected.update(str(m) for m in members)
     if member_glob is not None:
@@ -936,8 +1022,7 @@ def _ff10_skip_header(data_lines: List[str], delimiter: str) -> List[str]:
     """
     if not data_lines:
         raise ValueError(
-            "skip_header_row: no non-comment lines — the asserted header row "
-            "is missing"
+            "skip_header_row: no non-comment lines — the asserted header row is missing"
         )
     first_field = data_lines[0].split(delimiter, 1)[0].strip().lower()
     if first_field != "country_cd":
@@ -1033,9 +1118,7 @@ class FF10Reader:
             )
         if members is not None or member_glob is not None:
             if member is not None:
-                raise ValueError(
-                    "`member` is mutually exclusive with `members`/`member_glob`"
-                )
+                raise ValueError("`member` is mutually exclusive with `members`/`member_glob`")
             with _zipfile.ZipFile(handle) as zf:
                 selected = _ff10_select_members(zf.namelist(), members, member_glob)
                 texts = [zf.read(n).decode("utf-8") for n in selected]
@@ -1052,23 +1135,17 @@ class FF10Reader:
         rows: List[List[str]] = []
         for text in texts:
             data_lines = [
-                ln for ln in text.splitlines()
-                if ln.strip() and not ln.lstrip().startswith(comment)
+                ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith(comment)
             ]
             if skip_header_row:
                 data_lines = _ff10_skip_header(data_lines, delimiter)
             member_rows = list(_csv.reader(data_lines, delimiter=delimiter))
             for r in member_rows:
                 if len(r) != ncol:
-                    raise ValueError(
-                        f"FF10 point row has {len(r)} fields, expected {ncol}: {r!r}"
-                    )
+                    raise ValueError(f"FF10 point row has {len(r)} fields, expected {ncol}: {r!r}")
             rows.extend(member_rows)
 
-        numset = (
-            set(numeric_columns) if numeric_columns is not None
-            else set(FF10_POINT_NUMERIC)
-        )
+        numset = set(numeric_columns) if numeric_columns is not None else set(FF10_POINT_NUMERIC)
         want = {str(v) for v in variables} if variables else None
         if want is not None:
             missing = [v for v in want if v not in FF10_POINT_COLUMNS]
@@ -1100,17 +1177,36 @@ class FF10Reader:
 #: name is carried in the geometry field's ``attrs`` so ESS can tell a polygon
 #: layer from a polyline one without re-sniffing the blob.
 SHAPE_TYPE_NAMES: Dict[int, str] = {
-    0: "Null", 1: "Point", 3: "PolyLine", 5: "Polygon", 8: "MultiPoint",
-    11: "PointZ", 13: "PolyLineZ", 15: "PolygonZ", 18: "MultiPointZ",
-    21: "PointM", 23: "PolyLineM", 25: "PolygonM", 28: "MultiPointM",
+    0: "Null",
+    1: "Point",
+    3: "PolyLine",
+    5: "Polygon",
+    8: "MultiPoint",
+    11: "PointZ",
+    13: "PolyLineZ",
+    15: "PolygonZ",
+    18: "MultiPointZ",
+    21: "PointM",
+    23: "PolyLineM",
+    25: "PolygonM",
+    28: "MultiPointM",
     31: "MultiPatch",
 }
 
 #: Field names the reader itself produces. A `.dbf` column of the same name is a
 #: collision the reader refuses rather than silently shadowing either side.
 SHAPEFILE_RESERVED = (
-    "geometry", "n_vertices", "shape_index", "part_index", "n_parts",
-    "xmin", "ymin", "xmax", "ymax", "shape_type", "crs_wkt",
+    "geometry",
+    "n_vertices",
+    "shape_index",
+    "part_index",
+    "n_parts",
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "shape_type",
+    "crs_wkt",
 )
 
 
@@ -1202,7 +1298,7 @@ def _shp_parts(shape: Any) -> List[List[Any]]:
     if not offs:
         return [pts]
     bounds = offs + [len(pts)]
-    return [pts[bounds[k]:bounds[k + 1]] for k in range(len(offs))]
+    return [pts[bounds[k] : bounds[k + 1]] for k in range(len(offs))]
 
 
 def _shp_bbox(shape: Any) -> Tuple[float, float, float, float]:
@@ -1341,9 +1437,7 @@ class ShapefileReader:
                 records = [list(r) for r in rdr.iterRecords()]
         if "dbf" in blobs:
             if len(deleted) != len(shapes):
-                raise ValueError(
-                    f"shapefile has {len(shapes)} shapes but {len(deleted)} .dbf rows"
-                )
+                raise ValueError(f"shapefile has {len(shapes)} shapes but {len(deleted)} .dbf rows")
             live = len(shapes) - sum(deleted)
             if len(records) != live:
                 raise ValueError(
@@ -1397,25 +1491,29 @@ class ShapefileReader:
                 geom[i, v, 0] = float(pt[0])
                 geom[i, v, 1] = float(pt[1])
             if ring:  # right-pad by repeating the final vertex (esm-spec §8.6.1)
-                geom[i, len(ring):, 0] = float(ring[-1][0])
-                geom[i, len(ring):, 1] = float(ring[-1][1])
+                geom[i, len(ring) :, 0] = float(ring[-1][0])
+                geom[i, len(ring) :, 1] = float(ring[-1][1])
 
         out: Dict[str, NativeField] = {
             "geometry": NativeField(geom, ("index", "vertex", "xy"), {}),
             "shape_type": NativeField(
-                [SHAPE_TYPE_NAMES.get(shape_type, str(shape_type))], ("meta",), {}),
+                [SHAPE_TYPE_NAMES.get(shape_type, str(shape_type))], ("meta",), {}
+            ),
             "n_vertices": NativeField(
-                np.array([len(r) for r in rings], dtype="int64"), ("index",), {}),
+                np.array([len(r) for r in rings], dtype="int64"), ("index",), {}
+            ),
             "shape_index": NativeField(np.array(shape_ix, dtype="int64"), ("index",), {}),
             "part_index": NativeField(np.array(part_ix, dtype="int64"), ("index",), {}),
             "n_parts": NativeField(np.array(nparts, dtype="int64"), ("index",), {}),
         }
         if "prj" in blobs:
             out["crs_wkt"] = NativeField(
-                [blobs["prj"].decode("utf-8", "replace").strip()], ("meta",), {})
+                [blobs["prj"].decode("utf-8", "replace").strip()], ("meta",), {}
+            )
         for k, name in enumerate(("xmin", "ymin", "xmax", "ymax")):
             out[name] = NativeField(
-                np.array([b[k] for b in boxes], dtype="float64"), ("index",), {})
+                np.array([b[k] for b in boxes], dtype="float64"), ("index",), {}
+            )
 
         numset = {str(c) for c in numeric_columns} if numeric_columns else set()
         unknown = sorted(numset - set(columns))
@@ -1426,11 +1524,12 @@ class ShapefileReader:
             kind = str(types[name])
             if name in numset or kind in ("N", "F", "O", "I", "+"):
                 out[name] = NativeField(
-                    np.array([_shp_float(v) for v in vals], dtype="float64"),
-                    ("index",), {})
+                    np.array([_shp_float(v) for v in vals], dtype="float64"), ("index",), {}
+                )
             elif kind == "L":
                 out[name] = NativeField(
-                    np.array([bool(v) for v in vals], dtype="bool"), ("index",), {})
+                    np.array([bool(v) for v in vals], dtype="bool"), ("index",), {}
+                )
             else:
                 out[name] = NativeField([_shp_text(v) for v in vals], ("index",), {})
 
@@ -1439,8 +1538,7 @@ class ShapefileReader:
             missing = sorted(w for w in want if w not in out)
             if missing:
                 raise KeyError(
-                    f"requested variables not in the shapefile: {missing}; "
-                    f"present: {sorted(out)}"
+                    f"requested variables not in the shapefile: {missing}; present: {sorted(out)}"
                 )
             out = {k: v for k, v in out.items() if k in want}
         return NativeDataset(out, {})
@@ -1507,8 +1605,11 @@ def _pq_target_dtype(typ: Any, forced_float: bool) -> Optional[str]:
     # The narrow/wide integer split is the NetCDF reader's, VERBATIM — restated
     # so a MOVES `int32` ID column and a CF `int32` time axis cannot drift apart.
     if (
-        pt.is_int8(typ) or pt.is_int16(typ) or pt.is_int32(typ)
-        or pt.is_uint8(typ) or pt.is_uint16(typ)
+        pt.is_int8(typ)
+        or pt.is_int16(typ)
+        or pt.is_int32(typ)
+        or pt.is_uint8(typ)
+        or pt.is_uint16(typ)
     ):
         return "float64" if forced_float else "int32"
     if pt.is_int64(typ) or pt.is_uint32(typ) or pt.is_uint64(typ):
@@ -1524,10 +1625,7 @@ def _pq_target_dtype(typ: Any, forced_float: bool) -> Optional[str]:
     # Temporal columns ride as their RAW stored integer (see `_pq_cells`).
     if pt.is_date32(typ) or pt.is_time32(typ):
         return "float64" if forced_float else "int32"
-    if (
-        pt.is_date64(typ) or pt.is_time64(typ)
-        or pt.is_timestamp(typ) or pt.is_duration(typ)
-    ):
+    if pt.is_date64(typ) or pt.is_time64(typ) or pt.is_timestamp(typ) or pt.is_duration(typ):
         return "float64" if forced_float else "int64"
     return None
 
@@ -1561,10 +1659,7 @@ def _pq_cells(col: Any) -> Tuple[List[Any], Any]:
         typ = col.type
     if pt.is_date32(typ) or pt.is_time32(typ):
         return col.cast(pa.int32()).to_pylist(), typ
-    if (
-        pt.is_date64(typ) or pt.is_time64(typ)
-        or pt.is_timestamp(typ) or pt.is_duration(typ)
-    ):
+    if pt.is_date64(typ) or pt.is_time64(typ) or pt.is_timestamp(typ) or pt.is_duration(typ):
         return col.cast(pa.int64()).to_pylist(), typ
     return col.to_pylist(), typ
 
@@ -1631,22 +1726,20 @@ def _pq_field(
             # Unscaled integer ÷ 10^scale, in double — the arrow-rs reader's own
             # arithmetic, so the two tracks round identically.
             scale = typ.scale
-            div = 10.0 ** scale
+            div = 10.0**scale
             values = [
                 np.nan if c is None else float(int(c.scaleb(scale, _PQ_DECIMAL_CTX))) / div
                 for c in cells
             ]
         elif pt.is_string(typ) or pt.is_large_string(typ) or pt.is_string_view(typ):
             values = [
-                np.nan if c is None else _pq_float_text(name, i, c)
-                for i, c in enumerate(cells)
+                np.nan if c is None else _pq_float_text(name, i, c) for i, c in enumerate(cells)
             ]
         elif pt.is_boolean(typ):
             for i, c in enumerate(cells):
                 if c is not None:
                     raise ValueError(
-                        f"parquet column {name!r} row {i}: a boolean cell cannot be "
-                        f"read as float64"
+                        f"parquet column {name!r} row {i}: a boolean cell cannot be read as float64"
                     )
             values = [np.nan] * len(cells)
         else:
@@ -1654,7 +1747,7 @@ def _pq_field(
         return NativeField(np.array(values, dtype="float64"), ("index",), {})
 
     if dtype in ("int32", "int64"):
-        lo, hi = (-(2 ** 31), 2 ** 31 - 1) if dtype == "int32" else (-(2 ** 63), 2 ** 63 - 1)
+        lo, hi = (-(2**31), 2**31 - 1) if dtype == "int32" else (-(2**63), 2**63 - 1)
         values = []
         for i, c in enumerate(cells):
             if c is None:
@@ -1823,8 +1916,7 @@ class ParquetReader:
             missing = sorted({w for w in wanted if w not in present})
             if missing:
                 raise KeyError(
-                    f"requested variables not in the parquet file: {missing}; "
-                    f"present: {present}"
+                    f"requested variables not in the parquet file: {missing}; present: {present}"
                 )
         want = set(wanted)
         forced = {str(c) for c in float_columns} if float_columns else set()
@@ -1917,9 +2009,9 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         extensions=list(ShapefileReader.EXTENSIONS),
         requires=ShapefileReader.REQUIRES,
         notes="ESRI shapefile via pyshp; one row per PART with .dbf attributes "
-              "replicated; `geometry` [index, vertex, xy] right-padded by repeating "
-              "the final vertex; the record's stored bbox as xmin/ymin/xmax/ymax; "
-              ".prj WKT carried as attrs.crs_wkt; `.shp` inside a zip via `member`.",
+        "replicated; `geometry` [index, vertex, xy] right-padded by repeating "
+        "the final vertex; the record's stored bbox as xmin/ymin/xmax/ymax; "
+        ".prj WKT carried as attrs.crs_wkt; `.shp` inside a zip via `member`.",
     )
     reg.register(
         ParquetReader.NAME,
@@ -1928,15 +2020,15 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(ParquetReader.EXTENSIONS),
         notes="Apache Parquet as a FLAT TABLE via pyarrow; every column a rank-1 field "
-              "over `index`, no coords; dtype a total function of the Arrow type (the "
-              "netcdf reader's narrow/wide integer split, verbatim); temporal columns "
-              "carried as their RAW integer (unit/timezone unapplied); Dictionary(_,V) "
-              "expanded to V; nested/binary columns are not fields (an error when named); "
-              "a zero-row file is typed, not absent. Null policy: float->NaN, "
-              "integer/string/boolean an error unless `null_int` (reported back as "
-              "attrs.fill_value) / `null_string` is declared. `float_columns` forces "
-              "float64 and parses fixed-decimal TEXT (blank->NaN). `variables` pushes "
-              "down as a column projection.",
+        "over `index`, no coords; dtype a total function of the Arrow type (the "
+        "netcdf reader's narrow/wide integer split, verbatim); temporal columns "
+        "carried as their RAW integer (unit/timezone unapplied); Dictionary(_,V) "
+        "expanded to V; nested/binary columns are not fields (an error when named); "
+        "a zero-row file is typed, not absent. Null policy: float->NaN, "
+        "integer/string/boolean an error unless `null_int` (reported back as "
+        "attrs.fill_value) / `null_string` is declared. `float_columns` forces "
+        "float64 and parses fixed-decimal TEXT (blank->NaN). `variables` pushes "
+        "down as a column projection.",
     )
     reg.register(
         FF10Reader.NAME,
@@ -1945,7 +2037,7 @@ def register_format_readers(registry: Optional[Registry] = None) -> None:
         status="active",
         extensions=list(FF10Reader.EXTENSIONS),
         notes="FF10 point long-format; '#' header skipped; fixed 77-col schema; "
-              "numeric->float64 (empty->NaN), ids/codes/text->string; zip member via "
-              "`member`; multi-member via `members`/`member_glob` (sorted-name concat); "
-              "`skip_header_row` drops one asserted `country_cd` header line per member.",
+        "numeric->float64 (empty->NaN), ids/codes/text->string; zip member via "
+        "`member`; multi-member via `members`/`member_glob` (sorted-name concat); "
+        "`skip_header_row` drops one asserted `country_cd` header line per member.",
     )

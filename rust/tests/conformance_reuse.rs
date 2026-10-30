@@ -53,15 +53,25 @@ fn reuses_python_cached_corpus_offline() {
         if let Some(objects) = case.get("objects").and_then(|v| v.as_array()) {
             for o in objects {
                 let ourl = o["url"].as_str().unwrap();
-                assert_eq!(cache_key(ourl), o["cache_key"].as_str().unwrap(), "obj key {ourl}");
+                assert_eq!(
+                    cache_key(ourl),
+                    o["cache_key"].as_str().unwrap(),
+                    "obj key {ourl}"
+                );
                 let blob = cache
                     .fetch(&FetchRequest::new(ourl))
                     .unwrap_or_else(|e| panic!("offline reuse failed for {ourl}: {e}"));
                 assert_eq!(blob.key, o["cache_key"].as_str().unwrap());
-                assert_eq!(blob.manifest.sha256_content, o["content_sha256"].as_str().unwrap());
+                assert_eq!(
+                    blob.manifest.sha256_content,
+                    o["content_sha256"].as_str().unwrap()
+                );
                 assert_eq!(blob.manifest.bytes, o["bytes"].as_u64().unwrap());
                 assert_eq!(blob.manifest.url, ourl);
-                assert_eq!(sha256_file(&blob.path).unwrap(), o["content_sha256"].as_str().unwrap());
+                assert_eq!(
+                    sha256_file(&blob.path).unwrap(),
+                    o["content_sha256"].as_str().unwrap()
+                );
             }
             continue;
         }

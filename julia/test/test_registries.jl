@@ -27,7 +27,7 @@ end
     @test status_of(TRANSPORT_REGISTRY, "s3") == :active
     @test EarthSciIO.schemes(TRANSPORT_REGISTRY["http"]) == ["http", "https"]
     @test EarthSciIO.s3_https_url("s3://bucket/era5/2018/20181108.nc") ==
-          "https://bucket.s3.us-east-2.amazonaws.com/era5/2018/20181108.nc"
+        "https://bucket.s3.us-east-2.amazonaws.com/era5/2018/20181108.nc"
     @test_throws ErrorException EarthSciIO.s3_https_url("https://not-s3/x")
 end
 
@@ -74,8 +74,10 @@ end
         for opt in entry["reader_options"]
             @test issubset(Set(opt["tracks"]), Set(["python", "julia", "rust"]))
         end
-        want = Set(Symbol(o["name"]) for o in entry["reader_options"]
-                   if "julia" in o["tracks"])
+        want = Set(
+            Symbol(o["name"]) for o in entry["reader_options"]
+                if "julia" in o["tracks"]
+        )
         have = Set(reader_option_keys(FORMAT_REGISTRY[entry["name"]]))
         @test want == have
     end
@@ -85,13 +87,13 @@ end
 
     # A declared metadata query must be ANSWERED here, not inherited from the
     # "I cannot answer that" fallback every reader gets for free.
-    generic = which(EarthSciIO.dim_length, Tuple{Nothing,String,String})
+    generic = which(EarthSciIO.dim_length, Tuple{Nothing, String, String})
     for entry in entries
         for q in get(entry, "metadata_queries", Any[])
             "julia" in q["tracks"] || continue
             @test q["name"] == "dim_length"     # the only one this shape describes
             reader = FORMAT_REGISTRY[entry["name"]]
-            m = which(EarthSciIO.dim_length, Tuple{typeof(reader),String,String})
+            m = which(EarthSciIO.dim_length, Tuple{typeof(reader), String, String})
             @test m !== generic
         end
     end
@@ -104,7 +106,7 @@ end
     records = only(o for o in netcdf["reader_options"] if o["name"] == "records")
     @test Set(records["tracks"]) == Set(["python", "julia", "rust"])
     @test records["used_by_provider"] ==
-          Dict("julia" => true, "python" => false, "rust" => false)
+        Dict("julia" => true, "python" => false, "rust" => false)
     # The `len -> indices` callable is Julia's alone, and the file says so.
     @test collect(keys(records["extensions"])) == ["julia"]
 end
@@ -123,8 +125,10 @@ end
 @testset "registries.json — the selection forms it claims for Julia are Julia's" begin
     spec = JSON.parsefile(joinpath(@__DIR__, "..", "..", "spec", "registries.json"))
     corpus = normpath(joinpath(@__DIR__, "..", "..", "conformance", "corpus"))
-    cases = [JSON.parsefile(joinpath(corpus, e["file"]))
-             for e in JSON.parsefile(joinpath(corpus, "cases.json"))["cases"]]
+    cases = [
+        JSON.parsefile(joinpath(corpus, e["file"]))
+            for e in JSON.parsefile(joinpath(corpus, "cases.json"))["cases"]
+    ]
     cache = Cache(LocalStore(joinpath(corpus, "cache")); offline = true, verify = true)
     claimed = String[]
     for entry in spec["registries"]["format"]["entries"]
@@ -145,14 +149,18 @@ end
             "julia" in f["tracks"] || continue
             form = String(f["form"])
             push!(claimed, "$name:$form")
-            pinned = [c for c in cases
-                      if c["format"] == name && get(c, "select", nothing) isa AbstractDict &&
-                         haskey(c["select"], form)]
+            pinned = [
+                c for c in cases
+                    if c["format"] == name && get(c, "select", nothing) isa AbstractDict &&
+                    haskey(c["select"], form)
+            ]
             @test !isempty(pinned)               # a claim the corpus actually exercises
             for c in pinned
                 nds = store_backed(reader) ?
-                    read_store(reader, cache, c["resolved_url"];
-                               variables = String.(c["variables"]), select = c["select"]) :
+                    read_store(
+                        reader, cache, c["resolved_url"];
+                        variables = String.(c["variables"]), select = c["select"]
+                    ) :
                     read_native(reader, joinpath(corpus, c["blob_path"]); select = c["select"])
                 for (v, want) in c["expected"]["variables"]
                     @test nds[v].dims == want["dims"]

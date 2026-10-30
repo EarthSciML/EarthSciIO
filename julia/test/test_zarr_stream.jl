@@ -13,7 +13,7 @@ import JSON
 
 const SP = (P = [3, 5, 11, 17, 23],)
 const NLAT, NLON = 6, 6          # lat shards are 2 long, lon shards 4: lon's last
-                                 # block [4, 6) ends at the array end
+# block [4, 6) ends at the array end
 const DT = 3600.0
 
 function _sval(::Type{T}, seed, r, idx) where {T}
@@ -37,29 +37,34 @@ function _sarr(::Type{T}, seed, r, dims, region = Dict()) where {T}
     return a
 end
 
-const _SVARS = [("temp", ["time", "lat", "lon"], Float64, 100),
-                ("pres", ["time", "lat", "lon"], Float32, 200),
-                ("gm",   ["time"],               Float64, 300),     # replicated
-                ("zm",   ["time", "lon"],        Float64, 400)]     # lacks lat
+const _SVARS = [
+    ("temp", ["time", "lat", "lon"], Float64, 100),
+    ("pres", ["time", "lat", "lon"], Float32, 200),
+    ("gm", ["time"], Float64, 300),     # replicated
+    ("zm", ["time", "lon"], Float64, 400),
+]     # lacks lat
 
 function _sschema(; vars = _SVARS, statics = [], time_mode = :append, profile = :diagnostic)
     return OutputSchema(;
         dims = ["time" => 0, "lat" => NLAT, "lon" => NLON],
         time_dim = "time",
-        coords = ["lat" => (Float64[10i for i in 0:(NLAT - 1)], Dict{String,Any}("units" => "degrees_north")),
-                  "lon" => (Float64[i for i in 0:(NLON - 1)], Dict{String,Any}("units" => "degrees_east")),
-                  "time" => (Float64[], Dict{String,Any}("units" => "seconds"))],
+        coords = [
+            "lat" => (Float64[10i for i in 0:(NLAT - 1)], Dict{String, Any}("units" => "degrees_north")),
+            "lon" => (Float64[i for i in 0:(NLON - 1)], Dict{String, Any}("units" => "degrees_east")),
+            "time" => (Float64[], Dict{String, Any}("units" => "seconds")),
+        ],
         vars = [nm => OutputVar(d, T; attrs = Dict("seed" => s)) for (nm, d, T, s) in vars],
         statics = [nm => OutputVar(d, T) for (nm, d, T, _) in statics],
         chunk_shape = Dict("time" => 1, "lat" => 1, "lon" => 2),
         shard_shape = Dict("time" => 2, "lat" => 2, "lon" => 4),
         profile = profile, time_mode = time_mode,
-        attrs = Dict{String,Any}("title" => "stream test"))
+        attrs = Dict{String, Any}("title" => "stream test")
+    )
 end
 
 # The arrays one writer supplies for generator record `r`.
 function _sarrays(r, region = Dict(); contributor = false, vars = _SVARS)
-    out = Dict{String,Any}()
+    out = Dict{String, Any}()
     for (nm, d, T, s) in vars
         sd = filter(!=("time"), d)
         contributor && !any(x -> haskey(region, x), sd) && continue
@@ -80,16 +85,22 @@ _expected(rs; vars = _SVARS) =
     Dict(nm => [_sarr(T, s, r, filter(!=("time"), d)) for r in rs] for (nm, d, T, s) in vars)
 
 const ZW = ZarrWriter()
-const QUAD = [(:owner, 0, Dict("lat" => (0, 4), "lon" => (0, 4))),
-              (:contributor, 1, Dict("lat" => (0, 4), "lon" => (4, 6))),
-              (:contributor, 2, Dict("lat" => (4, 6), "lon" => (0, 4))),
-              (:contributor, 3, Dict("lat" => (4, 6), "lon" => (4, 6)))]
+const QUAD = [
+    (:owner, 0, Dict("lat" => (0, 4), "lon" => (0, 4))),
+    (:contributor, 1, Dict("lat" => (0, 4), "lon" => (4, 6))),
+    (:contributor, 2, Dict("lat" => (4, 6), "lon" => (0, 4))),
+    (:contributor, 3, Dict("lat" => (4, 6), "lon" => (4, 6))),
+]
 # the two-writer split used below
 const LA, LB = Dict("lat" => (0, 2)), Dict("lat" => (2, 6))
 
 function _open_quad(store, schema)
-    return [write_open!(ZW, nothing, store, schema; role = role, n_writers = 4, id = id,
-                        region = rg) for (role, id, rg) in QUAD]
+    return [
+        write_open!(
+            ZW, nothing, store, schema; role = role, n_writers = 4, id = id,
+            region = rg
+        ) for (role, id, rg) in QUAD
+    ]
 end
 
 _quad_rec!(hs, r) = for (h, (role, _, rg)) in zip(hs, QUAD)
@@ -97,25 +108,34 @@ _quad_rec!(hs, r) = for (h, (role, _, rg)) in zip(hs, QUAD)
 end
 
 @testset "zarr stream: schema fingerprint matches Python's canonical JSON" begin
-    s = OutputSchema(; dims = ["time" => 0, "lat" => 4, "lon" => 4], time_dim = "time",
-                     vars = ["temp" => OutputVar(["time", "lat", "lon"], Float64),
-                             "gm" => OutputVar(["time"], Float32)],
-                     statics = ["gé" => OutputVar(["lat", "lon"], UInt8)],
-                     chunk_shape = Dict("time" => 1, "lat" => 1, "lon" => 2),
-                     shard_shape = Dict("time" => 2, "lat" => 2, "lon" => 4))
+    s = OutputSchema(;
+        dims = ["time" => 0, "lat" => 4, "lon" => 4], time_dim = "time",
+        vars = [
+            "temp" => OutputVar(["time", "lat", "lon"], Float64),
+            "gm" => OutputVar(["time"], Float32),
+        ],
+        statics = ["gé" => OutputVar(["lat", "lon"], UInt8)],
+        chunk_shape = Dict("time" => 1, "lat" => 1, "lon" => 2),
+        shard_shape = Dict("time" => 2, "lat" => 2, "lon" => 4)
+    )
     # python3: json.dumps(F, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     @test schema_fingerprint(s) ==
-          "sha256:1a15c0e63137c4929e8511d97eb2b5685418a9761185a8acfc494bf20db6125a"
+        "sha256:1a15c0e63137c4929e8511d97eb2b5685418a9761185a8acfc494bf20db6125a"
 end
 
 @testset "zarr stream: commit token JSON round-trips" begin
-    tok = CommitToken(1, ["lat" => (2, 4)], "sha256:ab", [(0, 0.0), (1, 3600.0), (2, 0.1)],
-                      ["dJ"], Tuple{String,Union{Int,Nothing},String}[
-                          ("record", 1, "rng"), ("static", nothing, "s")],
-                      ["temperature/c/0/1/0"])
+    tok = CommitToken(
+        1, ["lat" => (2, 4)], "sha256:ab", [(0, 0.0), (1, 3600.0), (2, 0.1)],
+        ["dJ"], Tuple{String, Union{Int, Nothing}, String}[
+            ("record", 1, "rng"), ("static", nothing, "s"),
+        ],
+        ["temperature/c/0/1/0"]
+    )
     js = token_json(tok)
-    @test startswith(js, "{\"schema\":\"earthsciio/commit-token/v1\",\"writer\":1," *
-                         "\"region\":{\"lat\":[2,4]},")
+    @test startswith(
+        js, "{\"schema\":\"earthsciio/commit-token/v1\",\"writer\":1," *
+            "\"region\":{\"lat\":[2,4]},"
+    )
     @test occursin("{\"index\":2,\"t\":0.1}", js)
     @test occursin("{\"scope\":\"static\",\"record\":null,\"key\":\"s\"}", js)
     @test parse_token(js) == tok
@@ -158,7 +178,7 @@ end
     @test a == b == _expected(0:4)
     # a region read is the slice of the whole
     @test read_record(quad, "temp", 3; region = Dict("lat" => (2, 6))) ==
-          read_record(single, "temp", 3)[3:6, :]
+        read_record(single, "temp", 3)[3:6, :]
     @test eltype(read_record(quad, "pres", 0)) == Float32
 end
 
@@ -166,9 +186,11 @@ end
     dir = mktempdir()
     s = _sschema(; statics = [("st", ["lat", "lon"], Int64, 7)])
     hs = _open_quad(joinpath(dir, "q"), s)
-    snapshot() = Dict(p => read(p) for (root, _, fs) in walkdir(joinpath(dir, "q"))
-                      for f in fs if f in ("zarr.json", "output_manifest.json")
-                      for p in (joinpath(root, f),))
+    snapshot() = Dict(
+        p => read(p) for (root, _, fs) in walkdir(joinpath(dir, "q"))
+            for f in fs if f in ("zarr.json", "output_manifest.json")
+            for p in (joinpath(root, f),)
+    )
     before = snapshot()
     mt = Dict(p => mtime(p) for p in keys(before))
     c = hs[4]
@@ -194,23 +216,33 @@ end
     dir = mktempdir()
     s = _sschema()
     bad = joinpath(dir, "bad")
-    @test_throws RegionNotShardAligned write_open!(ZW, nothing, bad, s; role = :owner,
-                                                   n_writers = 2, region = Dict("lat" => (0, 3)))
+    @test_throws RegionNotShardAligned write_open!(
+        ZW, nothing, bad, s; role = :owner,
+        n_writers = 2, region = Dict("lat" => (0, 3))
+    )
     @test !ispath(bad)
     store = joinpath(dir, "ok")
     write_open!(ZW, nothing, store, s; role = :owner, n_writers = 2, region = Dict("lat" => (0, 2)))
-    @test_throws RegionNotShardAligned write_open!(ZW, nothing, store, s; role = :contributor,
-                                                   id = 1, region = Dict("lat" => (1, 6)))
-    @test_throws RegionNotShardAligned write_open!(ZW, nothing, store, s; role = :contributor,
-                                                   id = 1, region = Dict("lon" => (2, 6)))
-    @test_throws RegionNotShardAligned write_open!(ZW, nothing, store, s; role = :contributor,
-                                                   id = 1, region = Dict("lat" => (2, 7)))
+    @test_throws RegionNotShardAligned write_open!(
+        ZW, nothing, store, s; role = :contributor,
+        id = 1, region = Dict("lat" => (1, 6))
+    )
+    @test_throws RegionNotShardAligned write_open!(
+        ZW, nothing, store, s; role = :contributor,
+        id = 1, region = Dict("lon" => (2, 6))
+    )
+    @test_throws RegionNotShardAligned write_open!(
+        ZW, nothing, store, s; role = :contributor,
+        id = 1, region = Dict("lat" => (2, 7))
+    )
     m = read_output_manifest(store)
     @test m["commit_seq"] == 0 && m["records"]["committed"] == []
     # the contributor's schema must match the store's
     other = _sschema(; profile = :checkpoint)
-    @test_throws ErrorException write_open!(ZW, nothing, store, other; role = :contributor,
-                                            id = 1, region = Dict("lat" => (2, 6)))
+    @test_throws ErrorException write_open!(
+        ZW, nothing, store, other; role = :contributor,
+        id = 1, region = Dict("lat" => (2, 6))
+    )
 end
 
 @testset "zarr stream: a gap or an overlap is a CommitError; the prefix stands" begin
@@ -219,8 +251,10 @@ end
         s = _sschema()
         store = joinpath(dir, label)
         w0 = write_open!(ZW, nothing, store, s; role = :owner, n_writers = 2, region = LA)
-        w1 = write_open!(ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
-                         region = LB)
+        w1 = write_open!(
+            ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
+            region = LB
+        )
         write_record!(ZW, w0, 0.0, _sarrays(0, LA))
         write_record!(ZW, w1, 0.0, _sarrays(0, LB; contributor = true))
         write_commit!(ZW, w0, [write_flush!(ZW, w0), write_flush!(ZW, w1)])
@@ -228,21 +262,27 @@ end
         # a late joiner (same id) takes a bad region; it joins after record 0 is
         # committed, so it must reload record 0 of its region of time shard 0
         R9 = Dict("lat" => r9)
-        w9 = write_open!(ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
-                         region = R9)
+        w9 = write_open!(
+            ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
+            region = R9
+        )
         write_record!(ZW, w0, DT, _sarrays(1, LA))
         @test write_record!(ZW, w9, DT, _sarrays(1, R9; contributor = true)) == 1
         err = try
             write_commit!(ZW, w0, [write_flush!(ZW, w0), write_flush!(ZW, w9)]); nothing
-        catch e; e end
+        catch e
+            e
+        end
         @test err isa CommitError && occursin(label, err.msg)
         @test read(joinpath(store, "output_manifest.json")) == before
         @test _readall(store) == _expected([0])
     end
     # a missing writer is a CommitError too
     dir = mktempdir()
-    w0 = write_open!(ZW, nothing, joinpath(dir, "m"), _sschema(); role = :owner,
-                     n_writers = 2, region = LA)
+    w0 = write_open!(
+        ZW, nothing, joinpath(dir, "m"), _sschema(); role = :owner,
+        n_writers = 2, region = LA
+    )
     @test_throws CommitError write_commit!(ZW, w0, [write_flush!(ZW, w0)])
 end
 
@@ -251,15 +291,19 @@ end
     s = _sschema()
     store = joinpath(dir, "s")
     w0 = write_open!(ZW, nothing, store, s; role = :owner, n_writers = 2, region = LA)
-    w1 = write_open!(ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
-                     region = LB)
+    w1 = write_open!(
+        ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1,
+        region = LB
+    )
     write_record!(ZW, w0, 0.0, _sarrays(0, LA))
     t0 = write_flush!(ZW, w0)
     t1 = write_flush!(ZW, w1)                          # no records: diverges
     @test_throws CommitError write_commit!(ZW, w0, [t0, t1])
     @test_throws CommitError write_commit!(ZW, w0, [t0, t0])          # duplicate writer
-    bad = CommitToken(1, t1.region, "sha256:other", t0.records, String[],
-                      Tuple{String,Union{Int,Nothing},String}[], String[])
+    bad = CommitToken(
+        1, t1.region, "sha256:other", t0.records, String[],
+        Tuple{String, Union{Int, Nothing}, String}[], String[]
+    )
     @test_throws CommitError write_commit!(ZW, w0, [t0, bad])
     @test read_output_manifest(store)["commit_seq"] == 0
 end
@@ -293,10 +337,14 @@ end
     # two region writers, the later indices committed first
     reg = joinpath(dir, "reg")
     w0 = write_open!(ZW, nothing, reg, s; role = :owner, n_writers = 2, region = LA)
-    w1 = write_open!(ZW, nothing, reg, s; role = :contributor, n_writers = 2, id = 1,
-                     region = LB)
-    put(i) = (write_record_at!(ZW, w0, i, times[i + 1], _sarrays(i, LA));
-              write_record_at!(ZW, w1, i, times[i + 1], _sarrays(i, LB; contributor = true)))
+    w1 = write_open!(
+        ZW, nothing, reg, s; role = :contributor, n_writers = 2, id = 1,
+        region = LB
+    )
+    put(i) = (
+        write_record_at!(ZW, w0, i, times[i + 1], _sarrays(i, LA));
+        write_record_at!(ZW, w1, i, times[i + 1], _sarrays(i, LB; contributor = true))
+    )
     foreach(put, (4, 3))
     write_commit!(ZW, w0, [write_flush!(ZW, w0), write_flush!(ZW, w1)])
     foreach(put, (2, 1, 0))
@@ -400,8 +448,10 @@ end
 
 @testset "zarr stream: dtypes round-trip bitwise (incl. UInt8)" begin
     dir = mktempdir()
-    vars = [("v_$(T)", ["time", "lat", "lon"], T, 10k + 1)
-            for (k, T) in enumerate((Float64, Float32, Int32, Int64, UInt8))]
+    vars = [
+        ("v_$(T)", ["time", "lat", "lon"], T, 10k + 1)
+            for (k, T) in enumerate((Float64, Float32, Int32, Int64, UInt8))
+    ]
     for profile in (:diagnostic, :wasm)
         store = joinpath(dir, string(profile))
         h = write_open!(ZW, nothing, store, _sschema(; vars = vars, profile = profile))
@@ -420,8 +470,10 @@ end
 
 @testset "zarr stream: statics and blobs over two region writers" begin
     dir = mktempdir()
-    sts = [("dJ", ["lat", "lon"], Float64, 500), ("dJ_dlon", ["lon"], Float64, 600),
-           ("count", ["lat", "lon"], UInt8, 700)]
+    sts = [
+        ("dJ", ["lat", "lon"], Float64, 500), ("dJ_dlon", ["lon"], Float64, 600),
+        ("count", ["lat", "lon"], UInt8, 700),
+    ]
     s = _sschema(; statics = sts)
     store = joinpath(dir, "sb")
     A, B = LA, LB
@@ -474,9 +526,13 @@ end
     m = write_close!(ZW, h)
     d = JSON.parsefile(joinpath(store, "output_manifest.json"))
     @test d["schema"] == "earthsciio/output-manifest/v1"
-    @test sort(collect(keys(d))) == sort(["schema", "base_url", "format", "zarr_format",
-        "profile", "codec", "time_dim", "dims", "vars", "chunk_shape", "shard_shape",
-        "time_shards", "last_t", "n_records", "created_at"])
+    @test sort(collect(keys(d))) == sort(
+        [
+            "schema", "base_url", "format", "zarr_format",
+            "profile", "codec", "time_dim", "dims", "vars", "chunk_shape", "shard_shape",
+            "time_shards", "last_t", "n_records", "created_at",
+        ]
+    )
     @test d["dims"][1] == Dict("name" => "time", "length" => 0)
     @test [x["n"] for x in d["time_shards"]] == [2, 1]
     @test m.n_records == 3
@@ -548,8 +604,10 @@ end
     dir = mktempdir()
     times = [0.0, DT]
     store = joinpath(dir, "flaky")
-    h = write_open!(ZW, nothing, store, _sschema(; time_mode = IndexedTime(times));
-                    role = :owner, n_writers = 1)
+    h = write_open!(
+        ZW, nothing, store, _sschema(; time_mode = IndexedTime(times));
+        role = :owner, n_writers = 1
+    )
     write_record_at!(ZW, h, 0, 0.0, _sarrays(0))
     write_record_at!(ZW, h, 1, DT, _sarrays(1))
     tok = write_flush!(ZW, h)
@@ -566,8 +624,10 @@ end
 
 @testset "zarr stream: blob keys '.' and '..' are refused" begin
     dir = mktempdir()
-    h = write_open!(ZW, nothing, joinpath(dir, "b"), _sschema(; statics = [("dJ", ["lat", "lon"], Float64, 500)]);
-                    role = :owner, n_writers = 1)
+    h = write_open!(
+        ZW, nothing, joinpath(dir, "b"), _sschema(; statics = [("dJ", ["lat", "lon"], Float64, 500)]);
+        role = :owner, n_writers = 1
+    )
     @test_throws ArgumentError write_blob!(ZW, h, :static, ".", UInt8[1])
     @test_throws ArgumentError write_blob!(ZW, h, :static, "..", UInt8[1])
 end

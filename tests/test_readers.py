@@ -32,8 +32,7 @@ CORPUS = REPO_ROOT / "conformance" / "corpus"
 
 ERA5_URL = "https://data.earthsci.dev/era5/2018/11/20181108.nc"
 OPENAQ_URL = (
-    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/"
-    "locationid=1/2018-11-08.csv"
+    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
 )
 FF10_URL = "https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv"
 
@@ -185,8 +184,9 @@ def test_netcdf_select_preserves_the_requested_index_order(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     full = reader.read_native(reader.open(blob.path))
-    p = reader.read_native(reader.open(blob.path), None,
-                           {"axes": ["all", "all", {"indices": [2, 0]}]})
+    p = reader.read_native(
+        reader.open(blob.path), None, {"axes": ["all", "all", {"indices": [2, 0]}]}
+    )
     assert np.array_equal(p["t2m"].data, full["t2m"].data[:, :, [2, 0]], equal_nan=True)
     assert np.array_equal(p["longitude"].data, full["longitude"].data[[2, 0]])
 
@@ -196,8 +196,9 @@ def test_netcdf_select_composes_with_variables(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     full = reader.read_native(reader.open(blob.path))
-    both = reader.read_native(reader.open(blob.path), ["t2m"],
-                              {"axes": ["all", {"slice": [1, 3]}, "all"]})
+    both = reader.read_native(
+        reader.open(blob.path), ["t2m"], {"axes": ["all", {"slice": [1, 3]}, "all"]}
+    )
     assert both.variable_names() == ["t2m"]
     assert np.array_equal(both["t2m"].data, full["t2m"].data[:, 1:3], equal_nan=True)
 
@@ -208,8 +209,7 @@ def test_netcdf_select_refuses_a_time_subset(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     with pytest.raises(ValueError, match="time"):
-        reader.read_native(reader.open(blob.path), None,
-                           {"axes": [{"indices": [0]}, "all", "all"]})
+        reader.read_native(reader.open(blob.path), None, {"axes": [{"indices": [0]}, "all", "all"]})
 
 
 @pytest.mark.needs_format("netcdf")
@@ -221,13 +221,17 @@ def test_netcdf_select_refuses_an_axis_count_matching_nothing(offline_cache):
 
 
 def test_cf_time_units_detection_is_case_insensitive_and_token_wise():
-    """"hours SINCE 1900-01-01" must not be a time axis in one track and a
+    """ "hours SINCE 1900-01-01" must not be a time axis in one track and a
     selectable spatial axis in another: the rule is a whitespace-separated
     ``since`` token, case-insensitive, matching the Rust track exactly."""
     from earthsciio.readers import _is_cf_time
 
-    for units in ("hours since 1900-01-01", "hours SINCE 1900-01-01",
-                  "days since 2018-11-08 00:00:00", "since"):
+    for units in (
+        "hours since 1900-01-01",
+        "hours SINCE 1900-01-01",
+        "days since 2018-11-08 00:00:00",
+        "since",
+    ):
         assert _is_cf_time({"units": units}) is True, units
     for units in ("degrees_north", "Pa", "kg m-2 s-1", "sincerity", ""):
         assert _is_cf_time({"units": units}) is False, units
@@ -245,8 +249,10 @@ def test_netcdf_full_extent_select_is_identical_to_no_select(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     full = reader.read_native(reader.open(blob.path))
-    for axes in (["all", {"slice": [0, 3]}, {"slice": [0, 3]}],
-                 ["all", {"indices": [0, 1, 2]}, {"indices": [0, 1, 2]}]):
+    for axes in (
+        ["all", {"slice": [0, 3]}, {"slice": [0, 3]}],
+        ["all", {"indices": [0, 1, 2]}, {"indices": [0, 1, 2]}],
+    ):
         got = reader.read_native(reader.open(blob.path), None, {"axes": axes})
         for name in ("t2m", "sp"):
             assert got[name].shape == full[name].shape
@@ -263,8 +269,7 @@ def test_netcdf_select_keeps_a_single_element_dimension(offline_cache):
     reader = NetCDFReader()
     full = reader.read_native(reader.open(blob.path))
     for axis in ({"indices": [1]}, {"slice": [1, 2]}):
-        got = reader.read_native(reader.open(blob.path), None,
-                                 {"axes": ["all", axis, "all"]})
+        got = reader.read_native(reader.open(blob.path), None, {"axes": ["all", axis, "all"]})
         assert got["t2m"].shape == (2, 1, 3)
         assert list(got["t2m"].dims) == ["time", "latitude", "longitude"]
         assert got["latitude"].shape == (1,)
@@ -282,8 +287,7 @@ def test_netcdf_select_empty_axis_is_a_zero_length_window(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     for axis in ({"indices": []}, {"slice": [1, 1]}, {"slice": [2, 0]}):
-        got = reader.read_native(reader.open(blob.path), None,
-                                 {"axes": ["all", axis, "all"]})
+        got = reader.read_native(reader.open(blob.path), None, {"axes": ["all", axis, "all"]})
         for name in ("t2m", "sp"):
             assert got[name].shape == (2, 0, 3), axis
             assert list(got[name].dims) == ["time", "latitude", "longitude"]
@@ -301,14 +305,15 @@ def test_netcdf_select_refuses_an_out_of_range_slice(offline_cache):
     blob = offline_cache.fetch(ERA5_URL)
     reader = NetCDFReader()
     with pytest.raises(IndexError, match="out of range"):
-        reader.read_native(reader.open(blob.path), None,
-                           {"axes": ["all", {"slice": [1, 99]}, "all"]})
+        reader.read_native(
+            reader.open(blob.path), None, {"axes": ["all", {"slice": [1, 99]}, "all"]}
+        )
     with pytest.raises(IndexError, match="out of range"):
-        reader.read_native(reader.open(blob.path), None,
-                           {"axes": ["all", {"slice": [-2, 3]}, "all"]})
+        reader.read_native(
+            reader.open(blob.path), None, {"axes": ["all", {"slice": [-2, 3]}, "all"]}
+        )
     with pytest.raises(IndexError, match="out of range"):
-        reader.read_native(reader.open(blob.path), None,
-                           {"axes": ["all", {"indices": [5]}, "all"]})
+        reader.read_native(reader.open(blob.path), None, {"axes": ["all", {"indices": [5]}, "all"]})
 
 
 # --------------------------------------------------------------------------- #
@@ -390,9 +395,7 @@ def test_netcdf_records_equal_the_whole_file_read(cadence_blob):
     sweeps += [[a, b] for a in range(4) for b in range(4)]
     sweeps += [[0, 1, 2, 3], [3, 1, 2, 0]]
     for idx in sweeps:
-        got = reader.read_native(
-            reader.open(cadence_blob), records={"dim": "time", "indices": idx}
-        )
+        got = reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": idx})
         # The axis is RETAINED at the requested length and never dropped.
         assert list(got["t2m"].dims) == ["time", "lat", "lon"], idx
         assert np.asarray(got["t2m"].data).shape == (len(idx), 2, 3), idx
@@ -412,23 +415,22 @@ def test_netcdf_records_are_absolute_ordered_and_may_repeat(cadence_blob):
     reading the wrong records; and the order given is the order returned, with
     duplicates legal (the end-of-data bracket ``[last, last]`` is one)."""
     reader = NetCDFReader()
-    one = reader.read_native(
-        reader.open(cadence_blob), records={"dim": "time", "indices": [2]}
-    )
+    one = reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": [2]})
     assert np.asarray(one["t2m"].data).ravel().tolist() == [
-        300.0, 301.0, 302.0, 310.0, 311.0, 312.0
+        300.0,
+        301.0,
+        302.0,
+        310.0,
+        311.0,
+        312.0,
     ]
     assert np.asarray(one["time"].data).tolist() == [2.0]
 
-    rev = reader.read_native(
-        reader.open(cadence_blob), records={"dim": "time", "indices": [3, 1]}
-    )
+    rev = reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": [3, 1]})
     assert np.asarray(rev["t2m"].data)[:, 0, 0].tolist() == [400.0, 200.0]
     assert np.asarray(rev["time"].data).tolist() == [3.0, 1.0]
 
-    dup = reader.read_native(
-        reader.open(cadence_blob), records={"dim": "time", "indices": [3, 3]}
-    )
+    dup = reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": [3, 3]})
     assert np.asarray(dup["t2m"].data).shape == (2, 2, 3)
     assert np.asarray(dup["t2m"].data)[:, 0, 0].tolist() == [400.0, 400.0]
     assert np.asarray(dup["time"].data).tolist() == [3.0, 3.0]
@@ -479,17 +481,11 @@ def test_netcdf_bad_records_is_an_error_not_a_wrapped_or_widened_read(cadence_bl
     reader = NetCDFReader()
     for bad in ([4], [-1], [0, 9]):
         with pytest.raises(IndexError, match="outside 0:3"):
-            reader.read_native(
-                reader.open(cadence_blob), records={"dim": "time", "indices": bad}
-            )
+            reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": bad})
     with pytest.raises(ValueError, match="which the blob does not have"):
-        reader.read_native(
-            reader.open(cadence_blob), records={"dim": "nope", "indices": [0]}
-        )
+        reader.read_native(reader.open(cadence_blob), records={"dim": "nope", "indices": [0]})
     with pytest.raises(ValueError, match="empty selection is an error"):
-        reader.read_native(
-            reader.open(cadence_blob), records={"dim": "time", "indices": []}
-        )
+        reader.read_native(reader.open(cadence_blob), records={"dim": "time", "indices": []})
     with pytest.raises(ValueError, match='must be a mapping with "dim" and "indices"'):
         reader.read_native(reader.open(cadence_blob), records={"dim": "time"})
     with pytest.raises(ValueError, match="both narrow dimension"):
@@ -572,16 +568,31 @@ def _ff10_fixture_text() -> str:
         return r
 
     stack = dict(
-        COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F001", UNIT_ID="U1",
-        REL_POINT_ID="R1", PROCESS_ID="P1", SCC="0030700101",
-        FACILITY_NAME="Autauga Plant, Unit 1", STKHGT="100.0", STKTEMP="500.0",
-        LONGITUDE="-86.51045", LATITUDE="32.43878", ZIPCODE="00000",
+        COUNTRY_CD="US",
+        REGION_CD="01001",
+        FACILITY_ID="F001",
+        UNIT_ID="U1",
+        REL_POINT_ID="R1",
+        PROCESS_ID="P1",
+        SCC="0030700101",
+        FACILITY_NAME="Autauga Plant, Unit 1",
+        STKHGT="100.0",
+        STKTEMP="500.0",
+        LONGITUDE="-86.51045",
+        LATITUDE="32.43878",
+        ZIPCODE="00000",
     )
     rows = [
         mkrow(**stack, POLID="NOX", ANN_VALUE="123.45"),
         mkrow(**stack, POLID="SO2", ANN_VALUE="67.89"),
-        mkrow(COUNTRY_CD="US", REGION_CD="01001", FACILITY_ID="F002",
-              POLID="PM25", ANN_VALUE="4.2", FACILITY_NAME="Plain Name"),
+        mkrow(
+            COUNTRY_CD="US",
+            REGION_CD="01001",
+            FACILITY_ID="F002",
+            POLID="PM25",
+            ANN_VALUE="4.2",
+            FACILITY_NAME="Plain Name",
+        ),
     ]
     sio = io.StringIO()
     sio.write("#FORMAT=FF10_POINT\n#COUNTRY US\n\n")  # header block + blank line
@@ -711,6 +722,7 @@ def _ff10_egu_zip(tmp_path) -> str:
     """A zip with two `*egu*` members + one excluded member, each carrying a `#`
     comment block and the `country_cd` header line. Written in NON-sorted order
     to prove the read order is sorted-name."""
+
     def member(rows):
         return "#FORMAT=FF10_POINT\n" + _ff10_header_line() + "\n" + "\n".join(rows) + "\n"
 
@@ -720,10 +732,15 @@ def _ff10_egu_zip(tmp_path) -> str:
         # `…/ptegu/`) — selection must ignore it (file members only).
         zf.writestr("point_egu/", b"")
         zf.writestr("point/egu_beta.csv", member([_ff10_tiny_row("F202", "NOX", "333.3")]))
-        zf.writestr("point/egu_alpha.csv", member([
-            _ff10_tiny_row("F101", "NOX", "111.1"),
-            _ff10_tiny_row("F101", "SO2", "22.2"),
-        ]))
+        zf.writestr(
+            "point/egu_alpha.csv",
+            member(
+                [
+                    _ff10_tiny_row("F101", "NOX", "111.1"),
+                    _ff10_tiny_row("F101", "SO2", "22.2"),
+                ]
+            ),
+        )
         zf.writestr("point/ptnonipm.csv", member([_ff10_tiny_row("F999", "NOX", "999.9")]))
     return str(zpath)
 
@@ -755,8 +772,7 @@ def test_ff10_members_union_glob_and_missing_name(tmp_path):
     assert nds["FACILITY_ID"].data == ["F101", "F101", "F202", "F999"]
     # an explicit member absent from the archive is an error.
     with pytest.raises(KeyError, match="not found"):
-        FF10Reader().read_native(zpath, members=["point/absent.csv"],
-                                 skip_header_row=True)
+        FF10Reader().read_native(zpath, members=["point/absent.csv"], skip_header_row=True)
 
 
 def test_ff10_header_row_skipped_exactly_once_per_member(tmp_path):
@@ -766,8 +782,7 @@ def test_ff10_header_row_skipped_exactly_once_per_member(tmp_path):
     with pytest.raises(ValueError):
         FF10Reader().read_native(zpath, member_glob="*egu*")
     # singular member + skip_header_row composes.
-    nds = FF10Reader().read_native(zpath, member="point/egu_beta.csv",
-                                   skip_header_row=True)
+    nds = FF10Reader().read_native(zpath, member="point/egu_beta.csv", skip_header_row=True)
     assert nds["FACILITY_ID"].data == ["F202"]
 
 
@@ -783,8 +798,7 @@ def test_ff10_skip_header_row_asserts_header_present(tmp_path):
 def test_ff10_member_exclusive_with_members(tmp_path):
     zpath = _ff10_egu_zip(tmp_path)
     with pytest.raises(ValueError, match="mutually exclusive"):
-        FF10Reader().read_native(zpath, member="point/egu_beta.csv",
-                                 member_glob="*egu*")
+        FF10Reader().read_native(zpath, member="point/egu_beta.csv", member_glob="*egu*")
 
 
 def test_ff10_zip_case_decodes_to_oracle_arrays(offline_cache):

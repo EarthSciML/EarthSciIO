@@ -205,7 +205,7 @@ def decode_cds_url(url: str) -> Tuple[str, Dict[str, Any]]:
     prefix = f"{CDS_SCHEME}://"
     if not url.startswith(prefix):
         raise ValueError(f"not a cds:// URL: {url!r}")
-    dataset, sep, payload = url[len(prefix):].partition("?")
+    dataset, sep, payload = url[len(prefix) :].partition("?")
     if not sep:
         raise ValueError(f"cds:// URL missing '?<request-json>': {url!r}")
     if not dataset:
@@ -250,9 +250,7 @@ def cds_submit(
     except requests.RequestException as exc:
         raise TransportError(f"CDS submit failed for {dataset}: {exc}") from exc
     if resp.status_code >= 400:
-        raise TransportError(
-            f"CDS submit returned {resp.status_code} for {dataset}: {resp.text}"
-        )
+        raise TransportError(f"CDS submit returned {resp.status_code} for {dataset}: {resp.text}")
     data = resp.json()
     if data.get("status") in ("accepted", "running", "successful") and data.get("jobID"):
         return str(data["jobID"])
@@ -293,17 +291,12 @@ def cds_wait(
         status = resp.json().get("status", "")
         if status == "successful":
             try:
-                results = requests.get(
-                    f"{job_url}/results", headers=send, timeout=_HTTP_TIMEOUT
-                )
+                results = requests.get(f"{job_url}/results", headers=send, timeout=_HTTP_TIMEOUT)
             except requests.RequestException as exc:
-                raise TransportError(
-                    f"CDS results fetch failed for job {job_id}: {exc}"
-                ) from exc
+                raise TransportError(f"CDS results fetch failed for job {job_id}: {exc}") from exc
             if results.status_code >= 400:
                 raise TransportError(
-                    f"CDS results returned {results.status_code} for job {job_id}: "
-                    f"{results.text}"
+                    f"CDS results returned {results.status_code} for job {job_id}: {results.text}"
                 )
             try:
                 return results.json()["asset"]["value"]["href"]
@@ -330,16 +323,12 @@ def cds_download(href: str, dest: Any) -> int:
     import requests  # lazy
 
     try:
-        resp = requests.get(
-            href, stream=True, timeout=_HTTP_TIMEOUT, allow_redirects=True
-        )
+        resp = requests.get(href, stream=True, timeout=_HTTP_TIMEOUT, allow_redirects=True)
     except requests.RequestException as exc:
         raise TransportError(f"CDS asset download failed for {href}: {exc}") from exc
     try:
         if resp.status_code != 200:
-            raise TransportError(
-                f"CDS asset download returned {resp.status_code} for {href}"
-            )
+            raise TransportError(f"CDS asset download returned {resp.status_code} for {href}")
         written = 0
         with open(dest, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=_CHUNK):

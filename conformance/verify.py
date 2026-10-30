@@ -153,25 +153,82 @@ def read_csv(path, expected):
 # FF10 point column schema — copied from Emissions.jl `src/ff10.jl`
 # `FF10_POINT_COLUMNS` (SMOKE names COUNTRY_CD/REGION_CD for the first two).
 _FF10_POINT_COLUMNS = [
-    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
-    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
-    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
-    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
-    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
-    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
-    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
-    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
-    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
-    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
-    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
-    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
-    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
-    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
-    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
-    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COUNTRY_CD",
+    "REGION_CD",
+    "TRIBAL_CODE",
+    "FACILITY_ID",
+    "UNIT_ID",
+    "REL_POINT_ID",
+    "PROCESS_ID",
+    "AGY_FACILITY_ID",
+    "AGY_UNIT_ID",
+    "AGY_REL_POINT_ID",
+    "AGY_PROCESS_ID",
+    "SCC",
+    "POLID",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "FACILITY_NAME",
+    "ERPTYPE",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "NAICS",
+    "LONGITUDE",
+    "LATITUDE",
+    "LL_DATUM",
+    "HORIZ_COLL_MTHD",
+    "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS",
+    "REG_CODES",
+    "FAC_SOURCE_TYPE",
+    "UNIT_TYPE_CODE",
+    "CONTROL_IDS",
+    "CONTROL_MEASURES",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "SUBMITTER_FAC_ID",
+    "CALC_METHOD",
+    "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE",
+    "ORIS_FACILITY_CODE",
+    "ORIS_BOILER_ID",
+    "IPM_YN",
+    "CALC_YEAR",
+    "DATE_UPDATED",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ZIPCODE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
     "COMMENT",
 ]
 
@@ -220,15 +277,10 @@ def read_ff10(path, expected, decode=None):
     index = {name: j for j, name in enumerate(_FF10_POINT_COLUMNS)}
     rows = []
     for text in texts:
-        lines = [
-            ln for ln in text.splitlines()
-            if ln.strip() and not ln.lstrip().startswith("#")
-        ]
+        lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
         if skip_header:
             if not lines or lines[0].split(",", 1)[0].strip().lower() != "country_cd":
-                raise ValueError(
-                    "skip_header_row: asserted 'country_cd' header line missing"
-                )
+                raise ValueError("skip_header_row: asserted 'country_cd' header line missing")
             lines = lines[1:]
         rows.extend(csv.reader(lines))
     ncol = len(_FF10_POINT_COLUMNS)
@@ -330,7 +382,9 @@ def read_zarr(corpus, case):
         chunks = [int(c) for c in zmeta["chunks"]]
         dt = np.dtype(zmeta["dtype"])
         order = zmeta.get("order", "C")
-        sep = "." if zmeta.get("dimension_separator") in (None, "") else zmeta["dimension_separator"]
+        sep = (
+            "." if zmeta.get("dimension_separator") in (None, "") else zmeta["dimension_separator"]
+        )
         ndim = len(shape)
         out_dt = np.dtype("float64") if dt.kind == "f" else dt
 
@@ -338,15 +392,24 @@ def read_zarr(corpus, case):
             sel = [_zarr_resolve_axis(axes_spec[d], shape[d]) for d in range(ndim)]
         elif dims_spec is not None:
             zattrs = obj_bytes(f"{base}/{array}/.zattrs")
-            names = (json.loads(zattrs.decode("utf-8")).get("_ARRAY_DIMENSIONS")
-                     if zattrs is not None else None) or [f"dim_{d}" for d in range(ndim)]
-            sel = [_zarr_resolve_axis(dims_spec.get(names[d], "all"), shape[d])
-                   for d in range(ndim)]
+            names = (
+                json.loads(zattrs.decode("utf-8")).get("_ARRAY_DIMENSIONS")
+                if zattrs is not None
+                else None
+            ) or [f"dim_{d}" for d in range(ndim)]
+            sel = [
+                _zarr_resolve_axis(dims_spec.get(names[d], "all"), shape[d]) for d in range(ndim)
+            ]
         else:
             sel = [list(range(shape[d])) for d in range(ndim)]
-        _check_poison_outside(objmap, base, array, sel, chunks,
-                              "." if zmeta.get("dimension_separator") in (None, "")
-                              else zmeta["dimension_separator"])
+        _check_poison_outside(
+            objmap,
+            base,
+            array,
+            sel,
+            chunks,
+            "." if zmeta.get("dimension_separator") in (None, "") else zmeta["dimension_separator"],
+        )
 
         fill = zmeta.get("fill_value", 0.0) or 0.0
         full = np.full(shape, fill, dtype=out_dt)
@@ -355,11 +418,13 @@ def read_zarr(corpus, case):
             raw = obj_bytes(f"{base}/{array}/" + sep.join(str(c) for c in cidx))
             if raw is None:
                 continue  # absent chunk object → keep fill
-            carr = np.frombuffer(_zarr_decompress(zmeta.get("compressor"), raw),
-                                 dtype=dt).reshape(chunks, order=order)
-            reg = tuple(slice(cidx[d] * chunks[d],
-                              min(cidx[d] * chunks[d] + chunks[d], shape[d]))
-                        for d in range(ndim))
+            carr = np.frombuffer(_zarr_decompress(zmeta.get("compressor"), raw), dtype=dt).reshape(
+                chunks, order=order
+            )
+            reg = tuple(
+                slice(cidx[d] * chunks[d], min(cidx[d] * chunks[d] + chunks[d], shape[d]))
+                for d in range(ndim)
+            )
             loc = tuple(slice(0, r.stop - r.start) for r in reg)
             full[reg] = carr[loc].astype(out_dt, copy=False)
         out[array] = full[np.ix_(*sel)]
@@ -402,8 +467,11 @@ def read_shapefile(path, expected, decode=None):
         target = member or sorted(n for n in names if n.lower().endswith(".shp"))[0]
         stem = target[: -len(".shp")].lower()
         for n in names:
-            key = "shp" if n == target else (
-                n.lower()[len(stem) + 1:] if n.lower().startswith(stem + ".") else None)
+            key = (
+                "shp"
+                if n == target
+                else (n.lower()[len(stem) + 1 :] if n.lower().startswith(stem + ".") else None)
+            )
             if key in ("shp", "dbf", "shx", "prj"):
                 blobs[key] = zf.read(n)
 
@@ -435,7 +503,7 @@ def read_shapefile(path, expected, decode=None):
         pts = list(shp.points)
         offs = [int(o) for o in (shp.parts or [])] or [0]
         bounds = offs + [len(pts)]
-        parts = [pts[bounds[k]:bounds[k + 1]] for k in range(len(offs))]
+        parts = [pts[bounds[k] : bounds[k + 1]] for k in range(len(offs))]
         bb = list(shp.bbox)
         for pi, ring in enumerate(parts):
             rings.append(ring)
@@ -470,7 +538,8 @@ def read_shapefile(path, expected, decode=None):
         if name in numeric or dt == "float64":
             out[name] = np.array(
                 [math.nan if v is None or str(v).strip() == "" else float(v) for v in vals],
-                dtype="f8")
+                dtype="f8",
+            )
         elif dt == "bool":
             out[name] = np.array([bool(v) for v in vals], dtype=bool)
         else:
@@ -502,7 +571,7 @@ def read_parquet(path, expected, decode=None):
     for name in wanted:
         col = table.column(name)
         typ = col.type
-        if pt.is_dictionary(typ):          # a categorical reads as its VALUE type
+        if pt.is_dictionary(typ):  # a categorical reads as its VALUE type
             col = col.cast(typ.value_type)
             typ = col.type
         if name in forced:
@@ -511,23 +580,34 @@ def read_parquet(path, expected, decode=None):
             kind = "bool"
         elif pt.is_string(typ) or pt.is_large_string(typ):
             kind = "string"
-        elif (pt.is_int8(typ) or pt.is_int16(typ) or pt.is_int32(typ)
-              or pt.is_uint8(typ) or pt.is_uint16(typ) or pt.is_date32(typ)
-              or pt.is_time32(typ)):
+        elif (
+            pt.is_int8(typ)
+            or pt.is_int16(typ)
+            or pt.is_int32(typ)
+            or pt.is_uint8(typ)
+            or pt.is_uint16(typ)
+            or pt.is_date32(typ)
+            or pt.is_time32(typ)
+        ):
             kind = "int32"
-        elif (pt.is_int64(typ) or pt.is_uint32(typ) or pt.is_uint64(typ)
-              or pt.is_date64(typ) or pt.is_time64(typ) or pt.is_timestamp(typ)
-              or pt.is_duration(typ)):
+        elif (
+            pt.is_int64(typ)
+            or pt.is_uint32(typ)
+            or pt.is_uint64(typ)
+            or pt.is_date64(typ)
+            or pt.is_time64(typ)
+            or pt.is_timestamp(typ)
+            or pt.is_duration(typ)
+        ):
             kind = "int64"
-        else:                              # floats, decimals, and the Null type
+        else:  # floats, decimals, and the Null type
             kind = "float64"
 
         # Temporal columns ride as their RAW stored integer (the unit is NOT
         # applied) — casting is what keeps it; to_pylist alone yields datetimes.
-        if kind in ("int32", "int64") and not (
-            pt.is_integer(typ) or pt.is_null(typ)
-        ):
+        if kind in ("int32", "int64") and not (pt.is_integer(typ) or pt.is_null(typ)):
             import pyarrow as pa
+
             col = col.cast(pa.int32() if kind == "int32" else pa.int64())
         cells = col.to_pylist()
 
@@ -536,19 +616,20 @@ def read_parquet(path, expected, decode=None):
             for c in cells:
                 if c is None:
                     vals.append(math.nan)
-                elif isinstance(c, str):   # fixed-decimal TEXT under float_columns
+                elif isinstance(c, str):  # fixed-decimal TEXT under float_columns
                     vals.append(math.nan if not c.strip() else float(c.strip()))
                 else:
                     vals.append(float(c))  # Decimal -> float64 is unscaled/10^scale
             out[name] = np.array(vals, dtype="f8")
         elif kind in ("int32", "int64"):
-            out[name] = np.array(
-                [null_int if c is None else int(c) for c in cells], dtype=kind)
+            out[name] = np.array([null_int if c is None else int(c) for c in cells], dtype=kind)
         elif kind == "bool":
             out[name] = np.array([bool(c) for c in cells], dtype=bool)
         else:
             out[name] = [null_string if c is None else str(c) for c in cells]
     return out, {}
+
+
 def read_geotiff(path, expected):
     """Independent GeoTIFF decode: tifffile for the container, tags parsed here.
 
@@ -584,9 +665,15 @@ def read_geotiff(path, expected):
     return {band: arr}, {"lon": lon, "lat": lat}
 
 
-READERS = {"netcdf": read_netcdf, "csv": read_csv, "ff10": read_ff10,
-           "zarr": read_zarr, "shapefile": read_shapefile,
-           "parquet": read_parquet, "geotiff": read_geotiff}
+READERS = {
+    "netcdf": read_netcdf,
+    "csv": read_csv,
+    "ff10": read_ff10,
+    "zarr": read_zarr,
+    "shapefile": read_shapefile,
+    "parquet": read_parquet,
+    "geotiff": read_geotiff,
+}
 
 
 def _verify_zarr_objects(case) -> list:
@@ -627,7 +714,9 @@ def verify_case(case_path: pathlib.Path) -> list:
         # 1. cache-key agreement
         key = hashlib.sha256(case["resolved_url"].encode("utf-8")).hexdigest()
         if key != case["cache_key"]:
-            errs.append(f"cache-key: sha256(resolved_url)={key} != case.cache_key={case['cache_key']}")
+            errs.append(
+                f"cache-key: sha256(resolved_url)={key} != case.cache_key={case['cache_key']}"
+            )
 
         # 2. manifest integrity
         blob = (CORPUS / case["blob_path"]).read_bytes()
@@ -655,22 +744,20 @@ def verify_case(case_path: pathlib.Path) -> list:
         got, coords = read_zarr(CORPUS, case)
     elif case["format"] == "ff10":
         # ff10 needs the case's decode block (zip member selection + header skip).
-        got, coords = read_ff10(CORPUS / case["blob_path"], case["expected"],
-                                case.get("decode"))
+        got, coords = read_ff10(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
     elif case["format"] == "shapefile":
         # shapefile needs the case's decode block (zip member + numeric_columns).
-        got, coords = read_shapefile(CORPUS / case["blob_path"], case["expected"],
-                                     case.get("decode"))
+        got, coords = read_shapefile(
+            CORPUS / case["blob_path"], case["expected"], case.get("decode")
+        )
     elif case["format"] == "parquet":
         # parquet needs the case's decode block (float_columns + the two null
         # gates); the projection is the expected variable set.
-        got, coords = read_parquet(CORPUS / case["blob_path"], case["expected"],
-                                   case.get("decode"))
+        got, coords = read_parquet(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
     elif case["format"] == "netcdf":
         # netcdf takes the case's orthogonal `select` (the decode-time window);
         # a case without one reads the blob whole, as before.
-        got, coords = read_netcdf(CORPUS / case["blob_path"], case["expected"],
-                                  case.get("select"))
+        got, coords = read_netcdf(CORPUS / case["blob_path"], case["expected"], case.get("select"))
     else:
         got, coords = reader(CORPUS / case["blob_path"], case["expected"])
     for name, spec in case["expected"]["variables"].items():
@@ -702,9 +789,14 @@ def _verify_blob_records(records, label) -> list:
             errs.append(f"{label} integrity: {o['url']} blob sha256 != content_sha256")
         if len(blob) != o["bytes"]:
             errs.append(f"{label} integrity: {o['url']} blob bytes {len(blob)} != {o['bytes']}")
-        manifest = json.loads((CORPUS / "cache" / "v1" / "meta" / f"{o['cache_key']}.json").read_text())
+        manifest = json.loads(
+            (CORPUS / "cache" / "v1" / "meta" / f"{o['cache_key']}.json").read_text()
+        )
         if (manifest["sha256_content"], manifest["bytes"], manifest["url"]) != (
-                o["content_sha256"], o["bytes"], o["url"]):
+            o["content_sha256"],
+            o["bytes"],
+            o["url"],
+        ):
             errs.append(f"{label} integrity: {o['url']} manifest disagrees with the record")
     return errs
 
@@ -729,10 +821,17 @@ def verify_scenarios() -> int:
         listed = {b["url"] for b in sc.get("blobs", [])}
         for src in sources:
             for f in src["files"]:
-                present = (CORPUS / "cache" / "v1" / "meta" /
-                           f"{hashlib.sha256(f['url'].encode('utf-8')).hexdigest()}.json").exists()
+                present = (
+                    CORPUS
+                    / "cache"
+                    / "v1"
+                    / "meta"
+                    / f"{hashlib.sha256(f['url'].encode('utf-8')).hexdigest()}.json"
+                ).exists()
                 if present != f["in_corpus"]:
-                    errs.append(f"{sc['id']}: {f['url']} in_corpus={f['in_corpus']} but present={present}")
+                    errs.append(
+                        f"{sc['id']}: {f['url']} in_corpus={f['in_corpus']} but present={present}"
+                    )
                 if f["in_corpus"] and f["url"] not in listed:
                     errs.append(f"{sc['id']}: {f['url']} is in the corpus but not in `blobs`")
         print(f"{'FAIL' if errs else 'PASS'}  scenario {sc['id']}")
@@ -753,22 +852,28 @@ def validate_schemas() -> int:
         print("schema-validation: SKIP (jsonschema/referencing not installed)")
         return 0
     sdir = HERE.parent / "spec" / "schemas"
-    schemas = {json.loads(p.read_text())["$id"]: json.loads(p.read_text())
-               for p in sdir.glob("*.json")}
+    schemas = {
+        json.loads(p.read_text())["$id"]: json.loads(p.read_text()) for p in sdir.glob("*.json")
+    }
     resources = [(sid, Resource.from_contents(s)) for sid, s in schemas.items()]
-    resources += [(p.name, Resource.from_contents(json.loads(p.read_text())))
-                  for p in sdir.glob("*.json")]
+    resources += [
+        (p.name, Resource.from_contents(json.loads(p.read_text()))) for p in sdir.glob("*.json")
+    ]
     registry = Registry().with_resources(resources)
     man = schemas["https://earthsci.dev/earthsciio/schemas/manifest.schema.json"]
     case = schemas["https://earthsci.dev/earthsciio/schemas/cache-case.schema.json"]
     fails = 0
     for p in (CORPUS / "cache").rglob("meta/*.json"):
-        errs = list(Draft202012Validator(man, registry=registry).iter_errors(json.loads(p.read_text())))
+        errs = list(
+            Draft202012Validator(man, registry=registry).iter_errors(json.loads(p.read_text()))
+        )
         if errs:
             fails += 1
             print(f"schema FAIL manifest {p.name}: {errs[0].message}")
     for p in (CORPUS / "cases").glob("*.json"):
-        errs = list(Draft202012Validator(case, registry=registry).iter_errors(json.loads(p.read_text())))
+        errs = list(
+            Draft202012Validator(case, registry=registry).iter_errors(json.loads(p.read_text()))
+        )
         if errs:
             fails += 1
             print(f"schema FAIL case {p.name}: {errs[0].message}")

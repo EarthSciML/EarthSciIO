@@ -82,9 +82,7 @@ def build(profile: str = "diagnostic") -> dict:
                     "temperature": [
                         [temperature(r, i, j) for j in range(NLON)] for i in range(NLAT)
                     ],
-                    "pressure": [
-                        [pressure(r, i, j) for j in range(NLON)] for i in range(NLAT)
-                    ],
+                    "pressure": [[pressure(r, i, j) for j in range(NLON)] for i in range(NLAT)],
                 },
             }
         )
@@ -168,8 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         name = argv[argv.index("--profile") + 1]
         if name not in PROFILES:
             print(
-                f"error: unknown profile {name!r} (expected one of "
-                f"{', '.join(PROFILES)})",
+                f"error: unknown profile {name!r} (expected one of {', '.join(PROFILES)})",
                 file=sys.stderr,
             )
             return 2
@@ -181,10 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         spec = build(name)
         out = HERE / PROFILES[name][0]
         out.write_text(json.dumps(spec, indent=2) + "\n")
-        print(
-            f"wrote {out} (profile={name}, {NREC} records, "
-            f"{len(spec['vars'])} vars)"
-        )
+        print(f"wrote {out} (profile={name}, {NREC} records, {len(spec['vars'])} vars)")
     return 0
 
 

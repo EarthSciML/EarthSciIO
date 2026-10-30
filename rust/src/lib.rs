@@ -138,28 +138,28 @@ pub use format::{
     CommitReceipt, CommitToken, RecordArrays, Region, Role, StreamDType, StreamSchema, StreamVar,
     TimeMode, TypedArray, TypedVec, ZarrStreamWriter,
 };
+#[cfg(all(target_arch = "wasm32", feature = "opfs"))]
+pub use format::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
 pub use format::{
     write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
     ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };
-#[cfg(all(target_arch = "wasm32", feature = "opfs"))]
-pub use format::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 #[cfg(not(target_arch = "wasm32"))]
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
-#[cfg(not(target_arch = "wasm32"))]
-pub use format::{
-    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, DimWindow, Ff10Reader, FormatRegistry,
-    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Records,
-    Selection, ShapefileReader, ZarrReader,
-};
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
     array_shape_object_store, read_store_options, read_zarr_object_store,
     read_zarr_object_store_with_options, store_options_from_env, write_zarr_object_store,
     write_zarr_object_store_with_options,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use format::{
+    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, DimWindow, Ff10Reader, FormatRegistry,
+    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Records,
+    Selection, ShapefileReader, ZarrReader,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};
@@ -168,9 +168,7 @@ pub use manifest::{Manifest, MANIFEST_SCHEMA};
 #[cfg(not(target_arch = "wasm32"))]
 pub use offline::{is_offline, OFFLINE_ENV};
 #[cfg(not(target_arch = "wasm32"))]
-pub use prefetch::{
-    EpochSample, Order, PrefetchBuilder, PrefetchGroup, PrefetchStats, Sample,
-};
+pub use prefetch::{EpochSample, Order, PrefetchBuilder, PrefetchGroup, PrefetchStats, Sample};
 #[cfg(not(target_arch = "wasm32"))]
 pub use provider::{DataSource, Provider, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV};
 #[cfg(not(target_arch = "wasm32"))]

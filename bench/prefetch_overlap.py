@@ -99,8 +99,7 @@ SIZES = {
 # --------------------------------------------------------------------------- #
 
 
-def build_source(src: pathlib.Path, files: int, records: int, lev: int, lat: int,
-                 lon: int) -> str:
+def build_source(src: pathlib.Path, files: int, records: int, lev: int, lat: int, lon: int) -> str:
     """Write the NetCDF files; return the strftime ``file://`` URL template."""
     import netCDF4
 
@@ -123,9 +122,14 @@ def build_source(src: pathlib.Path, files: int, records: int, lev: int, lat: int
             ds.createVariable("lat", "f8", ("lat",))[:] = np.linspace(-90, 90, lat)
             ds.createVariable("lon", "f8", ("lon",))[:] = np.linspace(0, 360, lon, endpoint=False)
             for i, name in enumerate(("U", "V", "T")):
-                v = ds.createVariable(name, "f4", ("time", "lev", "lat", "lon"),
-                                      zlib=True, complevel=1,
-                                      chunksizes=(1, lev, lat, lon))
+                v = ds.createVariable(
+                    name,
+                    "f4",
+                    ("time", "lev", "lat", "lon"),
+                    zlib=True,
+                    complevel=1,
+                    chunksizes=(1, lev, lat, lon),
+                )
                 for r in range(records):
                     v[r] = base * (1 + i) + (f * records + r)
     return "file://" + str(src / "bench.%Y%m%d_%H%M.nc")
@@ -138,10 +142,12 @@ def _providers(url: str, cache_root: str, files: int, records: int):
     end = START + files * records * HOUR
 
     def member(name, variables, rps):
-        temporal = SourceTemporal(START, HOUR, records * HOUR, end=end, time_dim="time",
-                                  records_per_sample=rps)
-        return Provider(DataSource(name, "netcdf", url, variables=variables,
-                                   temporal=temporal), cache)
+        temporal = SourceTemporal(
+            START, HOUR, records * HOUR, end=end, time_dim="time", records_per_sample=rps
+        )
+        return Provider(
+            DataSource(name, "netcdf", url, variables=variables, temporal=temporal), cache
+        )
 
     return {"UV": member("UV", ["U", "V"], 1), "T": member("T", ["T"], 2)}
 
@@ -190,7 +196,7 @@ def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
     # themselves — that IS executor="process"'s start-up cost, and stays in.
     from earthsciio import NetCDFReader
 
-    NetCDFReader().read_native(B[0].strftime(spec["url"][len("file://"):]), ["U"])
+    NetCDFReader().read_native(B[0].strftime(spec["url"][len("file://") :]), ["U"])
 
     rss_base = _maxrss_bytes()
     out: Dict[str, Any] = dict(spec, epochs=len(B), rss_base=rss_base)
@@ -205,8 +211,9 @@ def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
             compute(spec["compute_kind"], spec["compute_s"])
         out["refresh_s"] = sum(per_epoch)
     else:
-        with PrefetchGroup(members, depth=spec["depth"], workers=spec["workers"],
-                           executor=spec["executor"]) as g:
+        with PrefetchGroup(
+            members, depth=spec["depth"], workers=spec["workers"], executor=spec["executor"]
+        ) as g:
             g.start("forward")
             for k in range(len(B)):
                 before = g.stats()["waited_s"]
@@ -223,7 +230,8 @@ def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
 def _spawn(spec: Dict[str, Any]) -> Dict[str, Any]:
     proc = subprocess.run(
         [sys.executable, str(pathlib.Path(__file__).resolve()), "--case", json.dumps(spec)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"case {spec['mode']} failed:\n{proc.stderr}")
@@ -240,18 +248,24 @@ def _hidden(blocked: float, sync: float) -> float:
 
 
 def _fmt(row: Dict[str, Any], sync: Dict[str, Any]) -> str:
-    rss = (f"rss_peak={row['rss_peak'] / MB:6.1f} MB "
-           f"(+{(row['rss_peak'] - row['rss_base']) / MB:5.1f})")
+    rss = (
+        f"rss_peak={row['rss_peak'] / MB:6.1f} MB "
+        f"(+{(row['rss_peak'] - row['rss_base']) / MB:5.1f})"
+    )
     if row["mode"] == "sync":
-        return (f"{'sync refresh loop':30s} blocked={row['refresh_s']:6.3f} s "
-                f"(epoch 0: {row['per_epoch_s'][0]:5.3f})                         "
-                f"wall={row['wall_s']:6.3f} s  {rss}")
+        return (
+            f"{'sync refresh loop':30s} blocked={row['refresh_s']:6.3f} s "
+            f"(epoch 0: {row['per_epoch_s'][0]:5.3f})                         "
+            f"wall={row['wall_s']:6.3f} s  {rss}"
+        )
     steady = _hidden(sum(row["per_epoch_s"][1:]), sum(sync["per_epoch_s"][1:]))
     label = f"{row['executor']} depth={row['depth']} workers={row['workers']}"
-    return (f"{label:30s} blocked={row['waited_s']:6.3f} s (epoch 0: {row['per_epoch_s'][0]:5.3f})  "
-            f"hidden={_hidden(row['waited_s'], sync['refresh_s']):6.1%} "
-            f"steady={steady:6.1%}  wall={row['wall_s']:6.3f} s  {rss}  "
-            f"slots<={row['peak_bytes'] / MB:4.1f} MB")
+    return (
+        f"{label:30s} blocked={row['waited_s']:6.3f} s (epoch 0: {row['per_epoch_s'][0]:5.3f})  "
+        f"hidden={_hidden(row['waited_s'], sync['refresh_s']):6.1%} "
+        f"steady={steady:6.1%}  wall={row['wall_s']:6.3f} s  {rss}  "
+        f"slots<={row['peak_bytes'] / MB:4.1f} MB"
+    )
 
 
 def main(argv: List[str]) -> int:
@@ -259,11 +273,16 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--case")
     ap.add_argument("--size", choices=sorted(SIZES), default="small")
     ap.add_argument("--compute-kind", choices=["sleep", "python", "numpy"], default="sleep")
-    ap.add_argument("--compute-ms", type=float, default=None,
-                    help="per-epoch compute; default: --compute-ratio x calibrated refresh")
+    ap.add_argument(
+        "--compute-ms",
+        type=float,
+        default=None,
+        help="per-epoch compute; default: --compute-ratio x calibrated refresh",
+    )
     ap.add_argument("--compute-ratio", type=float, nargs="+", default=[1.5, 4.0])
-    ap.add_argument("--process", action="store_true",
-                    help="also run executor='process' (slow to start: spawn)")
+    ap.add_argument(
+        "--process", action="store_true", help="also run executor='process' (slow to start: spawn)"
+    )
     ap.add_argument("--keep", help="build the source/cache here and keep it")
     args = ap.parse_args(argv[1:])
 
@@ -279,27 +298,41 @@ def main(argv: List[str]) -> int:
         for p in _providers(url, cache_root, size["files"], size["records"]).values():
             p.prefetch()  # ingest once: every case decodes from a warm disk cache
         disk = sum(f.stat().st_size for f in (work / "src").iterdir())
-        base = dict(url=url, cache_root=cache_root, files=size["files"],
-                    records=size["records"], compute_kind=args.compute_kind)
+        base = dict(
+            url=url,
+            cache_root=cache_root,
+            files=size["files"],
+            records=size["records"],
+            compute_kind=args.compute_kind,
+        )
 
         print("EarthSciIO Python PrefetchGroup — refresh hidden behind compute, and its RSS cost")
         import netCDF4
         import xarray
 
-        print(f"python={sys.version.split()[0]} numpy={np.__version__} "
-              f"xarray={xarray.__version__} netCDF4={netCDF4.__version__} cpus={os.cpu_count()}")
+        print(
+            f"python={sys.version.split()[0]} numpy={np.__version__} "
+            f"xarray={xarray.__version__} netCDF4={netCDF4.__version__} cpus={os.cpu_count()}"
+        )
         n_ep = size["files"] * size["records"]
-        print(f"source: {size['files']} files x {size['records']} hourly records, U/V/T float32 "
-              f"[{size['lev']}x{size['lat']}x{size['lon']}] zlib; {disk / MB:.1f} MB on disk; "
-              f"{n_ep} epochs; members UV (rps 1) + T (rps 2)")
+        print(
+            f"source: {size['files']} files x {size['records']} hourly records, U/V/T float32 "
+            f"[{size['lev']}x{size['lat']}x{size['lon']}] zlib; {disk / MB:.1f} MB on disk; "
+            f"{n_ep} epochs; members UV (rps 1) + T (rps 2)"
+        )
 
         calib = _spawn(dict(base, mode="sync", compute_s=0.0))
         mean = calib["refresh_s"] / calib["epochs"]
-        print(f"calibration (no compute): refresh {calib['refresh_s']:.3f} s = "
-              f"{mean * 1e3:.1f} ms/epoch mean, {max(calib['per_epoch_s']) * 1e3:.1f} ms max "
-              f"(a file-opening epoch)")
-        levels = ([(args.compute_ms / 1e3, "--compute-ms")] if args.compute_ms is not None
-                  else [(r * mean, f"{r:g} x mean refresh") for r in args.compute_ratio])
+        print(
+            f"calibration (no compute): refresh {calib['refresh_s']:.3f} s = "
+            f"{mean * 1e3:.1f} ms/epoch mean, {max(calib['per_epoch_s']) * 1e3:.1f} ms max "
+            f"(a file-opening epoch)"
+        )
+        levels = (
+            [(args.compute_ms / 1e3, "--compute-ms")]
+            if args.compute_ms is not None
+            else [(r * mean, f"{r:g} x mean refresh") for r in args.compute_ratio]
+        )
         configs = [("thread", 1, 1), ("thread", 2, 1), ("thread", 2, 2), ("thread", 3, 2)]
         if args.process:
             configs += [("process", 2, 2)]
@@ -310,8 +343,9 @@ def main(argv: List[str]) -> int:
             print("  " + _fmt(sync, sync))
             rows = []
             for executor, depth, workers in configs:
-                row = _spawn(dict(spec, mode="prefetch", executor=executor, depth=depth,
-                                  workers=workers))
+                row = _spawn(
+                    dict(spec, mode="prefetch", executor=executor, depth=depth, workers=workers)
+                )
                 rows.append(row)
                 print("  " + _fmt(row, sync))
             best = min(rows, key=lambda r: r["waited_s"])

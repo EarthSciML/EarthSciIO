@@ -94,16 +94,11 @@ def _encode_field(field: Any) -> Dict[str, Any]:
             # before. `shape` is the field's own, so a SCALAR string (a `char
             # label(strlen)` on a private dimension) keeps `shape == []` while its
             # one value still flattens to a one-element `data` list.
-            values = [
-                v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                for v in flat.tolist()
-            ]
+            values = [v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in flat.tolist()]
             enc = {"dtype": "string", "dims": dims, "shape": shape, "data": values}
             return _with_fill_value(enc, field)
         if np.issubdtype(flat.dtype, np.floating):
-            values: List[Any] = [
-                None if (math.isnan(x)) else float(x) for x in flat.tolist()
-            ]
+            values: List[Any] = [None if (math.isnan(x)) else float(x) for x in flat.tolist()]
         elif flat.dtype == np.bool_:
             values = [bool(x) for x in flat.tolist()]
         else:
@@ -168,8 +163,7 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
             "format": fmt,
             "status": "skipped",
             "reason": (
-                f"the '{fmt}' reader needs {', '.join(missing)}, not installed "
-                f"in this environment"
+                f"the '{fmt}' reader needs {', '.join(missing)}, not installed in this environment"
             ),
         }
 

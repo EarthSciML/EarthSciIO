@@ -19,13 +19,21 @@ CORPUS_CACHE = pathlib.Path(__file__).resolve().parent.parent / "conformance" / 
 
 ERA5_META = (
     CORPUS_CACHE
-    / "v1" / "meta"
+    / "v1"
+    / "meta"
     / "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1.json"
 )
 
 NINE_FIELDS = {
-    "schema", "url", "etag", "last_modified", "sha256_content",
-    "bytes", "fetched_at", "source_loader", "auth_realm",
+    "schema",
+    "url",
+    "etag",
+    "last_modified",
+    "sha256_content",
+    "bytes",
+    "fetched_at",
+    "source_loader",
+    "auth_realm",
 }
 
 
@@ -37,8 +45,11 @@ def test_corpus_manifest_roundtrips_byte_identical():
 
 def test_to_json_is_sorted_indented_newline():
     m = Manifest(
-        url="https://h/x.nc", sha256_content="ab", bytes=3,
-        fetched_at="2026-06-26T00:00:00Z", source_loader="era5",
+        url="https://h/x.nc",
+        sha256_content="ab",
+        bytes=3,
+        fetched_at="2026-06-26T00:00:00Z",
+        source_loader="era5",
     )
     text = m.to_json()
     assert text.endswith("\n")

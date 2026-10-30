@@ -979,7 +979,10 @@ mod tests {
         )]);
         let opts = resolved_read_options("s3://private-bucket/store.zarr", &[]);
         assert_eq!(value(&opts, "aws_skip_signature"), None);
-        assert_eq!(value(&opts, "aws_access_key_id"), Some("AKIAEXAMPLENOTREAL"));
+        assert_eq!(
+            value(&opts, "aws_access_key_id"),
+            Some("AKIAEXAMPLENOTREAL")
+        );
 
         // …and only that bucket. The point of the whole exercise.
         let opts = resolved_read_options(PUBLIC_STORE, &[]);

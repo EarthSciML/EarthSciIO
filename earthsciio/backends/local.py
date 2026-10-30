@@ -37,6 +37,7 @@ from ..manifest import Manifest
 
 try:
     import fcntl  # POSIX advisory locks
+
     _HAVE_FCNTL = True
 except ImportError:  # pragma: no cover - non-POSIX fallback
     _HAVE_FCNTL = False
@@ -130,9 +131,7 @@ class LocalStore:
     def exists(self, key: str) -> bool:
         return self.get_blob(key) is not None
 
-    def put_blob(
-        self, key: str, staged: os.PathLike, ext: str = "bin"
-    ) -> pathlib.Path:
+    def put_blob(self, key: str, staged: os.PathLike, ext: str = "bin") -> pathlib.Path:
         """Atomically commit a staged file as the blob for ``key``; return its path.
 
         ``ext`` is the human-debug suffix (``""`` ⇒ store under a bare key, no

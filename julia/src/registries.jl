@@ -33,11 +33,11 @@ backend is `register!(reg, name, impl)` — never an edit to a consumer.
 """
 struct Registry{T}
     kind::String
-    items::Dict{String,T}
-    status::Dict{String,Symbol}
+    items::Dict{String, T}
+    status::Dict{String, Symbol}
 end
 Registry{T}(kind::AbstractString) where {T} =
-    Registry{T}(String(kind), Dict{String,T}(), Dict{String,Symbol}())
+    Registry{T}(String(kind), Dict{String, T}(), Dict{String, Symbol}())
 
 """
     register!(reg, name_or_names, impl; status=:active)
@@ -60,9 +60,12 @@ Base.haskey(r::Registry, name::AbstractString) = haskey(r.items, String(name))
 function Base.getindex(r::Registry, name::AbstractString)
     key = String(name)
     haskey(r.items, key) && return r.items[key]
-    throw(ArgumentError(
-        "'$key' is not registered in the $(r.kind) registry — a registration " *
-        "gap, not a Provider change. Registered: $(registered_names(r))."))
+    throw(
+        ArgumentError(
+            "'$key' is not registered in the $(r.kind) registry — a registration " *
+                "gap, not a Provider change. Registered: $(registered_names(r))."
+        )
+    )
 end
 
 Base.get(r::Registry, name::AbstractString, default) = get(r.items, String(name), default)
@@ -169,8 +172,8 @@ code that consumes it. `nothing` means "this reader slurps every keyword"
 function reader_option_keys(reader)
     m = try
         store_backed(reader) ?
-            which(read_store, Tuple{typeof(reader),Cache,String}) :
-            which(read_native, Tuple{typeof(reader),String})
+            which(read_store, Tuple{typeof(reader), Cache, String}) :
+            which(read_native, Tuple{typeof(reader), String})
     catch
         return nothing            # no applicable method: let the call report it
     end

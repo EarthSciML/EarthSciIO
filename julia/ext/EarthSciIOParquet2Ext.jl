@@ -25,14 +25,17 @@ using Dates: Date, DateTime, Time, value
 
 # The parquet `TimeType`/`TimestampType` unit exponent (-3 millis, -6 micros,
 # -9 nanos), or `nothing` for a column that is not temporal.
-_unit_exponent(pt) = pt isa Union{Parquet2.ParqTime,Parquet2.ParqDateTime} ? pt.exponent : nothing
+_unit_exponent(pt) = pt isa Union{Parquet2.ParqTime, Parquet2.ParqDateTime} ? pt.exponent : nothing
 
 # The parquet unit exponent, refused when the file does not declare one (there
 # is no raw integer to recover without knowing what it counts).
 function _exponent_or_throw(pt, name::AbstractString)
     e = _unit_exponent(pt)
-    e === nothing && throw(ArgumentError(
-        "column $(repr(name)): temporal column with an unknown time unit"))
+    e === nothing && throw(
+        ArgumentError(
+            "column $(repr(name)): temporal column with an unknown time unit"
+        )
+    )
     return e
 end
 
@@ -142,8 +145,10 @@ contract; every option is documented there. The keyword list is also the reader'
 declared option set (`reader_option_keys`), so a [`EarthSciIO.Provider`] rejects
 an unrecognised `reader_kwargs` key at construction rather than ignoring it.
 """
-function read_native(::ParquetReader, path::AbstractString; variables = nothing,
-                     float_columns = nothing, null_int = nothing, null_string = nothing)
+function read_native(
+        ::ParquetReader, path::AbstractString; variables = nothing,
+        float_columns = nothing, null_int = nothing, null_string = nothing
+    )
     ds = try
         Parquet2.Dataset(String(path))
     catch e
@@ -151,10 +156,13 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
         # file, and a nested (list/struct/map) node has no column metadata — so
         # such a file cannot be OPENED, let alone have its flat columns read.
         # Say so, rather than leaking a `FieldError` about thrift internals.
-        throw(ArgumentError(
-            "could not open $(repr(String(path))) as parquet: $(sprint(showerror, e)) " *
-            "(note that the Parquet2.jl backend also cannot open a file containing a " *
-            "NESTED list/struct/map column, even to read that file's flat columns)"))
+        throw(
+            ArgumentError(
+                "could not open $(repr(String(path))) as parquet: $(sprint(showerror, e)) " *
+                    "(note that the Parquet2.jl backend also cannot open a file containing a " *
+                    "NESTED list/struct/map column, even to read that file's flat columns)"
+            )
+        )
     end
     try
         names = String[String(n) for n in Base.names(ds)]
@@ -179,7 +187,7 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
         # column costs nothing at all — not its chunk, and not even the unit
         # check `_rawconv` does for a temporal one.
         function loadcolumn(name::AbstractString)
-            nrows == 0 && return Union{Missing,Int64}[]
+            nrows == 0 && return Union{Missing, Int64}[]
             pt = pts[index[name]]
             # A DECIMAL also needs its FLBA width, to repair Parquet2.jl's
             # unsigned reading of a narrow one (`_decimal_sign_fix`). Schema
@@ -193,22 +201,27 @@ function read_native(::ParquetReader, path::AbstractString; variables = nothing,
                 # reach: the unsigned fold of a negative is 2^56, 17 digits,
                 # which overflows `Dec64`'s 16 and throws in here. Say what
                 # happened instead of leaking a bare `InexactError`.
-                width === nothing || width != 7 || throw(ArgumentError(
-                    "column $(repr(name)): the Parquet2.jl backend cannot decode a " *
-                    "negative DECIMAL stored in a 7-byte FIXED_LEN_BYTE_ARRAY " *
-                    "(pyarrow precision 15-16) — it reads the two's-complement bytes " *
-                    "UNSIGNED, and 2^56 does not fit a Dec64's 16 digits. Store the " *
-                    "column at precision >= 17 (an 8-byte decimal), or read it in " *
-                    "the Python or Rust track. Backend error: $(sprint(showerror, e))"))
+                width === nothing || width != 7 || throw(
+                    ArgumentError(
+                        "column $(repr(name)): the Parquet2.jl backend cannot decode a " *
+                            "negative DECIMAL stored in a 7-byte FIXED_LEN_BYTE_ARRAY " *
+                            "(pyarrow precision 15-16) — it reads the two's-complement bytes " *
+                            "UNSIGNED, and 2^56 does not fit a Dec64's 16 digits. Store the " *
+                            "column at precision >= 17 (an 8-byte decimal), or read it in " *
+                            "the Python or Rust track. Backend error: $(sprint(showerror, e))"
+                    )
+                )
                 rethrow()
             end
             conv === nothing && return v
             return Any[x === missing ? missing : conv(x) for x in v]
         end
 
-        return _assemble_parquet(names, kinds, types, loadcolumn;
-                                 variables = variables, float_columns = float_columns,
-                                 null_int = null_int, null_string = null_string)
+        return _assemble_parquet(
+            names, kinds, types, loadcolumn;
+            variables = variables, float_columns = float_columns,
+            null_int = null_int, null_string = null_string
+        )
     finally
         close(ds)
     end

@@ -41,10 +41,43 @@ ERA5_DATASET = "reanalysis-era5-pressure-levels"
 #: ERA5 pressure levels (hPa), surface (highest pressure) → top (lowest).
 #: 1-based level index 1 = 1000 hPa … index 37 = 1 hPa (matches ``era5.jl``).
 ERA5_PRESSURE_LEVELS_HPA: Tuple[int, ...] = (
-    1000, 975, 950, 925, 900, 875, 850, 825, 800, 775, 750,
-    700, 650, 600, 550, 500, 450, 400, 350, 300,
-    250, 225, 200, 175, 150, 125, 100,
-    70, 50, 30, 20, 10, 7, 5, 3, 2, 1,
+    1000,
+    975,
+    950,
+    925,
+    900,
+    875,
+    850,
+    825,
+    800,
+    775,
+    750,
+    700,
+    650,
+    600,
+    550,
+    500,
+    450,
+    400,
+    350,
+    300,
+    250,
+    225,
+    200,
+    175,
+    150,
+    125,
+    100,
+    70,
+    50,
+    30,
+    20,
+    10,
+    7,
+    5,
+    3,
+    2,
+    1,
 )
 
 #: Reverse lookup: pressure (hPa) → 1-based level index.
@@ -125,8 +158,7 @@ def _normalize_variables(variables: Iterable[str]) -> List[str]:
     unknown = [v for v in out if v not in ERA5_VARIABLES]
     if unknown:
         raise ValueError(
-            f"unknown ERA5 variable(s): {unknown}; valid names: "
-            f"{sorted(ERA5_VARIABLES)}"
+            f"unknown ERA5 variable(s): {unknown}; valid names: {sorted(ERA5_VARIABLES)}"
         )
     return out
 
@@ -192,9 +224,7 @@ def era5_cds_url(
     ``Cache.fetch(...)``. Identical loader fields yield an identical URL, so the
     cache skips a month it already holds.
     """
-    request = era5_request(
-        year, month, days, variables, pressure_levels, area, **kwargs
-    )
+    request = era5_request(year, month, days, variables, pressure_levels, area, **kwargs)
     return encode_cds_url(ERA5_DATASET, request)
 
 

@@ -155,7 +155,9 @@ def build_store(root: pathlib.Path, n_chunks: int, chunk_rows: int, ncols: int) 
     adir.mkdir(parents=True, exist_ok=True)
     nrows = n_chunks * chunk_rows
     (adir / ".zarray").write_bytes(_zarray_json((nrows, ncols), (chunk_rows, ncols)))
-    (adir / ".zattrs").write_bytes(json.dumps({"_ARRAY_DIMENSIONS": ["source", "receptor"]}).encode())
+    (adir / ".zattrs").write_bytes(
+        json.dumps({"_ARRAY_DIMENSIONS": ["source", "receptor"]}).encode()
+    )
 
     # One reusable row pattern; each chunk row is pattern + its global row index,
     # which keeps the data verifiable yet highly compressible.
@@ -198,7 +200,7 @@ class _LocalDirCache:
     def fetch(self, url: str, **_: Any) -> _Entry:
         from earthsciio.errors import CacheMiss
 
-        path = url[len("file://"):] if url.startswith("file://") else url
+        path = url[len("file://") :] if url.startswith("file://") else url
         if not os.path.exists(path):
             raise CacheMiss(url, "bench")
         self.fetches += 1
@@ -214,24 +216,24 @@ class _LocalDirCache:
 # All cases share one store geometry so the intersected chunk volume is fixed;
 # only the number of rows taken *per chunk* changes.
 NCOLS = 1000
-CHUNK_ROWS = 525          # 525 * 1000 * 4 B = 2.10 MB decompressed per chunk
+CHUNK_ROWS = 525  # 525 * 1000 * 4 B = 2.10 MB decompressed per chunk
 
 CASES: Dict[str, Dict[str, int]] = {
     # -- A. THE DISCRIMINATOR: chunk-count scaling at a fixed, tiny output ---- #
     # The output is held ~constant-tiny while the intersected chunk volume grows
     # 32x. A buffering reader's peak grows with it; a streaming reader's does not.
-    "count-25":      {"n_chunks": 25, "rows_per_chunk": 1},
-    "count-50":      {"n_chunks": 50, "rows_per_chunk": 1},
-    "count-100":     {"n_chunks": 100, "rows_per_chunk": 1},
-    "count-200":     {"n_chunks": 200, "rows_per_chunk": 1},
-    "count-400":     {"n_chunks": 400, "rows_per_chunk": 1},
-    "count-800":     {"n_chunks": 800, "rows_per_chunk": 1},
+    "count-25": {"n_chunks": 25, "rows_per_chunk": 1},
+    "count-50": {"n_chunks": 50, "rows_per_chunk": 1},
+    "count-100": {"n_chunks": 100, "rows_per_chunk": 1},
+    "count-200": {"n_chunks": 200, "rows_per_chunk": 1},
+    "count-400": {"n_chunks": 400, "rows_per_chunk": 1},
+    "count-800": {"n_chunks": 800, "rows_per_chunk": 1},
     # -- B. density sweep at a fixed store (fixed intersected chunk volume) --- #
-    "density-1":     {"n_chunks": 100, "rows_per_chunk": 1},
-    "density-8":     {"n_chunks": 100, "rows_per_chunk": 8},
-    "density-37":    {"n_chunks": 100, "rows_per_chunk": 37},
-    "density-131":   {"n_chunks": 100, "rows_per_chunk": 131},
-    "density-525":   {"n_chunks": 100, "rows_per_chunk": 525},  # every row
+    "density-1": {"n_chunks": 100, "rows_per_chunk": 1},
+    "density-8": {"n_chunks": 100, "rows_per_chunk": 8},
+    "density-37": {"n_chunks": 100, "rows_per_chunk": 37},
+    "density-131": {"n_chunks": 100, "rows_per_chunk": 131},
+    "density-525": {"n_chunks": 100, "rows_per_chunk": 525},  # every row
     # -- C. ISRM-shaped chunks (~21 MB decompressed, as in the real SR array) - #
     "isrm-chunk-20": {"n_chunks": 20, "rows_per_chunk": 1, "chunk_rows": 5250},
     "isrm-chunk-40": {"n_chunks": 40, "rows_per_chunk": 1, "chunk_rows": 5250},
@@ -239,12 +241,26 @@ CASES: Dict[str, Dict[str, int]] = {
 }
 
 _GROUPS = {
-    "A. chunk-count scaling, fixed tiny output (THE DISCRIMINATOR)":
-        ["count-25", "count-50", "count-100", "count-200", "count-400", "count-800"],
-    "B. density sweep, fixed 200 MB chunk volume":
-        ["density-1", "density-8", "density-37", "density-131", "density-525"],
-    "C. ISRM-shaped 21 MB chunks, fixed tiny output":
-        ["isrm-chunk-20", "isrm-chunk-40", "isrm-chunk-80"],
+    "A. chunk-count scaling, fixed tiny output (THE DISCRIMINATOR)": [
+        "count-25",
+        "count-50",
+        "count-100",
+        "count-200",
+        "count-400",
+        "count-800",
+    ],
+    "B. density sweep, fixed 200 MB chunk volume": [
+        "density-1",
+        "density-8",
+        "density-37",
+        "density-131",
+        "density-525",
+    ],
+    "C. ISRM-shaped 21 MB chunks, fixed tiny output": [
+        "isrm-chunk-20",
+        "isrm-chunk-40",
+        "isrm-chunk-80",
+    ],
 }
 
 
@@ -369,10 +385,10 @@ def _fmt(row: Dict[str, Any]) -> str:
     out = row["out_f64_bytes"]
     vol = row["intersected_chunk_volume_bytes"]
     return (
-        f"{row['case']:<14} chunks={row['n_chunks']:<4} chunk={row['chunk_decompressed_bytes']/MB:5.1f}MB "
-        f"out={out/MB:7.2f}MB volume={vol/MB:7.1f}MB | "
-        f"live={live/MB:7.1f}MB  live/vol={live/vol:6.3f}x  live/out={live/out:7.2f}x | "
-        f"rssΔ={d/MB:7.1f}MB  ({row['seconds']:.1f}s, {row['chunk_fetches']} chunks read)"
+        f"{row['case']:<14} chunks={row['n_chunks']:<4} chunk={row['chunk_decompressed_bytes'] / MB:5.1f}MB "
+        f"out={out / MB:7.2f}MB volume={vol / MB:7.1f}MB | "
+        f"live={live / MB:7.1f}MB  live/vol={live / vol:6.3f}x  live/out={live / out:7.2f}x | "
+        f"rssΔ={d / MB:7.1f}MB  ({row['seconds']:.1f}s, {row['chunk_fetches']} chunks read)"
     )
 
 
@@ -397,7 +413,10 @@ def main(argv: List[str]) -> int:
     try:
         import zarr
 
-        print(f"zarr={zarr.__version__} async.concurrency={zarr.config.get('async.concurrency')}", end=" ")
+        print(
+            f"zarr={zarr.__version__} async.concurrency={zarr.config.get('async.concurrency')}",
+            end=" ",
+        )
     except Exception:
         pass
     print(f"numpy={np.__version__}")

@@ -14,11 +14,14 @@ from earthsciio.validate import HIT, MISS, REVALIDATE, Temporal, decide, is_fres
 NOW = _dt.datetime(2026, 6, 26, 12, 0, 0, tzinfo=_dt.timezone.utc)
 
 
-def _manifest(*, etag=None, last_modified=None, sha="abc123",
-              fetched_at="2026-06-26T11:00:00Z"):
+def _manifest(*, etag=None, last_modified=None, sha="abc123", fetched_at="2026-06-26T11:00:00Z"):
     return Manifest(
-        url="https://h/x.nc", sha256_content=sha, bytes=1,
-        fetched_at=fetched_at, etag=etag, last_modified=last_modified,
+        url="https://h/x.nc",
+        sha256_content=sha,
+        bytes=1,
+        fetched_at=fetched_at,
+        etag=etag,
+        last_modified=last_modified,
     )
 
 

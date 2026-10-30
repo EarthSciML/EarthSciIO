@@ -51,7 +51,7 @@ What [`take!`](@ref take!(::PrefetchGroup, ::Integer)) returns for one epoch: a
 struct EpochSample
     epoch::Int
     time::Float64
-    samples::Dict{String,Sample}
+    samples::Dict{String, Sample}
 end
 Base.getindex(e::EpochSample, key) = e.samples[string(key)]
 Base.haskey(e::EpochSample, key) = haskey(e.samples, string(key))
@@ -59,8 +59,10 @@ Base.keys(e::EpochSample) = keys(e.samples)
 Base.length(e::EpochSample) = length(e.samples)
 Base.iterate(e::EpochSample, s...) = iterate(e.samples, s...)
 Base.show(io::IO, e::EpochSample) =
-    print(io, "EpochSample(epoch=", e.epoch, ", time=", e.time, ", members=",
-          sort!(collect(keys(e.samples))), ")")
+    print(
+    io, "EpochSample(epoch=", e.epoch, ", time=", e.time, ", members=",
+    sort!(collect(keys(e.samples))), ")"
+)
 
 # One member's sample at one cadence anchor. Shared by every slot in the window
 # whose epoch snaps to that anchor (`refs` counts them).
@@ -148,10 +150,10 @@ mutable struct PrefetchGroup
     providers::Vector{Provider}               # in key order
     B::Vector{Float64}
     depth::Int
-    max_bytes::Union{Nothing,Int}
+    max_bytes::Union{Nothing, Int}
     fetch_ahead::Int
     nworkers::Int
-    windows::Union{Nothing,Vector{Dict{String,Any}}}
+    windows::Union{Nothing, Vector{Dict{String, Any}}}
     transform::Any
     overlap::Bool
     decode_hook::Any
@@ -165,13 +167,13 @@ mutable struct PrefetchGroup
     stop_after::Int                # never admit past this position (a failed slot)
     window::Vector{_PrefetchSlot}  # admitted, not yet taken; window[1].pos == next
     queue::Vector{_PrefetchJob}    # decode jobs waiting for a worker
-    live::Dict{Tuple{Int,Float64},_PrefetchJob}       # (member, anchor) -> job in the window
-    last_taken::Vector{Union{Nothing,_PrefetchJob}}   # per member: its last delivered sample
-    last_anchor::Vector{Union{Nothing,Float64}}       # per member, for `changed`
+    live::Dict{Tuple{Int, Float64}, _PrefetchJob}       # (member, anchor) -> job in the window
+    last_taken::Vector{Union{Nothing, _PrefetchJob}}   # per member: its last delivered sample
+    last_anchor::Vector{Union{Nothing, Float64}}       # per member, for `changed`
     last_bytes::Vector{Int}                           # per member; -1 = not yet known
     running::Int                   # decodes in progress (cancelled ones included)
     workers::Vector{Task}
-    fetch_queue::Vector{Tuple{Int,String}}            # (member, url) to warm
+    fetch_queue::Vector{Tuple{Int, String}}            # (member, url) to warm
     warmed::Set{String}
     warm_through::Int              # order positions whose files were queued to warm
     fatal::Any                     # a scheduler bug caught on a worker
@@ -185,38 +187,61 @@ mutable struct PrefetchGroup
     oversize_epochs::Int
 end
 
-function PrefetchGroup(members::AbstractDict; depth::Integer = 2, max_bytes = nothing,
-                       fetch_ahead = nothing, workers::Integer = 1, windows = nothing,
-                       transform = nothing, _decode_hook = nothing,
-                       _overlap::Bool = Threads.nthreads() > 1)
-    isempty(members) && throw(ArgumentError(
-        "a PrefetchGroup needs at least one member"))
-    byname = Dict{String,Provider}()
+function PrefetchGroup(
+        members::AbstractDict; depth::Integer = 2, max_bytes = nothing,
+        fetch_ahead = nothing, workers::Integer = 1, windows = nothing,
+        transform = nothing, _decode_hook = nothing,
+        _overlap::Bool = Threads.nthreads() > 1
+    )
+    isempty(members) && throw(
+        ArgumentError(
+            "a PrefetchGroup needs at least one member"
+        )
+    )
+    byname = Dict{String, Provider}()
     for (k, p) in members
         key = string(k)
-        haskey(byname, key) && throw(ArgumentError(
-            "two members share the key \"$key\" (keys are compared as strings)"))
-        p isa Provider || throw(ArgumentError(
-            "member \"$key\" is a $(typeof(p)), not a Provider"))
-        p.cadence == DISCRETE || throw(ArgumentError(
-            "member \"$key\" is CONST: a PrefetchGroup schedules DISCRETE providers " *
-            "only — materialize a CONST source once, outside the group"))
-        isempty(p.times) && throw(ArgumentError(
-            "member \"$key\" has no refresh times to schedule"))
+        haskey(byname, key) && throw(
+            ArgumentError(
+                "two members share the key \"$key\" (keys are compared as strings)"
+            )
+        )
+        p isa Provider || throw(
+            ArgumentError(
+                "member \"$key\" is a $(typeof(p)), not a Provider"
+            )
+        )
+        p.cadence == DISCRETE || throw(
+            ArgumentError(
+                "member \"$key\" is CONST: a PrefetchGroup schedules DISCRETE providers " *
+                    "only — materialize a CONST source once, outside the group"
+            )
+        )
+        isempty(p.times) && throw(
+            ArgumentError(
+                "member \"$key\" has no refresh times to schedule"
+            )
+        )
         byname[key] = p
     end
     depth >= 1 || throw(ArgumentError("depth must be at least 1, got $depth"))
     workers >= 1 || throw(ArgumentError("workers must be at least 1, got $workers"))
-    max_bytes === nothing || (max_bytes isa Integer && max_bytes >= 0) || throw(ArgumentError(
-        "max_bytes must be `nothing` or a non-negative integer, got $(repr(max_bytes))"))
+    max_bytes === nothing || (max_bytes isa Integer && max_bytes >= 0) || throw(
+        ArgumentError(
+            "max_bytes must be `nothing` or a non-negative integer, got $(repr(max_bytes))"
+        )
+    )
     fa = fetch_ahead === nothing ? Int(depth) : fetch_ahead
-    (fa isa Integer && fa >= 0) || throw(ArgumentError(
-        "fetch_ahead must be `nothing` or a non-negative integer, got $(repr(fetch_ahead))"))
+    (fa isa Integer && fa >= 0) || throw(
+        ArgumentError(
+            "fetch_ahead must be `nothing` or a non-negative integer, got $(repr(fetch_ahead))"
+        )
+    )
     keys_sorted = sort!(collect(keys(byname)))      # String `<` is byte-wise order
     provs = Provider[byname[k] for k in keys_sorted]
     wins = nothing
     if windows !== nothing
-        wins = Dict{String,Any}[select_form(w) for w in windows]
+        wins = Dict{String, Any}[select_form(w) for w in windows]
         for (k, p) in zip(keys_sorted, provs), w in wins
             try
                 _check_window(p, w)
@@ -229,21 +254,25 @@ function PrefetchGroup(members::AbstractDict; depth::Integer = 2, max_bytes = no
     B = sort!(unique!(reduce(vcat, (p.times for p in provs); init = Float64[])))
     nm = length(provs)
     lk = ReentrantLock()
-    return PrefetchGroup(keys_sorted, provs, B, Int(depth),
-                         max_bytes === nothing ? nothing : Int(max_bytes), Int(fa),
-                         Int(workers), wins, transform, _overlap, _decode_hook,
-                         lk, Threads.Condition(lk),
-                         :new, Int[], 1, 0, typemax(Int), _PrefetchSlot[], _PrefetchJob[],
-                         Dict{Tuple{Int,Float64},_PrefetchJob}(),
-                         Union{Nothing,_PrefetchJob}[nothing for _ in 1:nm],
-                         Union{Nothing,Float64}[nothing for _ in 1:nm], fill(-1, nm),
-                         0, Task[], Tuple{Int,String}[], Set{String}(), 0, nothing,
-                         0.0, 0.0, 0, 0, 0, 0, 0)
+    return PrefetchGroup(
+        keys_sorted, provs, B, Int(depth),
+        max_bytes === nothing ? nothing : Int(max_bytes), Int(fa),
+        Int(workers), wins, transform, _overlap, _decode_hook,
+        lk, Threads.Condition(lk),
+        :new, Int[], 1, 0, typemax(Int), _PrefetchSlot[], _PrefetchJob[],
+        Dict{Tuple{Int, Float64}, _PrefetchJob}(),
+        Union{Nothing, _PrefetchJob}[nothing for _ in 1:nm],
+        Union{Nothing, Float64}[nothing for _ in 1:nm], fill(-1, nm),
+        0, Task[], Tuple{Int, String}[], Set{String}(), 0, nothing,
+        0.0, 0.0, 0, 0, 0, 0, 0
+    )
 end
 
 Base.show(io::IO, g::PrefetchGroup) =
-    print(io, "PrefetchGroup(", length(g.keys), " members, ", length(g.B),
-          " epochs, depth=", g.depth, ", status=:", g.status, ")")
+    print(
+    io, "PrefetchGroup(", length(g.keys), " members, ", length(g.B),
+    " epochs, depth=", g.depth, ", status=:", g.status, ")"
+)
 
 """
     boundaries(g::PrefetchGroup) -> Vector{Float64}
@@ -270,10 +299,12 @@ Cumulative from construction (`start!` does not reset them; spec/prefetch.md §3
 | `oversize_epochs` | slots admitted although larger than `max_bytes` |
 | `overlap` | whether decoding ran beside the consumer (`false` in the fallback) |"""
 stats(g::PrefetchGroup) = lock(g.lock) do
-    (waited_s = g.waited_s, decode_s = g.decode_s, peak_bytes = g.peak_bytes,
-     epochs_decoded = g.epochs_decoded, samples_decoded = g.samples_decoded,
-     samples_reused = g.samples_reused, oversize_epochs = g.oversize_epochs,
-     overlap = g.overlap)
+    (
+        waited_s = g.waited_s, decode_s = g.decode_s, peak_bytes = g.peak_bytes,
+        epochs_decoded = g.epochs_decoded, samples_decoded = g.samples_decoded,
+        samples_reused = g.samples_reused, oversize_epochs = g.oversize_epochs,
+        overlap = g.overlap,
+    )
 end
 
 _check_open(g::PrefetchGroup) =
@@ -286,17 +317,29 @@ function _resolve_order(g::PrefetchGroup, order)
         o = Symbol(order)
         o === :forward && return collect(1:n)
         o === :reverse && return collect(n:-1:1)
-        throw(ArgumentError(
-            "order must be :forward, :reverse or a Vector{Int} of epochs, got $(repr(order))"))
+        throw(
+            ArgumentError(
+                "order must be :forward, :reverse or a Vector{Int} of epochs, got $(repr(order))"
+            )
+        )
     end
-    order isa AbstractVector || throw(ArgumentError(
-        "order must be :forward, :reverse or a Vector{Int} of epochs, got $(typeof(order))"))
+    order isa AbstractVector || throw(
+        ArgumentError(
+            "order must be :forward, :reverse or a Vector{Int} of epochs, got $(typeof(order))"
+        )
+    )
     isempty(order) && throw(ArgumentError("an explicit order must name at least one epoch"))
-    all(x -> x isa Integer, order) || throw(ArgumentError(
-        "an explicit order is a list of (1-based) epoch indices, got $(repr(order))"))
+    all(x -> x isa Integer, order) || throw(
+        ArgumentError(
+            "an explicit order is a list of (1-based) epoch indices, got $(repr(order))"
+        )
+    )
     bad = sort!(unique!(Int[k for k in order if !(1 <= k <= n)]))
-    isempty(bad) || throw(ArgumentError(
-        "epoch(s) $bad are outside 1:$n (this group has $n epochs)"))
+    isempty(bad) || throw(
+        ArgumentError(
+            "epoch(s) $bad are outside 1:$n (this group has $n epochs)"
+        )
+    )
     return Int[k for k in order]
 end
 
@@ -319,9 +362,12 @@ function start!(g::PrefetchGroup, order; from = nothing)
     end
     if from !== nothing
         i = from isa Integer ? findfirst(==(from), epochs) : nothing
-        i === nothing && throw(ArgumentError(
-            "from = $(repr(from)) is not an epoch of this order; it must name an " *
-            "entry to resume at"))
+        i === nothing && throw(
+            ArgumentError(
+                "from = $(repr(from)) is not an epoch of this order; it must name an " *
+                    "entry to resume at"
+            )
+        )
         epochs = epochs[i:end]
     end
     lock(g.lock) do
@@ -362,21 +408,36 @@ function Base.take!(g::PrefetchGroup, k::Integer)
     lock(g.lock)
     try
         _check_open(g)
-        g.status === :new && throw(ArgumentError(
-            "take! before start!: declare an order with start!(g, :forward) first"))
-        g.status === :cancelled && throw(ArgumentError(
-            "take! after cancel!: call start! to declare a new order"))
-        g.status === :failed && throw(ArgumentError(
-            "the order ended at an epoch whose decode failed (its take! raised the " *
-            "error); call start! again — e.g. start!(g, order; from = <next epoch>)"))
-        g.next > length(g.order) && throw(ArgumentError(
-            "the order is exhausted (all $(length(g.order)) entries taken); call " *
-            "start! to re-seek"))
+        g.status === :new && throw(
+            ArgumentError(
+                "take! before start!: declare an order with start!(g, :forward) first"
+            )
+        )
+        g.status === :cancelled && throw(
+            ArgumentError(
+                "take! after cancel!: call start! to declare a new order"
+            )
+        )
+        g.status === :failed && throw(
+            ArgumentError(
+                "the order ended at an epoch whose decode failed (its take! raised the " *
+                    "error); call start! again — e.g. start!(g, order; from = <next epoch>)"
+            )
+        )
+        g.next > length(g.order) && throw(
+            ArgumentError(
+                "the order is exhausted (all $(length(g.order)) entries taken); call " *
+                    "start! to re-seek"
+            )
+        )
         expected = g.order[g.next]
-        k == expected || throw(ArgumentError(
-            "take! expected epoch $expected, the next entry of the order (position " *
-            "$(g.next) of $(length(g.order))), but was asked for epoch $k; nothing " *
-            "was consumed"))
+        k == expected || throw(
+            ArgumentError(
+                "take! expected epoch $expected, the next entry of the order (position " *
+                    "$(g.next) of $(length(g.order))), but was asked for epoch $k; nothing " *
+                    "was consumed"
+            )
+        )
         isempty(g.window) && _advance!(g)
         slot = g.window[1]
         t0 = time()
@@ -395,11 +456,13 @@ function Base.take!(g::PrefetchGroup, k::Integer)
             end
         end
         popfirst!(g.window)
-        samples = Dict{String,Sample}()
+        samples = Dict{String, Sample}()
         for j in slot.jobs
             i = j.member
-            samples[g.keys[i]] = Sample(j.data, j.anchor,
-                                        g.last_anchor[i] === nothing || g.last_anchor[i] != j.anchor)
+            samples[g.keys[i]] = Sample(
+                j.data, j.anchor,
+                g.last_anchor[i] === nothing || g.last_anchor[i] != j.anchor
+            )
             g.last_anchor[i] = j.anchor
             g.last_taken[i] = j
             j.refs -= 1
@@ -424,7 +487,7 @@ and for any epoch other than the next one, decoded or not. In the
 single-thread fallback a slot is decoded by its `take!`, so it is ready only when
 every member sample is a reused one."""
 function Base.isready(g::PrefetchGroup, k::Integer)
-    lock(g.lock) do
+    return lock(g.lock) do
         g.status === :running || return false
         isempty(g.window) && return false
         slot = g.window[1]  # the head: the only slot `take!` can deliver
@@ -518,7 +581,7 @@ function _held_bytes(g::PrefetchGroup)
         id in seen && continue
         push!(seen, id)
         total += j.status === :done ? j.bytes :
-                 j.status in (:queued, :running) ? max(g.last_bytes[j.member], 0) : 0
+            j.status in (:queued, :running) ? max(g.last_bytes[j.member], 0) : 0
     end
     return total
 end
@@ -734,7 +797,7 @@ end
 # warm-up; else it sleeps on the condition. Exits when the group closes. Warming
 # runs on its own task so it never delays a slot the consumer is about to need.
 function _prefetch_worker(g::PrefetchGroup, fetcher::Bool)
-    try
+    return try
         while true
             job, warm = lock(g.lock) do
                 while true

@@ -132,7 +132,4 @@ def expand_datadir(template: str, cache_root: os.PathLike) -> str:
     var), keeping mirror resolution consistent with where blobs actually live.
     """
     root = str(cache_root)
-    return (
-        template.replace("${EARTHSCIDATADIR}", root)
-        .replace("$EARTHSCIDATADIR", root)
-    )
+    return template.replace("${EARTHSCIDATADIR}", root).replace("$EARTHSCIDATADIR", root)

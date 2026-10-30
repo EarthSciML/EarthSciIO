@@ -111,7 +111,4 @@ class NativeDataset:
         return sorted(self.coords)
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
-        return (
-            f"NativeDataset(variables={self.variable_names()}, "
-            f"coords={self.coord_names()})"
-        )
+        return f"NativeDataset(variables={self.variable_names()}, coords={self.coord_names()})"

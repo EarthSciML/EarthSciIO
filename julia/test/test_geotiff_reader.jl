@@ -45,8 +45,8 @@ const EXP_LAT = [39.75, 39.25, 38.75, 38.25]         # LAT0 - (row+0.5)*RES
             @test band.data[i, j] == expected[i, j]
         end
 
-        @test isapprox(nds["lon"].data, EXP_LON; atol = 1e-12)
-        @test isapprox(nds["lat"].data, EXP_LAT; atol = 1e-12)
+        @test isapprox(nds["lon"].data, EXP_LON; atol = 1.0e-12)
+        @test isapprox(nds["lat"].data, EXP_LAT; atol = 1.0e-12)
         @test nds["lon"].dims == ["lon"]
         @test nds["lat"].dims == ["lat"]
     end

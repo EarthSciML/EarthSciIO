@@ -74,8 +74,9 @@ def test_a_select_carrying_both_forms_is_an_error():
 
 
 def test_the_named_form_parses_in_order_and_the_empty_window_is_not_none():
-    parsed = _select_dims({"dims": {"lon": {"indices": [3, 0]}, "lat": {"slice": [1, 4, 2]},
-                                    "lev": "all"}})
+    parsed = _select_dims(
+        {"dims": {"lon": {"indices": [3, 0]}, "lat": {"slice": [1, 4, 2]}, "lev": "all"}}
+    )
     assert list(parsed) == ["lon", "lat", "lev"]
     assert parsed["lon"] == ("indices", [3, 0])
     assert parsed["lat"] == ("slice", 1, 4, 2)
@@ -86,16 +87,26 @@ def test_the_named_form_parses_in_order_and_the_empty_window_is_not_none():
 
 
 def test_dimwindow_spells_the_wire_form():
-    w = DimWindow({"lat": (120, 218), "lon": [1151, 0, 1], "lev": "all",
-                   "x": (0, 9, 3), "y": {"indices": [2, 2]}, "z": {"slice": [1, 5]}})
-    assert w.select == {"dims": {
-        "lat": {"slice": [120, 218]},
-        "lon": {"indices": [1151, 0, 1]},
-        "lev": "all",
-        "x": {"slice": [0, 9, 3]},
-        "y": {"indices": [2, 2]},
-        "z": {"slice": [1, 5]},
-    }}
+    w = DimWindow(
+        {
+            "lat": (120, 218),
+            "lon": [1151, 0, 1],
+            "lev": "all",
+            "x": (0, 9, 3),
+            "y": {"indices": [2, 2]},
+            "z": {"slice": [1, 5]},
+        }
+    )
+    assert w.select == {
+        "dims": {
+            "lat": {"slice": [120, 218]},
+            "lon": {"indices": [1151, 0, 1]},
+            "lev": "all",
+            "x": {"slice": [0, 9, 3]},
+            "y": {"indices": [2, 2]},
+            "z": {"slice": [1, 5]},
+        }
+    }
     # the wire form round-trips, and the window is immutable from outside
     assert DimWindow.from_select(w.select) == w
     w.select["dims"]["lat"]["slice"][0] = 0
@@ -104,10 +115,17 @@ def test_dimwindow_spells_the_wire_form():
     assert DimWindow().select == {"dims": {}}
 
 
-@pytest.mark.parametrize("bad", [
-    {"lat": (1,)}, {"lat": (1, 2, 3, 4)}, {"lat": "some"}, {"lat": 3},
-    {"lat": {"range": [0, 1]}}, {"lat": {"slice": [1]}},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"lat": (1,)},
+        {"lat": (1, 2, 3, 4)},
+        {"lat": "some"},
+        {"lat": 3},
+        {"lat": {"range": [0, 1]}},
+        {"lat": {"slice": [1]}},
+    ],
+)
 def test_dimwindow_rejects_a_malformed_selector(bad):
     with pytest.raises(ValueError):
         DimWindow(bad)
@@ -119,19 +137,23 @@ def test_dimwindow_from_select_refuses_the_positional_form():
 
 
 def test_the_window_union_is_sorted_distinct_or_all():
-    u = _WindowUnion([
-        DimWindow({"lat": (2, 4), "lon": [4, 0, 4]}),
-        {"dims": {"lat": [3, 1], "lev": "all"}},
-        DimWindow({"lat": [], "lon": [1]}),
-    ])
-    assert u.select == {"dims": {
-        "lat": {"indices": [1, 2, 3]},
-        # the middle window leaves lon unnamed: it needs the whole axis
-        "lon": "all",
-        # named "all" (and unnamed elsewhere) stays in the union, so the read
-        # still refuses a name no field carries
-        "lev": "all",
-    }}
+    u = _WindowUnion(
+        [
+            DimWindow({"lat": (2, 4), "lon": [4, 0, 4]}),
+            {"dims": {"lat": [3, 1], "lev": "all"}},
+            DimWindow({"lat": [], "lon": [1]}),
+        ]
+    )
+    assert u.select == {
+        "dims": {
+            "lat": {"indices": [1, 2, 3]},
+            # the middle window leaves lon unnamed: it needs the whole axis
+            "lon": "all",
+            # named "all" (and unnamed elsewhere) stays in the union, so the read
+            # still refuses a name no field carries
+            "lev": "all",
+        }
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -149,8 +171,12 @@ def test_netcdf_named_window_is_the_full_read_sliced_by_name(offline_cache):
     """The gate, at every rank: 1-D AREA_LAT, 2-D PHIS, 3-D PS and the
     staggered U_EDGE, 4-D T and every coordinate — one window, by name."""
     full = _read(offline_cache, MIXED_URL)
-    dims = {"lat": {"slice": [0, 4, 3]}, "lon": {"indices": [4, 4, 0]},
-            "lev": {"indices": [2, 0]}, "lon_edge": {"slice": [5, 6]}}
+    dims = {
+        "lat": {"slice": [0, 4, 3]},
+        "lon": {"indices": [4, 4, 0]},
+        "lev": {"indices": [2, 0]},
+        "lon_edge": {"slice": [5, 6]},
+    }
     got = _read(offline_cache, MIXED_URL, {"dims": dims})
     assert got.variable_names() == full.variable_names()
     assert got.coord_names() == full.coord_names()
@@ -158,8 +184,9 @@ def test_netcdf_named_window_is_the_full_read_sliced_by_name(offline_cache):
         assert got[name].dims == full[name].dims, name
         assert got[name].attrs == full[name].attrs, name
         assert np.asarray(got[name].data).dtype == np.asarray(full[name].data).dtype
-        assert np.array_equal(got[name].data, _slice_by_name(full[name], dims),
-                              equal_nan=True), name
+        assert np.array_equal(got[name].data, _slice_by_name(full[name], dims), equal_nan=True), (
+            name
+        )
     # time is unnamed, so whole and raw
     assert np.array_equal(got["time"].data, full["time"].data)
 
@@ -174,8 +201,9 @@ def test_netcdf_empty_named_window_is_the_whole_read(offline_cache):
 
 @pytest.mark.needs_format("netcdf")
 def test_netcdf_named_window_keeps_an_empty_axis_and_a_length_one_axis(offline_cache):
-    got = _read(offline_cache, MIXED_URL,
-                {"dims": {"lat": {"indices": []}, "lev": {"slice": [1, 2]}}})
+    got = _read(
+        offline_cache, MIXED_URL, {"dims": {"lat": {"indices": []}, "lev": {"slice": [1, 2]}}}
+    )
     assert got["T"].shape == (2, 1, 0, 5)
     assert list(got["T"].dims) == ["time", "lev", "lat", "lon"]
     assert got["AREA_LAT"].shape == (0,)
@@ -188,14 +216,16 @@ def test_netcdf_named_window_keeps_an_empty_axis_and_a_length_one_axis(offline_c
 @pytest.mark.needs_format("netcdf")
 def test_netcdf_named_window_refuses_both_forms(offline_cache):
     with pytest.raises(ValueError, match="both `axes` and `dims`"):
-        _read(offline_cache, MIXED_URL,
-              {"axes": ["all", "all", "all"], "dims": {"lat": "all"}})
+        _read(offline_cache, MIXED_URL, {"axes": ["all", "all", "all"], "dims": {"lat": "all"}})
 
 
 @pytest.mark.needs_format("netcdf")
 def test_netcdf_named_window_refuses_a_dimension_nothing_carries(offline_cache):
-    with pytest.raises(ValueError, match=r"'latitude'.*present are \['lat', 'lev', "
-                                         r"'lon', 'lon_edge', 'time'\]"):
+    with pytest.raises(
+        ValueError,
+        match=r"'latitude'.*present are \['lat', 'lev', "
+        r"'lon', 'lon_edge', 'time'\]",
+    ):
         _read(offline_cache, MIXED_URL, {"dims": {"latitude": {"slice": [0, 1]}}})
     # ...even when it selects "all": a window never silently means nothing
     with pytest.raises(ValueError, match="no field of this read carries"):
@@ -204,7 +234,7 @@ def test_netcdf_named_window_refuses_a_dimension_nothing_carries(offline_cache):
 
 @pytest.mark.needs_format("netcdf")
 def test_netcdf_named_window_checks_against_the_projected_fields(offline_cache):
-    """"The fields of the read" are the PROJECTED data variables plus the
+    """ "The fields of the read" are the PROJECTED data variables plus the
     coordinates: `site` has no coordinate variable, so once the projection
     leaves only the scalar `title`, nothing returned carries it."""
     full = _read(offline_cache, STATIONS_URL)
@@ -237,12 +267,15 @@ def test_netcdf_named_window_refuses_a_time_subset_but_not_all(offline_cache):
 
 
 @pytest.mark.needs_format("netcdf")
-@pytest.mark.parametrize("sel", [
-    {"lat": {"slice": [2, 5]}},      # past the end: never a clamp
-    {"lat": {"slice": [-1, 2]}},     # negative: never a wrap
-    {"lon": {"indices": [0, 5]}},
-    {"lon_edge": {"indices": [-1]}},
-])
+@pytest.mark.parametrize(
+    "sel",
+    [
+        {"lat": {"slice": [2, 5]}},  # past the end: never a clamp
+        {"lat": {"slice": [-1, 2]}},  # negative: never a wrap
+        {"lon": {"indices": [0, 5]}},
+        {"lon_edge": {"indices": [-1]}},
+    ],
+)
 def test_netcdf_named_window_bounds_checks_against_the_file(offline_cache, sel):
     with pytest.raises(IndexError, match="out of range"):
         _read(offline_cache, MIXED_URL, {"dims": sel})
@@ -252,8 +285,9 @@ def test_netcdf_named_window_bounds_checks_against_the_file(offline_cache, sel):
 def test_netcdf_named_window_composes_with_variables_and_records(offline_cache):
     full = _read(offline_cache, MIXED_URL)
     path = offline_cache.fetch(MIXED_URL).path
-    got = NetCDFReader().read_native(path, ["PS"], {"dims": {"lon": [4, 1]}},
-                                     records={"dim": "time", "indices": [1]})
+    got = NetCDFReader().read_native(
+        path, ["PS"], {"dims": {"lon": [4, 1]}}, records={"dim": "time", "indices": [1]}
+    )
     assert got.variable_names() == ["PS"]
     assert np.array_equal(got["PS"].data, full["PS"].data[[1]][:, :, [4, 1]])
 
@@ -281,8 +315,9 @@ def test_zarr_named_window_reads_the_corpus_case_and_no_poisoned_chunk(offline_c
 
     case = _case("named-window-zarr")
     rec = _Recording(offline_cache)
-    got = ZarrReader().read_store(rec, case["resolved_url"], case["variables"],
-                                  select=case["select"])
+    got = ZarrReader().read_store(
+        rec, case["resolved_url"], case["variables"], select=case["select"]
+    )
     for name, spec in case["expected"]["variables"].items():
         assert list(got[name].dims) == spec["dims"]
         assert np.array_equal(got[name].data, np.array(spec["data"], dtype="f8"))
@@ -299,8 +334,12 @@ def test_zarr_a_window_that_overreaches_hits_the_poison(offline_cache):
     case = _case("named-window-zarr")
     reader = ZarrReader()
     with pytest.raises(Exception):
-        reader.read_store(offline_cache, case["resolved_url"], case["variables"],
-                          select={"dims": {"lat": {"slice": [0, 4]}}})
+        reader.read_store(
+            offline_cache,
+            case["resolved_url"],
+            case["variables"],
+            select={"dims": {"lat": {"slice": [0, 4]}}},
+        )
     with pytest.raises(Exception):
         reader.read_store(offline_cache, case["resolved_url"], case["variables"])
 
@@ -318,13 +357,13 @@ def test_zarr_named_window_errors_before_any_chunk_is_fetched(offline_cache):
     ):
         rec = _Recording(offline_cache)
         with pytest.raises(exc, match=msg):
-            reader.read_store(rec, case["resolved_url"], case["variables"],
-                              select={"dims": sel})
+            reader.read_store(rec, case["resolved_url"], case["variables"], select={"dims": sel})
         chunks = [u for u in rec.urls if not u.rsplit("/", 1)[1].startswith((".z", "zarr.json"))]
         assert chunks == [], sel
     with pytest.raises(ValueError, match="both"):
-        reader.read_store(offline_cache, case["resolved_url"], case["variables"],
-                          select={"dims": {}, "axes": []})
+        reader.read_store(
+            offline_cache, case["resolved_url"], case["variables"], select={"dims": {}, "axes": []}
+        )
 
 
 @pytest.mark.needs_format("zarr")
@@ -335,13 +374,21 @@ def test_zarr_named_window_applies_by_name_at_both_ranks(offline_cache):
 
     case = _case("named-window-zarr")
     reader = ZarrReader()
-    got = reader.read_store(offline_cache, case["resolved_url"], case["variables"],
-                            select={"dims": {"lat": [3, 2, 3], "lon": [4, 5, 4]}})
+    got = reader.read_store(
+        offline_cache,
+        case["resolved_url"],
+        case["variables"],
+        select={"dims": {"lat": [3, 2, 3], "lon": [4, 5, 4]}},
+    )
     t3 = np.array(case["expected"]["variables"]["T3"]["data"])  # lat 2,3 x lon 5,3
     assert got["T3"].shape == (3, 3, 3)
     assert got["PS2"].shape == (3, 3)
     assert got["T3"].data[:, 1, 1].tolist() == t3[:, 0, 0].tolist()  # (lat 2, lon 5)
-    empty = reader.read_store(offline_cache, case["resolved_url"], case["variables"],
-                              select={"dims": {"lat": [], "lon": [5]}})
+    empty = reader.read_store(
+        offline_cache,
+        case["resolved_url"],
+        case["variables"],
+        select={"dims": {"lat": [], "lon": [5]}},
+    )
     assert empty["T3"].shape == (3, 0, 1)
     assert empty["PS2"].shape == (0, 1)

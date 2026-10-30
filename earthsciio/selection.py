@@ -135,15 +135,12 @@ def _select_dims(select: Any) -> Optional[Dict[str, Tuple]]:
     dims = select["dims"]
     if not isinstance(dims, Mapping):
         raise ValueError(
-            "select['dims'] must map dimension names to selectors, got "
-            f"{type(dims).__name__}"
+            f"select['dims'] must map dimension names to selectors, got {type(dims).__name__}"
         )
     return {str(d): _parse_axis(s) for d, s in dims.items()}
 
 
-def _absent_dims_error(
-    absent: Sequence[str], present: Iterable[str], hint: str = ""
-) -> ValueError:
+def _absent_dims_error(absent: Sequence[str], present: Iterable[str], hint: str = "") -> ValueError:
     """The error for a named dimension no field of the read carries.
 
     Named in one place so the netcdf and zarr readers say the same thing: a
@@ -242,8 +239,7 @@ def _wire_axis(dim: str, spec: Any) -> Any:
     if isinstance(spec, Mapping):
         if "slice" in spec and len(spec["slice"]) not in (2, 3):
             raise ValueError(
-                f"DimWindow[{dim!r}]: a slice is [start, stop] or [start, stop, "
-                f"step], got {spec!r}"
+                f"DimWindow[{dim!r}]: a slice is [start, stop] or [start, stop, step], got {spec!r}"
             )
         tagged = _parse_axis(dict(spec))
         if tagged[0] == "indices":
@@ -350,8 +346,7 @@ def _as_dims_select(w: Any) -> Dict[str, Any]:
                 "and cannot be one — bake it through reader_kwargs['select']"
             )
     raise TypeError(
-        "expected a DimWindow or a wire select {'dims': {...}}, got "
-        f"{type(w).__name__}"
+        f"expected a DimWindow or a wire select {{'dims': {{...}}}}, got {type(w).__name__}"
     )
 
 
@@ -379,9 +374,7 @@ class _WindowUnion:
 
     def __init__(self, windows: Sequence[Any]) -> None:
         self.selects: List[Dict[str, Any]] = [_as_dims_select(w) for w in windows]
-        self._parsed: List[Dict[str, Tuple]] = [
-            _select_dims(s) or {} for s in self.selects
-        ]
+        self._parsed: List[Dict[str, Tuple]] = [_select_dims(s) or {} for s in self.selects]
         self._wanted: List[Dict[str, Optional[List[int]]]] = [
             {d: _axis_indices_unbounded(a) for d, a in p.items()} for p in self._parsed
         ]
@@ -400,8 +393,7 @@ class _WindowUnion:
         self._union = union
         self.select: Dict[str, Any] = {
             "dims": {
-                d: ("all" if idx is None else {"indices": list(idx)})
-                for d, idx in union.items()
+                d: ("all" if idx is None else {"indices": list(idx)}) for d, idx in union.items()
             }
         }
 

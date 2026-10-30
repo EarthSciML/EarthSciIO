@@ -39,8 +39,10 @@ end
 @testset "zarr: read_store over the committed corpus (numcodecs<->Blosc.jl)" begin
     cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true, verify = true)
     sel = Dict("axes" => Any[Dict("indices" => [1]), Dict("indices" => [1, 4]), "all"])
-    nds = read_store(ZarrReader(), cache, "s3://earthsci-fixtures/isrm-mini.zarr";
-                     variables = ["field3d", "pop1d"], select = sel)
+    nds = read_store(
+        ZarrReader(), cache, "s3://earthsci-fixtures/isrm-mini.zarr";
+        variables = ["field3d", "pop1d"], select = sel
+    )
 
     f3 = nds.variables["field3d"]
     @test f3.dims == ["layer", "y", "x"]
@@ -55,8 +57,10 @@ end
 
 @testset "zarr: full read + partial edge chunk (fill_value 0.0 not -> NaN)" begin
     cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true, verify = true)
-    nds = read_store(ZarrReader(), cache, "s3://earthsci-fixtures/isrm-mini.zarr";
-                     variables = ["field3d"], select = nothing)
+    nds = read_store(
+        ZarrReader(), cache, "s3://earthsci-fixtures/isrm-mini.zarr";
+        variables = ["field3d"], select = nothing
+    )
     f3 = nds.variables["field3d"]
     @test size(f3.data) == (2, 5, 4)               # full array
     @test vec(f3.data[2, 5, :]) == Float64[140, 141, 142, 143]  # partial edge chunk row
@@ -66,12 +70,16 @@ end
 # --- Julia-built poison store: the LAZINESS proof --------------------------- #
 
 function _z_zarray(shape, chunks, dtype)
-    d = Dict("zarr_format" => 2, "shape" => collect(shape), "chunks" => collect(chunks),
-             "dtype" => dtype,
-             "compressor" => Dict("id" => "blosc", "cname" => "lz4", "clevel" => 5,
-                                  "shuffle" => 1, "blocksize" => 0),
-             "fill_value" => 0.0, "order" => "C", "filters" => nothing,
-             "dimension_separator" => nothing)
+    d = Dict(
+        "zarr_format" => 2, "shape" => collect(shape), "chunks" => collect(chunks),
+        "dtype" => dtype,
+        "compressor" => Dict(
+            "id" => "blosc", "cname" => "lz4", "clevel" => 5,
+            "shuffle" => 1, "blocksize" => 0
+        ),
+        "fill_value" => 0.0, "order" => "C", "filters" => nothing,
+        "dimension_separator" => nothing
+    )
     return Vector{UInt8}(codeunits(JSON.json(d)))
 end
 
@@ -88,8 +96,10 @@ function _z_populate(root, objects)
         staged = EarthSciIO.staging_path(store)
         write(staged, data)
         EarthSciIO.put_blob!(store, key, staged; ext = "")
-        m = EarthSciIO.Manifest(url, nothing, nothing, bytes2hex(sha256(data)),
-                                length(data), "2026-06-26T00:00:00Z", nothing, nothing)
+        m = EarthSciIO.Manifest(
+            url, nothing, nothing, bytes2hex(sha256(data)),
+            length(data), "2026-06-26T00:00:00Z", nothing, nothing
+        )
         EarthSciIO.put_meta!(store, key, m)
     end
     return store
@@ -97,7 +107,7 @@ end
 
 @testset "zarr: laziness never touches unselected (poison) chunks" begin
     tmp = mktempdir()
-    objs = Dict{String,Vector{UInt8}}()
+    objs = Dict{String, Vector{UInt8}}()
     objs["$ZBASE/sr/.zarray"] = _z_zarray((3, 500, 1), (1, 100, 1), "<f4")
     objs["$ZBASE/sr/.zattrs"] =
         Vector{UInt8}(codeunits(JSON.json(Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"]))))
@@ -114,8 +124,12 @@ end
     store = _z_populate(tmp, objs)
     cache = Cache(store; offline = true, verify = true)
 
-    sel = Dict("axes" => Any[Dict("indices" => [0]),
-                             Dict("indices" => [5, 12, 305, 340]), "all"])
+    sel = Dict(
+        "axes" => Any[
+            Dict("indices" => [0]),
+            Dict("indices" => [5, 12, 305, 340]), "all",
+        ]
+    )
     nds = read_store(ZarrReader(), cache, ZBASE; variables = ["sr"], select = sel)
     f = nds.variables["sr"]
     @test size(f.data) == (1, 4, 1)
@@ -123,8 +137,10 @@ end
 
     # Control: a selection that DOES hit a poison chunk decode-errors.
     badsel = Dict("axes" => Any[Dict("indices" => [0]), Dict("indices" => [150]), "all"])
-    @test_throws Exception read_store(ZarrReader(), cache, ZBASE;
-                                      variables = ["sr"], select = badsel)
+    @test_throws Exception read_store(
+        ZarrReader(), cache, ZBASE;
+        variables = ["sr"], select = badsel
+    )
 end
 
 @testset "zarr: registry dispatch + store-backed provider seam" begin
@@ -133,10 +149,16 @@ end
     @test !store_backed(FORMAT_REGISTRY["netcdf"])
 
     cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true, verify = true)
-    p = const_provider(cache, "s3://earthsci-fixtures/isrm-mini.zarr";
-                       format = "zarr", variables = ["field3d"],
-                       reader_kwargs = (; select = Dict("axes" =>
-                           Any[Dict("indices" => [1]), Dict("indices" => [1, 4]), "all"])))
+    p = const_provider(
+        cache, "s3://earthsci-fixtures/isrm-mini.zarr";
+        format = "zarr", variables = ["field3d"],
+        reader_kwargs = (;
+            select = Dict(
+                "axes" =>
+                    Any[Dict("indices" => [1]), Dict("indices" => [1, 4]), "all"]
+            ),
+        )
+    )
     nds = materialize(p)
     @test size(nds.variables["field3d"].data) == (1, 2, 4)
 end
@@ -144,8 +166,8 @@ end
 @testset "zarr: s3 transport rewrite" begin
     @test status_of(TRANSPORT_REGISTRY, "s3") == :active
     @test EarthSciIO.s3_https_url("s3://inmap-model/isrm_v1.2.1.zarr/PrimaryPM25/0.5.0") ==
-          "https://inmap-model.s3.us-east-2.amazonaws.com/isrm_v1.2.1.zarr/PrimaryPM25/0.5.0"
-    @test EarthSciIO.s3_https_url("s3://b/k/o"; ) isa String
+        "https://inmap-model.s3.us-east-2.amazonaws.com/isrm_v1.2.1.zarr/PrimaryPM25/0.5.0"
+    @test EarthSciIO.s3_https_url("s3://b/k/o") isa String
     withenv("EARTHSCI_S3_REGION" => "eu-west-1") do
         @test EarthSciIO.resolve_s3_region() == "eu-west-1"
     end
@@ -182,10 +204,15 @@ const ZSR = "s3://earthsci-fixtures/sr-mini.zarr"
 # global (layer, source, 0) encodes its indices: value = layer*1_000_000 + source
 # (exact in Float32 for these ranges), so a selection's values are self-checking.
 function _z_sr_store(root)
-    objs = Dict{String,Vector{UInt8}}()
+    objs = Dict{String, Vector{UInt8}}()
     objs["$ZSR/sr/.zarray"] = _z_zarray((3, 500, 1), (1, 100, 1), "<f4")
-    objs["$ZSR/sr/.zattrs"] = Vector{UInt8}(codeunits(JSON.json(
-        Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"]))))
+    objs["$ZSR/sr/.zattrs"] = Vector{UInt8}(
+        codeunits(
+            JSON.json(
+                Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"])
+            )
+        )
+    )
     for c0 in 0:2, c1 in 0:4
         a = Array{Float32}(undef, 1, 100, 1)
         for j in 0:99
@@ -202,8 +229,12 @@ end
     p = const_provider(cache, ZSR; format = "zarr", variables = ["sr"])
 
     # layer 1, sources {5,12}∈chunk0 and {305,340}∈chunk3, all receptors.
-    sel = Dict("axes" => Any[Dict("indices" => [1]),
-                             Dict("indices" => [5, 12, 305, 340]), "all"])
+    sel = Dict(
+        "axes" => Any[
+            Dict("indices" => [1]),
+            Dict("indices" => [5, 12, 305, 340]), "all",
+        ]
+    )
     nds = materialize(p; select = sel)
     f = nds.variables["sr"]
     @test f.dims == ["layer", "source", "receptor"]
@@ -212,8 +243,13 @@ end
 
     # Laziness: fetched ONLY .zarray + .zattrs + chunks (1,0,0) and (1,3,0) — the
     # 13 other chunks (layers 0/2, source-chunks 1/2/4) were never touched.
-    expected = Set(cache_key.([
-        "$ZSR/sr/.zarray", "$ZSR/sr/.zattrs", "$ZSR/sr/1.0.0", "$ZSR/sr/1.3.0"]))
+    expected = Set(
+        cache_key.(
+            [
+                "$ZSR/sr/.zarray", "$ZSR/sr/.zattrs", "$ZSR/sr/1.0.0", "$ZSR/sr/1.3.0",
+            ]
+        )
+    )
     @test Set(store.gets) == expected
     @test length(store.gets) == 4
 end
@@ -221,8 +257,10 @@ end
 @testset "zarr: per-call select OVERRIDES baked reader_kwargs[:select]" begin
     cache = Cache(_z_sr_store(mktempdir()); offline = true, verify = false)
     baked = Dict("axes" => Any[Dict("indices" => [0]), Dict("indices" => [7]), "all"])
-    p = const_provider(cache, ZSR; format = "zarr", variables = ["sr"],
-                       reader_kwargs = (; select = baked))
+    p = const_provider(
+        cache, ZSR; format = "zarr", variables = ["sr"],
+        reader_kwargs = (; select = baked)
+    )
 
     # No per-call select ⇒ the baked select still applies (regression).
     @test vec(materialize(p).variables["sr"].data) == Float64[7]            # layer 0, src 7
@@ -247,8 +285,10 @@ end
     cache = Cache(LocalStore(joinpath(ZCORPUS, "cache")); offline = true, verify = true)
 
     # store-backed zarr provider CAN push down
-    pz = const_provider(cache, "s3://earthsci-fixtures/isrm-mini.zarr";
-                        format = "zarr", variables = ["field3d"])
+    pz = const_provider(
+        cache, "s3://earthsci-fixtures/isrm-mini.zarr";
+        format = "zarr", variables = ["field3d"]
+    )
     @test supports_selection(ZarrReader())
     @test supports_selection(pz)
 
@@ -293,14 +333,17 @@ end
 function _zarr_gather_read(cache, base, arr, axes_spec)
     meta = EarthSciIO._parse_zarray(EarthSciIO._fetch_bytes(cache, "$base/$arr/.zarray"))
     ndim = EarthSciIO._ndim(meta)
-    sel = [EarthSciIO._resolve_axis(EarthSciIO._parse_axis(axes_spec[d]), meta.shape[d])
-           for d in 1:ndim]
-    buffers = Dict{NTuple{ndim,Int},Any}()
+    sel = [
+        EarthSciIO._resolve_axis(EarthSciIO._parse_axis(axes_spec[d]), meta.shape[d])
+            for d in 1:ndim
+    ]
+    buffers = Dict{NTuple{ndim, Int}, Any}()
     for ck in EarthSciIO._needed_chunks(sel, meta.chunks)
         raw = EarthSciIO._fetch_bytes_optional(
-            cache, "$base/$arr/" * EarthSciIO._chunk_key(ck, meta.dim_sep))
+            cache, "$base/$arr/" * EarthSciIO._chunk_key(ck, meta.dim_sep)
+        )
         buffers[ck] = raw === nothing ? nothing :
-                      EarthSciIO._chunk_array(meta, EarthSciIO._decompress(meta, raw))
+            EarthSciIO._chunk_array(meta, EarthSciIO._decompress(meta, raw))
     end
     return EarthSciIO._assemble(sel, meta, buffers)
 end
@@ -345,11 +388,16 @@ const ZS_CHUNKBYTES = ZS_ROWS * ZS_NCOL * 8          # 800_000 B decompressed
 const ZS_ABSENT = 7
 
 function _z_scatter_store(root)
-    objs = Dict{String,Vector{UInt8}}()
+    objs = Dict{String, Vector{UInt8}}()
     objs["$ZSCAT/sr/.zarray"] =
         _z_zarray((1, ZS_NCH * ZS_ROWS, ZS_NCOL), (1, ZS_ROWS, ZS_NCOL), "<f8")
-    objs["$ZSCAT/sr/.zattrs"] = Vector{UInt8}(codeunits(JSON.json(
-        Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"]))))
+    objs["$ZSCAT/sr/.zattrs"] = Vector{UInt8}(
+        codeunits(
+            JSON.json(
+                Dict("_ARRAY_DIMENSIONS" => ["layer", "source", "receptor"])
+            )
+        )
+    )
     for c in 0:(ZS_NCH - 1)
         c == ZS_ABSENT && continue                   # absent object -> fill_value
         a = Array{Float64}(undef, 1, ZS_ROWS, ZS_NCOL)
@@ -369,8 +417,10 @@ end
     axes_spec = Any[Dict("indices" => [0]), Dict("indices" => rows), "all"]
 
     store.live = Int[]; store.on = true
-    got = read_store(ZarrReader(), cache, ZSCAT;
-                     variables = ["sr"], select = Dict("axes" => axes_spec)).variables["sr"].data
+    got = read_store(
+        ZarrReader(), cache, ZSCAT;
+        variables = ["sr"], select = Dict("axes" => axes_spec)
+    ).variables["sr"].data
     scatter_live = copy(store.live)
 
     store.live = Int[]
@@ -401,7 +451,7 @@ end
     #     to ~39 chunks), the scatter drops each chunk before the next fetch.
     scatter_span = maximum(scatter_live) - minimum(scatter_live)
     gather_span = maximum(gather_live) - minimum(gather_live)
-    @info "zarr scatter vs gather live-heap span" chunk_MB=ZS_CHUNKBYTES/2^20 scatter_MB=scatter_span/2^20 gather_MB=gather_span/2^20
+    @info "zarr scatter vs gather live-heap span" chunk_MB = ZS_CHUNKBYTES / 2^20 scatter_MB = scatter_span / 2^20 gather_MB = gather_span / 2^20
     @test gather_span > 20 * ZS_CHUNKBYTES        # old path really did pin them all
     @test scatter_span < 4 * ZS_CHUNKBYTES        # new path holds O(1) chunks
     @test scatter_span < gather_span ÷ 5

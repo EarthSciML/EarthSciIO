@@ -25,8 +25,8 @@
 
 use std::path::PathBuf;
 
-use earthsciio::transport::{S3Transport, Transport};
 use earthsciio::transport::Conditional;
+use earthsciio::transport::{S3Transport, Transport};
 
 /// Serializes the tests in this file.
 ///
@@ -155,7 +155,10 @@ fn a_named_private_bucket_reads_signed() {
             None,
         )
         .expect("revalidation must not fail");
-    assert_eq!(again.bytes_written, 0, "an unchanged object was re-downloaded");
+    assert_eq!(
+        again.bytes_written, 0,
+        "an unchanged object was re-downloaded"
+    );
 }
 
 /// **A bucket named in `EARTHSCI_S3_BUCKET_OPTIONS` reads signed, carrying

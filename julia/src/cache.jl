@@ -19,9 +19,11 @@ struct IntegrityError <: Exception
     expected::String
     got::String
 end
-Base.showerror(io::IO, e::IntegrityError) = print(io,
+Base.showerror(io::IO, e::IntegrityError) = print(
+    io,
     "IntegrityError: blob for ", e.url, " (key=", e.key, ") sha256=", e.got,
-    " != manifest sha256_content=", e.expected)
+    " != manifest sha256_content=", e.expected
+)
 
 # --- environment ------------------------------------------------------------
 
@@ -70,7 +72,7 @@ cache_key(resolved_url::AbstractString) = bytes2hex(sha256(codeunits(resolved_ur
 
 """Sub-range request: `#bytes=<a>-<b>` is appended before hashing, so a
 byte-slice is its own cache entry."""
-cache_key(resolved_url::AbstractString, byterange::Tuple{Integer,Integer}) =
+cache_key(resolved_url::AbstractString, byterange::Tuple{Integer, Integer}) =
     cache_key(string(resolved_url, "#bytes=", byterange[1], "-", byterange[2]))
 
 # --- url helpers ------------------------------------------------------------
@@ -124,10 +126,10 @@ end
 # cannot carry this: "the corpus was deleted", "the corpus was replaced" and
 # "this host cannot read the corpus" are three different facts, and only the
 # first two are grounds to re-ingest.
-const SOURCE_CURRENT  = :current    # byte-for-byte the file the manifest records
+const SOURCE_CURRENT = :current    # byte-for-byte the file the manifest records
 const SOURCE_REPLACED = :replaced   # present, and a different file
-const SOURCE_MISSING  = :missing    # nothing there, or not a regular file
-const SOURCE_UNKNOWN  = :unknown    # could not be read at all; nothing learned
+const SOURCE_MISSING = :missing    # nothing there, or not a regular file
+const SOURCE_UNKNOWN = :unknown    # could not be read at all; nothing learned
 
 """`stat` the source and classify what came back.
 
@@ -144,7 +146,7 @@ function _stat_source(source::AbstractString)
         # `stat` throws only on a path it cannot walk at all (ENOTDIR, EACCES on
         # a parent); a plain absence comes back as a zero `StatStruct`.
         return nothing, (e isa Base.IOError && e.code == Base.UV_ENOENT) ?
-                        SOURCE_MISSING : SOURCE_UNKNOWN
+            SOURCE_MISSING : SOURCE_UNKNOWN
     end
     if !ispath(st)
         # Julia's `stat` reports "not there" for a genuine absence AND for a
@@ -191,12 +193,14 @@ already more than the margin old, in process, after the file was already read
 once. The window is one `Cache` lifetime."""
 mutable struct SourceRevalidator
     # path => (size, mtime, sha, hashed_at)
-    seen::Dict{String,Tuple{Int,Float64,String,Float64}}
+    seen::Dict{String, Tuple{Int, Float64, String, Float64}}
     lock::ReentrantLock
     full_reads::Int
 end
-SourceRevalidator() = SourceRevalidator(Dict{String,Tuple{Int,Float64,String,Float64}}(),
-                                        ReentrantLock(), 0)
+SourceRevalidator() = SourceRevalidator(
+    Dict{String, Tuple{Int, Float64, String, Float64}}(),
+    ReentrantLock(), 0
+)
 
 # How many fingerprints one revalidator remembers before dropping the lot. A
 # read loop touches a handful of files; this only stops an unbounded walk from
@@ -228,8 +232,8 @@ function source_state(rev::SourceRevalidator, source::AbstractString, m::Manifes
         get(rev.seen, String(source), nothing)
     end
     if remembered !== nothing && remembered[1] == fingerprint[1] &&
-       remembered[2] == fingerprint[2] &&
-       fingerprint[2] < remembered[4] - SOURCE_RACY_MARGIN
+            remembered[2] == fingerprint[2] &&
+            fingerprint[2] < remembered[4] - SOURCE_RACY_MARGIN
         return _source_verdict(remembered[3], m)
     end
     hashed_at = time()
@@ -330,16 +334,20 @@ struct Cache
     revalidator::SourceRevalidator
 end
 
-function Cache(store::Store; offline::Union{Bool,Nothing} = nothing,
-              auth = nothing, verify::Bool = false,
-              revalidate_file::Union{Bool,Nothing} = nothing)
+function Cache(
+        store::Store; offline::Union{Bool, Nothing} = nothing,
+        auth = nothing, verify::Bool = false,
+        revalidate_file::Union{Bool, Nothing} = nothing
+    )
     off = offline === nothing ? env_offline() : offline
     rev = revalidate_file === nothing ? env_revalidate_file() : revalidate_file
     return Cache(store, off, auth, verify, rev, SourceRevalidator())
 end
 
-function Cache(; store::AbstractString = "local", root::AbstractString = datadir(),
-              kwargs...)
+function Cache(;
+        store::AbstractString = "local", root::AbstractString = datadir(),
+        kwargs...
+    )
     return Cache(make_store(store; root = root); kwargs...)
 end
 
@@ -350,7 +358,7 @@ is_offline(c::Cache) = c.offline
 struct CacheEntry
     key::String
     path::String
-    manifest::Union{Manifest,Nothing}
+    manifest::Union{Manifest, Nothing}
     status::Symbol            # :hit | :downloaded | :not_modified
 end
 
@@ -376,10 +384,12 @@ this URL is ONE OBJECT of a store-backed read (a Zarr chunk, fetched once per
 object) rather than a whole blob, and is passed to the transport, which bounds
 such a fetch more tightly — the caller knows which it is; the transport must not
 guess (transport.jl, `_http_store_read_ceiling`)."""
-function fetch_blob(c::Cache, resolved_url::AbstractString;
-                    source_loader = nothing, auth_realm = nothing,
-                    ttl::Union{Real,Nothing} = nothing, revalidate::Bool = false,
-                    store_read::Bool = false)
+function fetch_blob(
+        c::Cache, resolved_url::AbstractString;
+        source_loader = nothing, auth_realm = nothing,
+        ttl::Union{Real, Nothing} = nothing, revalidate::Bool = false,
+        store_read::Bool = false
+    )
     key = cache_key(resolved_url)
     bp = get_blob(c.store, key)
     present = bp !== nothing
@@ -397,8 +407,10 @@ function fetch_blob(c::Cache, resolved_url::AbstractString;
     # or `revalidate` was set — so we WANT a conditional GET, not a presence
     # short-circuit. If it is absent, we are filling a miss (and a blob that
     # appears under the lock means a peer filled it: reuse it).
-    return _locked_fetch(c, resolved_url, key, source_loader, auth_realm, present,
-                         store_read, ttl, revalidate)
+    return _locked_fetch(
+        c, resolved_url, key, source_loader, auth_realm, present,
+        store_read, ttl, revalidate
+    )
 end
 
 # Validity for the lock-free fast path. Offline: presence (+ optional integrity).
@@ -463,9 +475,11 @@ function _verify_integrity(c::Cache, url, key, bp)
     return nothing
 end
 
-function _locked_fetch(c::Cache, url, key, source_loader, auth_realm, want_revalidate,
-                       store_read::Bool = false, ttl = nothing,
-                       revalidate::Bool = false)
+function _locked_fetch(
+        c::Cache, url, key, source_loader, auth_realm, want_revalidate,
+        store_read::Bool = false, ttl = nothing,
+        revalidate::Bool = false
+    )
     return lock_key(c.store, key) do
         # Re-check under the lock. When filling a miss, a blob that appeared
         # means a peer process just filled it — reuse it, take no download.
@@ -499,10 +513,12 @@ function _locked_fetch(c::Cache, url, key, source_loader, auth_realm, want_reval
             (etag = meta.etag, last_modified = meta.last_modified) : NamedTuple()
         staged = staging_path(c.store)
         try
-            res = fetch!(transport, url, staged;
-                         conditional = conditional,
-                         auth = resolve_auth(c.auth, auth_realm),
-                         store_read = store_read)
+            res = fetch!(
+                transport, url, staged;
+                conditional = conditional,
+                auth = resolve_auth(c.auth, auth_realm),
+                store_read = store_read
+            )
 
             if res.status == :not_modified
                 bp2 = get_blob(c.store, key)
@@ -516,9 +532,11 @@ function _locked_fetch(c::Cache, url, key, source_loader, auth_realm, want_reval
             sha = bytes2hex(open(sha256, staged))
             nbytes = filesize(staged)
             committed = put_blob!(c.store, key, staged; ext = url_ext(url))
-            manifest = Manifest(String(url), res.etag, res.last_modified, sha,
-                                nbytes, rfc3339_utc(),
-                                _strornothing(source_loader), _strornothing(auth_realm))
+            manifest = Manifest(
+                String(url), res.etag, res.last_modified, sha,
+                nbytes, rfc3339_utc(),
+                _strornothing(source_loader), _strornothing(auth_realm)
+            )
             put_meta!(c.store, key, manifest)
             return CacheEntry(key, committed, manifest, :downloaded)
         finally
@@ -528,5 +546,7 @@ function _locked_fetch(c::Cache, url, key, source_loader, auth_realm, want_reval
 end
 
 _touch_fetched_at(::Nothing) = nothing
-_touch_fetched_at(m::Manifest) = Manifest(m.url, m.etag, m.last_modified,
-    m.sha256_content, m.bytes, rfc3339_utc(), m.source_loader, m.auth_realm)
+_touch_fetched_at(m::Manifest) = Manifest(
+    m.url, m.etag, m.last_modified,
+    m.sha256_content, m.bytes, rfc3339_utc(), m.source_loader, m.auth_realm
+)

@@ -19,7 +19,7 @@ function _assert_single_intact(root, url, payload)
     m = EarthSciIO.get_meta(store, key)
     @test m !== nothing
     @test m.sha256_content == bytes2hex(sha256(payload))
-    @test m.bytes == length(payload)
+    return @test m.bytes == length(payload)
 end
 
 @testset "concurrency — intra-process race (cooperative tasks)" begin

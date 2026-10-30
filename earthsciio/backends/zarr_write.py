@@ -115,8 +115,7 @@ def _profile(name: str):
     if name == "wasm":
         return ZSTD_WASM
     raise ValueError(
-        f"unknown codec profile {name!r} "
-        "(expected 'diagnostic', 'checkpoint', or 'wasm')"
+        f"unknown codec profile {name!r} (expected 'diagnostic', 'checkpoint', or 'wasm')"
     )
 
 
@@ -208,32 +207,25 @@ class OutputSchema:
         self.vars = [(str(k), v) for k, v in self.vars]
         self.chunk_shape = {str(k): int(v) for k, v in self.chunk_shape.items()}
         self.shard_shape = {str(k): int(v) for k, v in self.shard_shape.items()}
-        self.coords = [
-            (str(k), (np.asarray(vals), dict(a))) for k, (vals, a) in self.coords
-        ]
+        self.coords = [(str(k), (np.asarray(vals), dict(a))) for k, (vals, a) in self.coords]
         self.attrs = dict(self.attrs)
         self.time_dtype = np.dtype(self.time_dtype)
         self.statics = [(str(k), v) for k, v in self.statics]
         if isinstance(self.time_mode, str):
             if self.time_mode != "append":
                 raise ValueError(
-                    f"time_mode must be 'append' or IndexedTime(times), "
-                    f"got {self.time_mode!r}"
+                    f"time_mode must be 'append' or IndexedTime(times), got {self.time_mode!r}"
                 )
         elif isinstance(self.time_mode, IndexedTime):
             n = self.time_mode.n_records
-            self.dims = [
-                (k, n if k == self.time_dim and v == 0 else v) for k, v in self.dims
-            ]
+            self.dims = [(k, n if k == self.time_dim and v == 0 else v) for k, v in self.dims]
             if self.dim_lengths.get(self.time_dim, n) != n:
                 raise ValueError(
                     f"indexed time mode: dims[{self.time_dim!r}] = "
                     f"{self.dim_lengths[self.time_dim]} != n_records = {n}"
                 )
         else:
-            raise TypeError(
-                f"time_mode must be 'append' or IndexedTime, got {self.time_mode!r}"
-            )
+            raise TypeError(f"time_mode must be 'append' or IndexedTime, got {self.time_mode!r}")
 
     @property
     def indexed(self) -> bool:
@@ -280,9 +272,7 @@ def _open_output_store(base_url: str):
     """
     from zarr.storage import LocalStore
 
-    if base_url.startswith("s3://") or "://" in base_url and not base_url.startswith(
-        "file://"
-    ):
+    if base_url.startswith("s3://") or "://" in base_url and not base_url.startswith("file://"):
         # Object-store / any fsspec-addressable target (needs the ``s3`` extra).
         from zarr.storage import FsspecStore
 
@@ -361,9 +351,7 @@ class ZarrWriter:
         non-``None`` ``region`` must equal the handle's bound region."""
         return h.write_record(t, arrays, region=region)
 
-    def write_record_at(
-        self, h, index: int, t: float, arrays: Dict[str, Any], region=None
-    ) -> None:
+    def write_record_at(self, h, index: int, t: float, arrays: Dict[str, Any], region=None) -> None:
         """Write record ``index`` (``indexed`` mode, any order); ``t`` must equal
         ``times[index]`` bitwise and the record must not be committed."""
         h.write_record_at(index, t, arrays, region=region)

@@ -47,7 +47,10 @@ fn value(t: usize, y: usize, x: usize) -> f64 {
 }
 
 fn attrs(pairs: &[(&str, Value)]) -> Map<String, Value> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }
 
 /// Write the multi-shard fixture store and return its path.
@@ -60,10 +63,14 @@ fn write_fixture(store_dir: &Path) {
             }
         }
     }
-    let chunk_shape: BTreeMap<String, usize> =
-        [("time", 1), ("y", 3), ("x", NX)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    let shard_shape: BTreeMap<String, usize> =
-        [("time", 2), ("y", 3), ("x", NX)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    let chunk_shape: BTreeMap<String, usize> = [("time", 1), ("y", 3), ("x", NX)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
+    let shard_shape: BTreeMap<String, usize> = [("time", 2), ("y", 3), ("x", NX)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
 
     let schema = OutputSchema {
         dims: vec![("time".into(), NT), ("y".into(), NY), ("x".into(), NX)],
@@ -123,10 +130,15 @@ fn chunk_objects(store_dir: &Path, var: &str) -> Vec<(Vec<usize>, PathBuf)> {
     let mut out = Vec::new();
     for path in files {
         let rel = path.strip_prefix(&root).unwrap();
-        let comps: Vec<String> =
-            rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let comps: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
         // Metadata objects are not chunks.
-        if comps.iter().any(|c| c.as_str() == "zarr.json" || c.starts_with('.')) {
+        if comps
+            .iter()
+            .any(|c| c.as_str() == "zarr.json" || c.starts_with('.'))
+        {
             continue;
         }
         let id: Vec<usize> = comps
@@ -187,7 +199,10 @@ fn scatter_as_you_go_decodes_exactly_and_stays_lazy() {
             poisoned += 1;
         }
     }
-    assert_eq!(poisoned, 2, "the laziness check needs unselected chunks to poison");
+    assert_eq!(
+        poisoned, 2,
+        "the laziness check needs unselected chunks to poison"
+    );
 
     let sel = Selection::Orthogonal(vec![
         AxisSelect::Indices(vec![3]),

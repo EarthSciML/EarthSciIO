@@ -272,8 +272,7 @@ class RegistryEntry(Generic[T]):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return (
-            f"RegistryEntry(name={self.name!r}, status={self.status!r}, "
-            f"keys={list(self.keys)!r})"
+            f"RegistryEntry(name={self.name!r}, status={self.status!r}, keys={list(self.keys)!r})"
         )
 
 
@@ -327,8 +326,7 @@ class Registry(Generic[T]):
         """
         if status not in ("active", "stub"):
             raise ValueError(
-                f"{self.kind} registry: status must be 'active' or 'stub', "
-                f"got {status!r}"
+                f"{self.kind} registry: status must be 'active' or 'stub', got {status!r}"
             )
         key_tuple: Tuple[str, ...] = tuple(keys) if keys is not None else (name,)
 
@@ -348,9 +346,7 @@ class Registry(Generic[T]):
                     f"backend {other.name!r}"
                 )
 
-        entry: RegistryEntry[T] = RegistryEntry(
-            name, factory, status, key_tuple, dict(meta)
-        )
+        entry: RegistryEntry[T] = RegistryEntry(name, factory, status, key_tuple, dict(meta))
         self._entries[name] = entry
         for k in key_tuple:
             self._by_key[k] = entry
@@ -378,9 +374,7 @@ class Registry(Generic[T]):
         try:
             return self._by_key[key]
         except KeyError:
-            raise BackendNotRegistered(
-                self.kind, self.keyed_by, key, self._by_key.keys()
-            ) from None
+            raise BackendNotRegistered(self.kind, self.keyed_by, key, self._by_key.keys()) from None
 
     def factory(self, key: str) -> Callable[..., T]:
         """The factory (class/callable) registered for ``key``."""
@@ -401,9 +395,7 @@ class Registry(Generic[T]):
         """
         groups = self.entry(key).meta.get("requires") or ()
         return [
-            " or ".join(group)
-            for group in groups
-            if not any(_module_available(m) for m in group)
+            " or ".join(group) for group in groups if not any(_module_available(m) for m in group)
         ]
 
     def available(self, key: str) -> bool:
@@ -449,8 +441,7 @@ class Registry(Generic[T]):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return (
-            f"Registry(kind={self.kind!r}, keyed_by={self.keyed_by!r}, "
-            f"backends={self.names()!r})"
+            f"Registry(kind={self.kind!r}, keyed_by={self.keyed_by!r}, backends={self.names()!r})"
         )
 
 

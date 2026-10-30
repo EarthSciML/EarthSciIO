@@ -18,8 +18,8 @@ use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
 use common::{
-    assert_ds_bitwise, corpus_cache, fresh_refresh, read_json, scenario_provider, selections, splitmix,
-    ts,
+    assert_ds_bitwise, corpus_cache, fresh_refresh, read_json, scenario_provider, selections,
+    splitmix, ts,
 };
 use earthsciio::{Cache, Error, NativeDataset, Order, PrefetchGroup};
 use serde_json::Value;
@@ -70,7 +70,11 @@ fn sequence(order: &Order, n: usize) -> Vec<usize> {
 }
 
 fn usizes(v: &Value) -> Vec<usize> {
-    v.as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as usize).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_u64().unwrap() as usize)
+        .collect()
 }
 
 /// A latency hook drawing 0–3 ms per decode from a seeded stream, so the
@@ -98,9 +102,16 @@ fn scenario_prefetch_equivalence() {
     for m in &members {
         let make = || scenario_provider(m.src, m.rps, corpus_cache());
         let p = make();
-        let seq: Vec<NativeDataset> = b.iter().map(|&t| fresh_refresh(make, ts(t as i64))).collect();
+        let seq: Vec<NativeDataset> = b
+            .iter()
+            .map(|&t| fresh_refresh(make, ts(t as i64)))
+            .collect();
         for (k, ds) in seq.iter().enumerate() {
-            assert_ds_bitwise(&format!("{} sample_at({k})", m.key), &p.sample_at(ts(b[k] as i64)).unwrap(), ds);
+            assert_ds_bitwise(
+                &format!("{} sample_at({k})", m.key),
+                &p.sample_at(ts(b[k] as i64)).unwrap(),
+                ds,
+            );
         }
         want.insert(m.key, seq);
     }
@@ -108,11 +119,19 @@ fn scenario_prefetch_equivalence() {
     let mut want_windows: BTreeMap<&str, Vec<Vec<NativeDataset>>> = BTreeMap::new();
     for m in &members {
         let p = scenario_provider(m.src, m.rps, corpus_cache());
-        let per_window: Vec<_> = windows.iter().map(|w| p.with_window(w.clone()).unwrap()).collect();
+        let per_window: Vec<_> = windows
+            .iter()
+            .map(|w| p.with_window(w.clone()).unwrap())
+            .collect();
         want_windows.insert(
             m.key,
             b.iter()
-                .map(|&t| per_window.iter().map(|pw| pw.sample_at(ts(t as i64)).unwrap()).collect())
+                .map(|&t| {
+                    per_window
+                        .iter()
+                        .map(|pw| pw.sample_at(ts(t as i64)).unwrap())
+                        .collect()
+                })
                 .collect(),
         );
     }
@@ -120,7 +139,11 @@ fn scenario_prefetch_equivalence() {
     let anchors: BTreeMap<&str, Vec<f64>> = members
         .iter()
         .map(|m| {
-            let a = expect["anchors_s"][m.key].as_array().unwrap().iter().map(|v| v.as_f64().unwrap());
+            let a = expect["anchors_s"][m.key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap());
             (m.key, a.collect())
         })
         .collect();
@@ -131,7 +154,9 @@ fn scenario_prefetch_equivalence() {
             for workers in usizes(&sc["workers"]) {
                 for max_bytes in sc["max_bytes"].as_array().unwrap() {
                     seed += 1;
-                    let ctx = format!("{order_name} depth={depth} workers={workers} max_bytes={max_bytes}");
+                    let ctx = format!(
+                        "{order_name} depth={depth} workers={workers} max_bytes={max_bytes}"
+                    );
                     let mut builder = PrefetchGroup::builder()
                         .depth(depth)
                         .workers(workers)
@@ -140,7 +165,10 @@ fn scenario_prefetch_equivalence() {
                         builder = builder.max_bytes(mb);
                     }
                     for m in &members {
-                        builder = builder.member(m.key, Arc::new(scenario_provider(m.src, m.rps, corpus_cache())));
+                        builder = builder.member(
+                            m.key,
+                            Arc::new(scenario_provider(m.src, m.rps, corpus_cache())),
+                        );
                     }
                     let mut g = builder.build().unwrap();
                     assert_eq!(g.boundaries(), b, "{ctx}: boundaries");
@@ -149,7 +177,9 @@ fn scenario_prefetch_equivalence() {
                     g.start(order.clone(), None).unwrap();
                     let mut prev: BTreeMap<&str, f64> = BTreeMap::new();
                     for (pos, &k) in seq.iter().enumerate() {
-                        let ep = g.take(k).unwrap_or_else(|e| panic!("{ctx}: take({k}): {e}"));
+                        let ep = g
+                            .take(k)
+                            .unwrap_or_else(|e| panic!("{ctx}: take({k}): {e}"));
                         assert_eq!(ep.epoch(), k);
                         assert_eq!(ep.len(), members.len());
                         for m in &members {
@@ -160,19 +190,30 @@ fn scenario_prefetch_equivalence() {
                             let changed = prev.get(m.key) != Some(&s.anchor);
                             assert_eq!(s.changed, changed, "{c}: changed");
                             if order_name == "forward" {
-                                assert_eq!(Value::Bool(s.changed), expect["changed_forward"][m.key][k], "{c}");
+                                assert_eq!(
+                                    Value::Bool(s.changed),
+                                    expect["changed_forward"][m.key][k],
+                                    "{c}"
+                                );
                             }
                             prev.insert(m.key, s.anchor);
                         }
                     }
                     let err = g.take(seq[0]).unwrap_err();
-                    assert!(matches!(err, Error::Prefetch { .. }), "{ctx}: exhausted: {err}");
+                    assert!(
+                        matches!(err, Error::Prefetch { .. }),
+                        "{ctx}: exhausted: {err}"
+                    );
 
                     let st = g.stats();
                     let n = seq.len() as u64;
                     assert!(st.overlap, "{ctx}");
                     assert!(st.epochs_decoded >= n, "{ctx}: {st:?}");
-                    assert_eq!(st.samples_decoded + st.samples_reused, n * members.len() as u64, "{ctx}: {st:?}");
+                    assert_eq!(
+                        st.samples_decoded + st.samples_reused,
+                        n * members.len() as u64,
+                        "{ctx}: {st:?}"
+                    );
                     assert!(st.peak_bytes > 0 && st.decode_s > 0.0, "{ctx}: {st:?}");
                     if max_bytes.as_u64() == Some(1) {
                         // Every slot exceeds one byte: each was admitted alone, as the head.
@@ -193,12 +234,18 @@ fn scenario_prefetch_equivalence() {
         for max_bytes in [None, Some(1u64)] {
             seed += 1;
             let ctx = format!("{order_name} windows max_bytes={max_bytes:?}");
-            let mut builder = PrefetchGroup::builder().depth(2).workers(4).decode_latency(jitter(seed));
+            let mut builder = PrefetchGroup::builder()
+                .depth(2)
+                .workers(4)
+                .decode_latency(jitter(seed));
             if let Some(mb) = max_bytes {
                 builder = builder.max_bytes(mb);
             }
             for m in &members {
-                builder = builder.member(m.key, Arc::new(scenario_provider(m.src, m.rps, corpus_cache())));
+                builder = builder.member(
+                    m.key,
+                    Arc::new(scenario_provider(m.src, m.rps, corpus_cache())),
+                );
             }
             let mut g = builder.windows(windows.clone()).build().unwrap();
             g.start(order.clone(), None).unwrap();
@@ -208,7 +255,11 @@ fn scenario_prefetch_equivalence() {
                     let got = &ep.get(m.key).unwrap().data;
                     assert_eq!(got.len(), windows.len(), "{ctx}");
                     for (i, ds) in got.iter().enumerate() {
-                        assert_ds_bitwise(&format!("{ctx} take({k}) {} w{i}", m.key), ds, &want_windows[m.key][k][i]);
+                        assert_ds_bitwise(
+                            &format!("{ctx} take({k}) {} w{i}", m.key),
+                            ds,
+                            &want_windows[m.key][k][i],
+                        );
                     }
                 }
             }
@@ -245,7 +296,10 @@ fn scenario_prefetch_errors() {
     let make = || scenario_provider(&sc["source"], rps, corpus_cache());
     let b = make().refresh_times();
     assert!(missing_from < b.len());
-    let want: Vec<NativeDataset> = b[..missing_from].iter().map(|&t| fresh_refresh(make, ts(t as i64))).collect();
+    let want: Vec<NativeDataset> = b[..missing_from]
+        .iter()
+        .map(|&t| fresh_refresh(make, ts(t as i64)))
+        .collect();
 
     for depth in usizes(&sc["depth"]) {
         for workers in usizes(&sc["workers"]) {
@@ -262,12 +316,17 @@ fn scenario_prefetch_errors() {
                     // must still succeed.
                     std::thread::sleep(StdDuration::from_millis(100));
                 }
-                let ep = g.take(k).unwrap_or_else(|e| panic!("{ctx}: take({k}) must succeed: {e}"));
+                let ep = g
+                    .take(k)
+                    .unwrap_or_else(|e| panic!("{ctx}: take({k}) must succeed: {e}"));
                 assert_ds_bitwise(&format!("{ctx} take({k})"), &ep.get("Q").unwrap().data, w);
             }
             wait_ready(&g, missing_from); // stored, not raised
             let err = g.take(missing_from).unwrap_err();
-            assert!(err.is_cache_miss(), "{ctx}: the cache's own CacheMiss, not a wrapper: {err:?}");
+            assert!(
+                err.is_cache_miss(),
+                "{ctx}: the cache's own CacheMiss, not a wrapper: {err:?}"
+            );
             let again = g.take(missing_from + 1).unwrap_err();
             match again {
                 Error::Prefetch { detail } => assert!(detail.contains("start"), "{ctx}: {detail}"),
@@ -279,10 +338,17 @@ fn scenario_prefetch_errors() {
             let mut g = error_group(&sc, corpus_cache(), depth, workers);
             g.start(Order::Forward, None).unwrap();
             for (k, w) in want.iter().enumerate().take(cancel_after) {
-                assert_ds_bitwise(&format!("{ctx} pre-cancel {k}"), &g.take(k).unwrap().get("Q").unwrap().data, w);
+                assert_ds_bitwise(
+                    &format!("{ctx} pre-cancel {k}"),
+                    &g.take(k).unwrap().get("Q").unwrap().data,
+                    w,
+                );
             }
             g.cancel(false);
-            assert!(matches!(g.take(cancel_after), Err(Error::Prefetch { .. })), "{ctx}: after cancel");
+            assert!(
+                matches!(g.take(cancel_after), Err(Error::Prefetch { .. })),
+                "{ctx}: after cancel"
+            );
             g.start(Order::Forward, Some(cancel_after)).unwrap();
             for (k, w) in want.iter().enumerate().skip(cancel_after) {
                 let ep = g.take(k).unwrap();
@@ -290,15 +356,25 @@ fn scenario_prefetch_errors() {
                 assert!(s.changed, "{ctx}: every hourly epoch changes");
                 assert_ds_bitwise(&format!("{ctx} resumed {k}"), &s.data, w);
             }
-            assert!(g.take(missing_from).unwrap_err().is_cache_miss(), "{ctx}: resumed order");
+            assert!(
+                g.take(missing_from).unwrap_err().is_cache_miss(),
+                "{ctx}: resumed order"
+            );
         }
     }
 
     // (3) A COLD cache raises CacheMiss at take(0) — start does not raise it.
     let dir = tempfile::tempdir().unwrap();
-    let cold = Arc::new(Cache::builder().data_dir(dir.path()).offline(true).build().unwrap());
+    let cold = Arc::new(
+        Cache::builder()
+            .data_dir(dir.path())
+            .offline(true)
+            .build()
+            .unwrap(),
+    );
     let mut g = error_group(&sc, cold, 2, 1);
-    g.start(Order::Forward, None).expect("start never raises a decode error");
+    g.start(Order::Forward, None)
+        .expect("start never raises a decode error");
     wait_ready(&g, 0);
     assert!(g.take(0).unwrap_err().is_cache_miss());
 }
@@ -316,7 +392,11 @@ fn completion_order_varies_but_delivery_does_not() {
     let b = p.refresh_times();
     let by_epoch: Vec<_> = b
         .iter()
-        .map(|&t| p.sample_at(ts(t as i64)).unwrap().variables["Q"].data.clone())
+        .map(|&t| {
+            p.sample_at(ts(t as i64)).unwrap().variables["Q"]
+                .data
+                .clone()
+        })
         .collect();
     let finished = Arc::new(std::sync::Mutex::new(Vec::new()));
     let log = finished.clone();
@@ -331,7 +411,10 @@ fn completion_order_varies_but_delivery_does_not() {
             StdDuration::from_millis(40 * (3 - k % 4))
         })
         .transform(move |_, ds: NativeDataset| {
-            let k = by_epoch.iter().position(|d| *d == ds.variables["Q"].data).unwrap();
+            let k = by_epoch
+                .iter()
+                .position(|d| *d == ds.variables["Q"].data)
+                .unwrap();
             log.lock().unwrap().push(k);
             ds
         })
@@ -343,5 +426,9 @@ fn completion_order_varies_but_delivery_does_not() {
     }
     let order = finished.lock().unwrap().clone();
     assert_eq!(order.len(), b.len());
-    assert_ne!(order[..4], [0, 1, 2, 3], "the first four decodes finish out of epoch order: {order:?}");
+    assert_ne!(
+        order[..4],
+        [0, 1, 2, 3],
+        "the first four decodes finish out of epoch order: {order:?}"
+    );
 }

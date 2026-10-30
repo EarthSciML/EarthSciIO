@@ -46,15 +46,18 @@ Base.showerror(io::IO, e::CommitError) = print(io, "CommitError: ", e.msg)
 
 # A region in canonical form: `dim => (start, stop)`, 0-based half-open, sorted by
 # dim name. Empty = the whole extent.
-const _Region = Vector{Pair{String,Tuple{Int,Int}}}
+const _Region = Vector{Pair{String, Tuple{Int, Int}}}
 
 function _parse_region(region)::_Region
     region === nothing && return _Region()
     it = region isa NamedTuple ? pairs(region) : region
     out = _Region()
     for (k, v) in it
-        length(v) == 2 || throw(ArgumentError(
-            "region entry $k => $v: expected (start, stop), 0-based half-open"))
+        length(v) == 2 || throw(
+            ArgumentError(
+                "region entry $k => $v: expected (start, stop), 0-based half-open"
+            )
+        )
         push!(out, String(k) => (Int(v[1]), Int(v[2])))
     end
     sort!(out; by = first)
@@ -74,8 +77,10 @@ function _region_problem(r::_Region, s::OutputSchema)
             return (:align, "region $d=[$a, $b) is empty or outside [0, $n)")
         a % sh == 0 ||
             return (:align, "region $d=[$a, $b): start $a is not a multiple of the shard length $sh")
-        (b % sh == 0 || b == n) || return (:align,
-            "region $d=[$a, $b): stop $b is neither a multiple of the shard length $sh nor the dim length $n")
+        (b % sh == 0 || b == n) || return (
+            :align,
+            "region $d=[$a, $b): stop $b is neither a multiple of the shard length $sh nor the dim length $n",
+        )
     end
     return nothing
 end
@@ -87,7 +92,7 @@ function _check_region(region, s::OutputSchema)::_Region
     p[1] === :align ? throw(RegionNotShardAligned(p[2])) : throw(ArgumentError(p[2]))
 end
 
-_region_wire(r::_Region) = Pair{String,Vector{Int}}[d => Int[a, b] for (d, (a, b)) in r]
+_region_wire(r::_Region) = Pair{String, Vector{Int}}[d => Int[a, b] for (d, (a, b)) in r]
 
 # --- canonical JSON (spec §3.1) + the token wire form -----------------------
 #
@@ -116,9 +121,11 @@ function _jstring(io::IO, s::AbstractString)
         elseif c < ' ' || c > '~'
             u = UInt32(c)
             if u > 0xffff               # astral: a UTF-16 surrogate pair, like Python
-                u -= 0x10000
-                print(io, "\\u", string(0xd800 + (u >> 10); base = 16, pad = 4),
-                      "\\u", string(0xdc00 + (u & 0x3ff); base = 16, pad = 4))
+                u -= 0x00010000
+                print(
+                    io, "\\u", string(0xd800 + (u >> 10); base = 16, pad = 4),
+                    "\\u", string(0xdc00 + (u & 0x03ff); base = 16, pad = 4)
+                )
             else
                 print(io, "\\u", string(u; base = 16, pad = 4))
             end
@@ -126,7 +133,7 @@ function _jstring(io::IO, s::AbstractString)
             print(io, c)
         end
     end
-    print(io, '"')
+    return print(io, '"')
 end
 
 _jwrite(io::IO, ::Nothing) = print(io, "null")
@@ -134,7 +141,7 @@ _jwrite(io::IO, x::Bool) = print(io, x ? "true" : "false")
 _jwrite(io::IO, x::Integer) = print(io, string(x))
 function _jwrite(io::IO, x::AbstractFloat)
     isfinite(x) || error("JSON cannot carry the non-finite number $x")
-    print(io, string(Float64(x)))       # shortest round-trip form
+    return print(io, string(Float64(x)))       # shortest round-trip form
 end
 _jwrite(io::IO, x::AbstractString) = _jstring(io, x)
 _jwrite(io::IO, x::Symbol) = _jstring(io, String(x))
@@ -144,17 +151,17 @@ function _jwrite(io::IO, x::AbstractVector{<:Pair})
         k > 1 && print(io, ',')
         _jstring(io, String(key)); print(io, ':'); _jwrite(io, v)
     end
-    print(io, '}')
+    return print(io, '}')
 end
 _jwrite(io::IO, x::AbstractDict) =
     _jwrite(io, [String(k) => x[k] for k in sort!([String(k) for k in keys(x)])])
-function _jwrite(io::IO, x::Union{AbstractVector,Tuple})
+function _jwrite(io::IO, x::Union{AbstractVector, Tuple})
     print(io, '[')
     for (k, v) in enumerate(x)
         k > 1 && print(io, ',')
         _jwrite(io, v)
     end
-    print(io, ']')
+    return print(io, ']')
 end
 
 _stream_json(x) = sprint(_jwrite, x)
@@ -170,15 +177,15 @@ Identical across the Julia / Python / Rust bindings."""
 function schema_fingerprint(s::OutputSchema)
     idx = s.time_mode isa IndexedTime
     ntime = idx ? length(s.time_mode.times) : 0
-    F = Dict{String,Any}(
+    F = Dict{String, Any}(
         "chunk_shape" => s.chunk_shape,
-        "dims"        => Any[Any[d, d == s.time_dim ? ntime : n] for (d, n) in s.dims],
-        "profile"     => String(s.profile),
+        "dims" => Any[Any[d, d == s.time_dim ? ntime : n] for (d, n) in s.dims],
+        "profile" => String(s.profile),
         "shard_shape" => s.shard_shape,
-        "statics"     => Any[Any[nm, ov.dims, _v3_dtype(ov.dtype)] for (nm, ov) in s.statics],
-        "time_dim"    => s.time_dim,
-        "time_mode"   => idx ? "indexed" : "append",
-        "vars"        => Any[Any[nm, ov.dims, _v3_dtype(ov.dtype)] for (nm, ov) in s.vars],
+        "statics" => Any[Any[nm, ov.dims, _v3_dtype(ov.dtype)] for (nm, ov) in s.statics],
+        "time_dim" => s.time_dim,
+        "time_mode" => idx ? "indexed" : "append",
+        "vars" => Any[Any[nm, ov.dims, _v3_dtype(ov.dtype)] for (nm, ov) in s.vars],
     )
     return "sha256:" * bytes2hex(sha256(_stream_json(F)))
 end
@@ -199,9 +206,9 @@ struct CommitToken
     writer::Int
     region::_Region
     fingerprint::String
-    records::Vector{Tuple{Int,Float64}}
+    records::Vector{Tuple{Int, Float64}}
     statics::Vector{String}
-    blobs::Vector{Tuple{String,Union{Int,Nothing},String}}
+    blobs::Vector{Tuple{String, Union{Int, Nothing}, String}}
     objects::Vector{String}
 end
 
@@ -222,17 +229,21 @@ _same_bits(a::Float64, b::Float64) = reinterpret(UInt64, a) == reinterpret(UInt6
 The token's JSON (spec/writer.md §5.2), keys in the documented order, no
 whitespace, `t` in shortest round-trip form."""
 function token_json(t::CommitToken)
-    return _stream_json(Pair{String,Any}[
-        "schema"      => COMMIT_TOKEN_SCHEMA,
-        "writer"      => t.writer,
-        "region"      => _region_wire(t.region),
-        "fingerprint" => t.fingerprint,
-        "records"     => [Pair{String,Any}["index" => i, "t" => tt] for (i, tt) in t.records],
-        "statics"     => t.statics,
-        "blobs"       => [Pair{String,Any}["scope" => s, "record" => r, "key" => k]
-                          for (s, r, k) in t.blobs],
-        "objects"     => t.objects,
-    ])
+    return _stream_json(
+        Pair{String, Any}[
+            "schema" => COMMIT_TOKEN_SCHEMA,
+            "writer" => t.writer,
+            "region" => _region_wire(t.region),
+            "fingerprint" => t.fingerprint,
+            "records" => [Pair{String, Any}["index" => i, "t" => tt] for (i, tt) in t.records],
+            "statics" => t.statics,
+            "blobs" => [
+                Pair{String, Any}["scope" => s, "record" => r, "key" => k]
+                    for (s, r, k) in t.blobs
+            ],
+            "objects" => t.objects,
+        ]
+    )
 end
 
 """
@@ -249,11 +260,14 @@ function parse_token(d::AbstractDict)
         Int(d["writer"]),
         _parse_region(d["region"]),
         String(d["fingerprint"]),
-        Tuple{Int,Float64}[(Int(e["index"]), Float64(e["t"])) for e in d["records"]],
+        Tuple{Int, Float64}[(Int(e["index"]), Float64(e["t"])) for e in d["records"]],
         String[String(x) for x in d["statics"]],
-        Tuple{String,Union{Int,Nothing},String}[
-            (String(b["scope"]), b["record"] === nothing ? nothing : Int(b["record"]),
-             String(b["key"])) for b in d["blobs"]],
+        Tuple{String, Union{Int, Nothing}, String}[
+            (
+                String(b["scope"]), b["record"] === nothing ? nothing : Int(b["record"]),
+                String(b["key"]),
+            ) for b in d["blobs"]
+        ],
         String[String(x) for x in get(d, "objects", Any[])],
     )
 end
@@ -264,13 +278,13 @@ end
 # region-shaped array (time axis = the shard's length), and which slots hold data.
 mutable struct _ShardBuf
     tvals::Vector{Float64}
-    data::Dict{String,Array}
+    data::Dict{String, Array}
     filled::Vector{Bool}
     dirty::Bool
 end
 
 # A blob's identity: (scope, record (-1 for "static"), writer, key).
-const _BlobId = Tuple{String,Int,Int,String}
+const _BlobId = Tuple{String, Int, Int, String}
 
 """Opaque write handle threaded through the `write_*` calls of [`ZarrWriter`]."""
 mutable struct ZarrWriteHandle
@@ -281,8 +295,8 @@ mutable struct ZarrWriteHandle
     n_writers::Int
     id::Int
     region::_Region
-    lo::Dict{String,Int}               # non-time dim => region start (0-based)
-    hi::Dict{String,Int}               # non-time dim => region stop (exclusive)
+    lo::Dict{String, Int}               # non-time dim => region start (0-based)
+    hi::Dict{String, Int}               # non-time dim => region stop (exclusive)
     version::Int                       # manifest version (1 or 2), fixed for life
     fingerprint::String
     created_at::String
@@ -291,19 +305,19 @@ mutable struct ZarrWriteHandle
     committed_t::Vector{Float64}       # append: t of committed records 0..n-1
     rec_committed::Vector{Bool}        # indexed: per record
     rec_generation::Vector{Int}
-    static_committed::Dict{String,Bool}
-    static_generation::Dict{String,Int}
+    static_committed::Dict{String, Bool}
+    static_generation::Dict{String, Int}
     blobs::Vector{_BlobId}             # committed blobs, sorted
-    writers::Vector{Pair{Int,_Region}} # as of the last commit
+    writers::Vector{Pair{Int, _Region}} # as of the last commit
     commit_seq::Int
     # write state
     n_written::Int                     # append: the next record index
-    last_t::Union{Float64,Nothing}     # append: the last written t
-    shards::Dict{Int,_ShardBuf}        # open time shards by index
-    pending_records::Dict{Int,Float64} # written since the last token
-    tokened::Dict{Int,Float64}         # tokened, not (known to be) committed
+    last_t::Union{Float64, Nothing}     # append: the last written t
+    shards::Dict{Int, _ShardBuf}        # open time shards by index
+    pending_records::Dict{Int, Float64} # written since the last token
+    tokened::Dict{Int, Float64}         # tokened, not (known to be) committed
     pending_statics::Set{String}
-    pending_blobs::Set{Tuple{String,Int,String}}
+    pending_blobs::Set{Tuple{String, Int, String}}
     objects::Set{String}
     closed::Bool
 end
@@ -337,10 +351,12 @@ function _is_committed(h::ZarrWriteHandle, i::Int)
     return 0 <= i < length(h.committed_t)
 end
 
-function _new_handle(base, s::OutputSchema, role::Symbol, n::Int, id::Int, r::_Region,
-                     version::Int, created_at::AbstractString)
+function _new_handle(
+        base, s::OutputSchema, role::Symbol, n::Int, id::Int, r::_Region,
+        version::Int, created_at::AbstractString
+    )
     rd = Dict(r)
-    lo, hi = Dict{String,Int}(), Dict{String,Int}()
+    lo, hi = Dict{String, Int}(), Dict{String, Int}()
     for (d, len) in s.dims
         d == s.time_dim && continue
         lo[d], hi[d] = get(rd, d, (0, len))
@@ -350,11 +366,12 @@ function _new_handle(base, s::OutputSchema, role::Symbol, n::Int, id::Int, r::_R
         base, s, _profile(s.profile), role, n, id, r, lo, hi, version,
         schema_fingerprint(s), String(created_at),
         Float64[], fill(false, N), zeros(Int, N),
-        Dict{String,Bool}(nm => false for (nm, _) in s.statics),
-        Dict{String,Int}(nm => 0 for (nm, _) in s.statics),
-        _BlobId[], Pair{Int,_Region}[0 => r], 0,
-        0, nothing, Dict{Int,_ShardBuf}(), Dict{Int,Float64}(), Dict{Int,Float64}(),
-        Set{String}(), Set{Tuple{String,Int,String}}(), Set{String}(), false)
+        Dict{String, Bool}(nm => false for (nm, _) in s.statics),
+        Dict{String, Int}(nm => 0 for (nm, _) in s.statics),
+        _BlobId[], Pair{Int, _Region}[0 => r], 0,
+        0, nothing, Dict{Int, _ShardBuf}(), Dict{Int, Float64}(), Dict{Int, Float64}(),
+        Set{String}(), Set{Tuple{String, Int, String}}(), Set{String}(), false
+    )
 end
 
 function _check_schema(s::OutputSchema)
@@ -366,8 +383,10 @@ function _check_schema(s::OutputSchema)
         s.chunk_shape[d] > 0 && s.shard_shape[d] > 0 ||
             error("chunk/shard lengths of dim '$d' must be positive")
         s.shard_shape[d] % s.chunk_shape[d] == 0 ||
-            error("shard_shape[$d]=$(s.shard_shape[d]) not a multiple of " *
-                  "chunk_shape[$d]=$(s.chunk_shape[d])")
+            error(
+            "shard_shape[$d]=$(s.shard_shape[d]) not a multiple of " *
+                "chunk_shape[$d]=$(s.chunk_shape[d])"
+        )
     end
     _profile(s.profile)
     for (nm, ov) in s.vars
@@ -389,8 +408,11 @@ _check_open(h::ZarrWriteHandle) = h.closed && error("the write handle is closed"
 
 function _check_bound_region(h::ZarrWriteHandle, region)
     region === nothing && return nothing
-    _parse_region(region) == h.region || throw(ArgumentError(
-        "region $(region) differs from the region $(h.region) this handle was opened with"))
+    _parse_region(region) == h.region || throw(
+        ArgumentError(
+            "region $(region) differs from the region $(h.region) this handle was opened with"
+        )
+    )
     return nothing
 end
 
@@ -401,9 +423,11 @@ end
 # global end of the VALID data per dim (a shard past it is padded with fill, and
 # an inner chunk wholly past it is left out of the shard). `origin` is
 # shard-aligned on every dim, so each shard object is wholly owned by this writer.
-function _put_region_shards!(h::ZarrWriteHandle, name::AbstractString, dims::Vector{String},
-                             ::Type{T}, data::AbstractArray{T}, origin::Vector{Int},
-                             vhi::Vector{Int}) where {T}
+function _put_region_shards!(
+        h::ZarrWriteHandle, name::AbstractString, dims::Vector{String},
+        ::Type{T}, data::AbstractArray{T}, origin::Vector{Int},
+        vhi::Vector{Int}
+    ) where {T}
     s = h.schema
     N = length(dims)
     inner = ntuple(d -> s.chunk_shape[dims[d]], N)
@@ -415,7 +439,7 @@ function _put_region_shards!(h::ZarrWriteHandle, name::AbstractString, dims::Vec
     valid = ntuple(d -> vhi[d], N)
     ranges = ntuple(d -> (origin[d] ÷ shard[d]):(cld(vhi[d], shard[d]) - 1), N)
     for sc in Iterators.product(ranges...)
-        chunks = Vector{Union{Nothing,Vector{UInt8}}}(undef, n_inner)
+        chunks = Vector{Union{Nothing, Vector{UInt8}}}(undef, n_inner)
         for ci in 0:(n_inner - 1)
             lc = _c_unravel(ci, ips)
             gstart = ntuple(d -> sc[d] * shard[d] + lc[d] * inner[d], N)
@@ -435,9 +459,10 @@ end
 # shard objects directly from the store directory — never through the
 # content-addressed cache (spec §7) — and keeps the stored dtype.
 
-const _V3_JL_DTYPE = Dict{String,DataType}(
+const _V3_JL_DTYPE = Dict{String, DataType}(
     "float64" => Float64, "float32" => Float32, "int32" => Int32, "int64" => Int64,
-    "uint8" => UInt8, "uint32" => UInt32, "uint64" => UInt64)
+    "uint8" => UInt8, "uint32" => UInt32, "uint64" => UInt64
+)
 
 function _jl_dtype(s::AbstractString)
     haskey(_V3_JL_DTYPE, s) || error("unsupported zarr v3 data_type '$s'")
@@ -456,12 +481,14 @@ end
 # The box `[lo, hi)` (global, dims order) of array `name`; cells no stored inner
 # chunk covers keep the fill value. Not bounded by `zarr.json`'s shape: a writer
 # reloads shard objects that lie past the committed `shape[time]`.
-function _read_region(base::AbstractString, name::AbstractString, m::ZV3Meta,
-                      ::Type{T}, lo::Vector{Int}, hi::Vector{Int}) where {T}
+function _read_region(
+        base::AbstractString, name::AbstractString, m::ZV3Meta,
+        ::Type{T}, lo::Vector{Int}, hi::Vector{Int}
+    ) where {T}
     N = length(lo)
     out = fill(convert(T, m.fill_value), (hi .- lo)...)
-    comp = m.blosc ? Dict{String,Any}("id" => "blosc") :
-           m.zstd  ? Dict{String,Any}("id" => "zstd") : nothing
+    comp = m.blosc ? Dict{String, Any}("id" => "blosc") :
+        m.zstd ? Dict{String, Any}("id" => "zstd") : nothing
     ips = Tuple(m.ips)
     ranges = ntuple(d -> (lo[d] ÷ m.shard[d]):(cld(hi[d], m.shard[d]) - 1), N)
     for sc in Iterators.product(ranges...)
@@ -482,7 +509,7 @@ function _read_region(base::AbstractString, name::AbstractString, m::ZV3Meta,
             flat = collect(reinterpret(T, Vector{UInt8}(raw)))
             flat = m.byteorder == '>' ? ntoh.(flat) : ltoh.(flat)
             chunk = N == 1 ? flat :
-                    permutedims(reshape(flat, reverse(m.inner)...), N:-1:1)
+                permutedims(reshape(flat, reverse(m.inner)...), N:-1:1)
             out[ntuple(d -> (olo[d] - lo[d] + 1):(ohi[d] - lo[d]), N)...] =
                 @view chunk[ntuple(d -> (olo[d] - gs[d] + 1):(ohi[d] - gs[d]), N)...]
         end
@@ -504,11 +531,15 @@ end
 function _known_slots(h::ZarrWriteHandle, k::Int)
     st = _st(h)
     lim = _indexed(h) ? _ntime(h) : typemax(Int)
-    return [begin
-        i = k * st + j - 1
-        i < lim && (_is_committed(h, i) || haskey(h.tokened, i) ||
-                    haskey(h.pending_records, i))
-    end for j in 1:st]
+    return [
+        begin
+            i = k * st + j - 1
+            i < lim && (
+                _is_committed(h, i) || haskey(h.tokened, i) ||
+                    haskey(h.pending_records, i)
+            )
+        end for j in 1:st
+    ]
 end
 
 # The buffer of time shard `k`: held, or allocated fill-initialized. When the
@@ -520,7 +551,7 @@ function _shard_buf!(h::ZarrWriteHandle, k::Int)
     s = h.schema
     st = _st(h)
     tbase = k * st
-    buf = _ShardBuf(zeros(Float64, st), Dict{String,Array}(), fill(false, st), false)
+    buf = _ShardBuf(zeros(Float64, st), Dict{String, Array}(), fill(false, st), false)
     for (nm, ov) in s.vars
         _supplies(h, ov.dims) || continue
         shp = Tuple(d == s.time_dim ? st : h.hi[d] - h.lo[d] for d in ov.dims)
@@ -545,8 +576,8 @@ function _shard_buf!(h::ZarrWriteHandle, k::Int)
             known[j] || continue
             i = tbase + j - 1
             buf.tvals[j] = _indexed(h) ? _times(h)[i + 1] :
-                           haskey(h.pending_records, i) ? h.pending_records[i] :
-                           haskey(h.tokened, i) ? h.tokened[i] : h.committed_t[i + 1]
+                haskey(h.pending_records, i) ? h.pending_records[i] :
+                haskey(h.tokened, i) ? h.tokened[i] : h.committed_t[i + 1]
             buf.filled[j] = true
         end
     end
@@ -580,8 +611,10 @@ function _write_time_shard!(h::ZarrWriteHandle, k::Int, buf::_ShardBuf)
         # mode it was written whole at open
         if h.role !== :contributor && !_indexed(h)
             tv = Vector{s.time_dtype}(convert.(s.time_dtype, buf.tvals))
-            _put_region_shards!(h, s.time_dim, [s.time_dim], s.time_dtype, tv,
-                                [tbase], [tbase + nvalid])
+            _put_region_shards!(
+                h, s.time_dim, [s.time_dim], s.time_dtype, tv,
+                [tbase], [tbase + nvalid]
+            )
         end
     end
     buf.dirty = false
@@ -594,8 +627,10 @@ function _check_record_arrays(h::ZarrWriteHandle, arrays)
         if _supplies(h, ov.dims)
             haskey(arrays, nm) || error("write_record!: missing array for var '$nm'")
         elseif haskey(arrays, nm)
-            error("contributor $(h.id) supplied the replicated variable '$nm' " *
-                  "(only the owner writes variables without a region dim)")
+            error(
+                "contributor $(h.id) supplied the replicated variable '$nm' " *
+                    "(only the owner writes variables without a region dim)"
+            )
         end
     end
     if h.role !== :single
@@ -618,7 +653,8 @@ function _put_record!(h::ZarrWriteHandle, i::Int, t::Float64, arrays)
         want = Tuple(h.hi[d] - h.lo[d] for d in ov.dims if d != s.time_dim)
         size(arrays[nm]) == want || error(
             "array for '$nm' has shape $(size(arrays[nm])); expected $want " *
-            "(the variable's non-time dims $(filter(!=(s.time_dim), ov.dims)), region-sized)")
+                "(the variable's non-time dims $(filter(!=(s.time_dim), ov.dims)), region-sized)"
+        )
     end
     buf = _shard_buf!(h, k)
     for (nm, ov) in s.vars
@@ -658,9 +694,13 @@ function _create_metadata!(h::ZarrWriteHandle)
     end
     nt = _ntime_shape(h)
     _maybe_locked(lk, base, s.time_dim) do
-        _write_json(base, "$(s.time_dim)/zarr.json",
-                    _array_meta_dict([s.time_dim], s.time_dtype, [nt], s, h.codec,
-                                     _time_attrs(s)))
+        _write_json(
+            base, "$(s.time_dim)/zarr.json",
+            _array_meta_dict(
+                [s.time_dim], s.time_dtype, [nt], s, h.codec,
+                _time_attrs(s)
+            )
+        )
     end
     if _indexed(h) && nt > 0
         tv = Vector{s.time_dtype}(convert.(s.time_dtype, _times(h)))
@@ -668,16 +708,22 @@ function _create_metadata!(h::ZarrWriteHandle)
     end
     for (nm, ov) in s.vars
         _maybe_locked(lk, base, nm) do
-            _write_json(base, "$nm/zarr.json",
-                        _array_meta_dict(ov.dims, ov.dtype, _var_shape(h, ov, nt), s,
-                                         h.codec, ov.attrs))
+            _write_json(
+                base, "$nm/zarr.json",
+                _array_meta_dict(
+                    ov.dims, ov.dtype, _var_shape(h, ov, nt), s,
+                    h.codec, ov.attrs
+                )
+            )
         end
     end
     for (nm, ov) in s.statics
         shape = Int[Dict(s.dims)[d] for d in ov.dims]
         _maybe_locked(lk, base, nm) do
-            _write_json(base, "$nm/zarr.json",
-                        _array_meta_dict(ov.dims, ov.dtype, shape, s, h.codec, ov.attrs))
+            _write_json(
+                base, "$nm/zarr.json",
+                _array_meta_dict(ov.dims, ov.dtype, shape, s, h.codec, ov.attrs)
+            )
         end
     end
     empty!(h.objects)        # shared objects are not part of the owner's first token
@@ -690,15 +736,23 @@ function _update_shapes!(h::ZarrWriteHandle)
     s, lk = h.schema, _locked(h)
     nt = length(h.committed_t)
     _maybe_locked(lk, h.base, s.time_dim) do
-        _write_json(h.base, "$(s.time_dim)/zarr.json",
-                    _array_meta_dict([s.time_dim], s.time_dtype, [nt], s, h.codec,
-                                     _time_attrs(s)))
+        _write_json(
+            h.base, "$(s.time_dim)/zarr.json",
+            _array_meta_dict(
+                [s.time_dim], s.time_dtype, [nt], s, h.codec,
+                _time_attrs(s)
+            )
+        )
     end
     for (nm, ov) in s.vars
         _maybe_locked(lk, h.base, nm) do
-            _write_json(h.base, "$nm/zarr.json",
-                        _array_meta_dict(ov.dims, ov.dtype, _var_shape(h, ov, nt), s,
-                                         h.codec, ov.attrs))
+            _write_json(
+                h.base, "$nm/zarr.json",
+                _array_meta_dict(
+                    ov.dims, ov.dtype, _var_shape(h, ov, nt), s,
+                    h.codec, ov.attrs
+                )
+            )
         end
     end
     return nothing
@@ -706,8 +760,8 @@ end
 
 # (index, t) of every committed record, ascending.
 _committed_pairs(h::ZarrWriteHandle) = _indexed(h) ?
-    Tuple{Int,Float64}[(i - 1, _times(h)[i]) for i in 1:_ntime(h) if h.rec_committed[i]] :
-    Tuple{Int,Float64}[(i - 1, t) for (i, t) in enumerate(h.committed_t)]
+    Tuple{Int, Float64}[(i - 1, _times(h)[i]) for i in 1:_ntime(h) if h.rec_committed[i]] :
+    Tuple{Int, Float64}[(i - 1, t) for (i, t) in enumerate(h.committed_t)]
 
 # One entry per time shard holding >=1 committed record (spec §8.2).
 function _time_shards(h::ZarrWriteHandle)
@@ -743,7 +797,7 @@ function _index_ranges(idx::Vector{Int})
     return out
 end
 
-function _with_attrs(d::Dict{String,Any}, attrs::Dict{String,Any})
+function _with_attrs(d::Dict{String, Any}, attrs::Dict{String, Any})
     isempty(attrs) || (d["attrs"] = attrs)
     return d
 end
@@ -753,58 +807,91 @@ end
 function _manifest_obj(h::ZarrWriteHandle)
     s = h.schema
     if h.version == 1
-        vars = Dict{String,Any}[Dict{String,Any}("name" => nm, "dims" => ov.dims,
-                                                 "dtype" => _v3_dtype(ov.dtype))
-                                for (nm, ov) in s.vars]
-        return OutputManifest(h.base, "zarr", 3, String(s.profile), _codec_manifest(h.codec),
-                              s.time_dim, s.dims, vars, s.chunk_shape, s.shard_shape,
-                              _time_shards(h), _last_t(h), length(h.committed_t),
-                              rfc3339_utc())
+        vars = Dict{String, Any}[
+            Dict{String, Any}(
+                "name" => nm, "dims" => ov.dims,
+                "dtype" => _v3_dtype(ov.dtype)
+            )
+                for (nm, ov) in s.vars
+        ]
+        return OutputManifest(
+            h.base, "zarr", 3, String(s.profile), _codec_manifest(h.codec),
+            s.time_dim, s.dims, vars, s.chunk_shape, s.shard_shape,
+            _time_shards(h), _last_t(h), length(h.committed_t),
+            rfc3339_utc()
+        )
     end
     nt = _ntime_shape(h)
-    records = Dict{String,Any}(
-        "committed" => _index_ranges(first.(_committed_pairs(h))))
+    records = Dict{String, Any}(
+        "committed" => _index_ranges(first.(_committed_pairs(h)))
+    )
     if _indexed(h)
-        records["entries"] = [Dict{String,Any}("index" => i - 1, "t" => _times(h)[i],
-                                               "committed" => h.rec_committed[i],
-                                               "generation" => h.rec_generation[i])
-                              for i in 1:_ntime(h)]
+        records["entries"] = [
+            Dict{String, Any}(
+                "index" => i - 1, "t" => _times(h)[i],
+                "committed" => h.rec_committed[i],
+                "generation" => h.rec_generation[i]
+            )
+                for i in 1:_ntime(h)
+        ]
     end
-    return Dict{String,Any}(
-        "schema"      => OUTPUT_MANIFEST_SCHEMA_V2,
-        "base_url"    => h.base,
-        "format"      => "zarr",
+    return Dict{String, Any}(
+        "schema" => OUTPUT_MANIFEST_SCHEMA_V2,
+        "base_url" => h.base,
+        "format" => "zarr",
         "zarr_format" => 3,
-        "profile"     => String(s.profile),
-        "codec"       => _codec_manifest(h.codec),
-        "time_dim"    => s.time_dim,
-        "dims"        => [Dict{String,Any}("name" => d, "length" => d == s.time_dim ? nt : n)
-                          for (d, n) in s.dims],
-        "vars"        => [_with_attrs(Dict{String,Any}("name" => nm, "dims" => ov.dims,
-                                                       "dtype" => _v3_dtype(ov.dtype)), ov.attrs)
-                          for (nm, ov) in s.vars],
+        "profile" => String(s.profile),
+        "codec" => _codec_manifest(h.codec),
+        "time_dim" => s.time_dim,
+        "dims" => [
+            Dict{String, Any}("name" => d, "length" => d == s.time_dim ? nt : n)
+                for (d, n) in s.dims
+        ],
+        "vars" => [
+            _with_attrs(
+                Dict{String, Any}(
+                    "name" => nm, "dims" => ov.dims,
+                    "dtype" => _v3_dtype(ov.dtype)
+                ), ov.attrs
+            )
+                for (nm, ov) in s.vars
+        ],
         "chunk_shape" => s.chunk_shape,
         "shard_shape" => s.shard_shape,
         "time_shards" => [_timeshard_dict(x) for x in _time_shards(h)],
-        "last_t"      => _last_t(h),
-        "n_records"   => nt,
-        "created_at"  => h.created_at,
+        "last_t" => _last_t(h),
+        "n_records" => nt,
+        "created_at" => h.created_at,
         "schema_fingerprint" => h.fingerprint,
-        "time_mode"   => _indexed(h) ?
-                         Dict{String,Any}("kind" => "indexed", "n_records" => _ntime(h)) :
-                         Dict{String,Any}("kind" => "append"),
-        "writers"     => [Dict{String,Any}("id" => i, "region" => Dict{String,Any}(
-                              d => [a, b] for (d, (a, b)) in r)) for (i, r) in h.writers],
-        "records"     => records,
-        "statics"     => [_with_attrs(Dict{String,Any}(
-                              "name" => nm, "dims" => ov.dims, "dtype" => _v3_dtype(ov.dtype),
-                              "committed" => h.static_committed[nm],
-                              "generation" => h.static_generation[nm]), ov.attrs)
-                          for (nm, ov) in s.statics],
-        "blobs"       => [Dict{String,Any}("scope" => sc, "record" => r < 0 ? nothing : r,
-                                           "writer" => w, "key" => k)
-                          for (sc, r, w, k) in h.blobs],
-        "commit_seq"  => h.commit_seq,
+        "time_mode" => _indexed(h) ?
+            Dict{String, Any}("kind" => "indexed", "n_records" => _ntime(h)) :
+            Dict{String, Any}("kind" => "append"),
+        "writers" => [
+            Dict{String, Any}(
+                "id" => i, "region" => Dict{String, Any}(
+                    d => [a, b] for (d, (a, b)) in r
+                )
+            ) for (i, r) in h.writers
+        ],
+        "records" => records,
+        "statics" => [
+            _with_attrs(
+                Dict{String, Any}(
+                    "name" => nm, "dims" => ov.dims, "dtype" => _v3_dtype(ov.dtype),
+                    "committed" => h.static_committed[nm],
+                    "generation" => h.static_generation[nm]
+                ), ov.attrs
+            )
+                for (nm, ov) in s.statics
+        ],
+        "blobs" => [
+            Dict{String, Any}(
+                "scope" => sc, "record" => r < 0 ? nothing : r,
+                "writer" => w, "key" => k
+            )
+                for (sc, r, w, k) in h.blobs
+        ],
+        "commit_seq" => h.commit_seq,
     )
 end
 
@@ -816,8 +903,10 @@ function _write_manifest!(h::ZarrWriteHandle)
         if m isa OutputManifest
             write_output_manifest(path, m)
         else
-            put_object!(h.base, "output_manifest.json",
-                        Vector{UInt8}(codeunits(JSON.json(m; pretty = true))))
+            put_object!(
+                h.base, "output_manifest.json",
+                Vector{UInt8}(codeunits(JSON.json(m; pretty = true)))
+            )
         end
     end
     return m
@@ -827,10 +916,10 @@ end
 
 function _stored_attrs(base::AbstractString, name::AbstractString)
     p = joinpath(base, name, "zarr.json")
-    isfile(p) || return Dict{String,Any}()
+    isfile(p) || return Dict{String, Any}()
     a = get(JSON.parsefile(p), "attributes", nothing)
-    a === nothing && return Dict{String,Any}()
-    return Dict{String,Any}(String(k) => v for (k, v) in a if k != "_ARRAY_DIMENSIONS")
+    a === nothing && return Dict{String, Any}()
+    return Dict{String, Any}(String(k) => v for (k, v) in a if k != "_ARRAY_DIMENSIONS")
 end
 
 # The stream schema a manifest describes (spec §8.2). Attributes (variables, the
@@ -842,7 +931,7 @@ function _schema_from_manifest(m, base::AbstractString)
         dims = copy(m.dims)
         time_dim, profile = m.time_dim, Symbol(m.profile)
         vdefs = [(String(v["name"]), String.(v["dims"]), String(v["dtype"])) for v in m.vars]
-        sdefs = Tuple{String,Vector{String},String}[]
+        sdefs = Tuple{String, Vector{String}, String}[]
         chunk, shard = m.chunk_shape, m.shard_shape
         time_mode = :append
     else
@@ -854,28 +943,39 @@ function _schema_from_manifest(m, base::AbstractString)
         else
             :append
         end
-        dims = Pair{String,Int}[String(e["name"]) =>
-                                (String(e["name"]) == time_dim && time_mode === :append ? 0 :
-                                 Int(e["length"])) for e in m["dims"]]
+        dims = Pair{String, Int}[
+            String(e["name"]) =>
+                (
+                String(e["name"]) == time_dim && time_mode === :append ? 0 :
+                    Int(e["length"])
+            ) for e in m["dims"]
+        ]
         profile = Symbol(m["profile"])
         vdefs = [(String(v["name"]), String.(v["dims"]), String(v["dtype"])) for v in m["vars"]]
         sdefs = [(String(v["name"]), String.(v["dims"]), String(v["dtype"])) for v in m["statics"]]
-        chunk = Dict{String,Int}(String(k) => Int(v) for (k, v) in m["chunk_shape"])
-        shard = Dict{String,Int}(String(k) => Int(v) for (k, v) in m["shard_shape"])
+        chunk = Dict{String, Int}(String(k) => Int(v) for (k, v) in m["chunk_shape"])
+        shard = Dict{String, Int}(String(k) => Int(v) for (k, v) in m["shard_shape"])
     end
-    mk(defs) = Pair{String,OutputVar}[nm => OutputVar(d, _jl_dtype(dt);
-                                                      attrs = _stored_attrs(base, nm))
-                                      for (nm, d, dt) in defs]
+    mk(defs) = Pair{String, OutputVar}[
+        nm => OutputVar(
+            d, _jl_dtype(dt);
+            attrs = _stored_attrs(base, nm)
+        )
+            for (nm, d, dt) in defs
+    ]
     _, tdt = _array_info(base, time_dim)
-    coords = Pair{String,Tuple{Vector,Dict{String,Any}}}[
-        time_dim => (Float64[], _stored_attrs(base, time_dim))]
+    coords = Pair{String, Tuple{Vector, Dict{String, Any}}}[
+        time_dim => (Float64[], _stored_attrs(base, time_dim)),
+    ]
     gp = joinpath(base, "zarr.json")
-    gattrs = isfile(gp) ? Dict{String,Any}(get(JSON.parsefile(gp), "attributes", Dict{String,Any}())) :
-             Dict{String,Any}()
-    return OutputSchema(; dims = dims, time_dim = time_dim, vars = mk(vdefs),
-                        chunk_shape = chunk, shard_shape = shard, coords = coords,
-                        profile = profile, attrs = gattrs, time_dtype = tdt,
-                        statics = mk(sdefs), time_mode = time_mode)
+    gattrs = isfile(gp) ? Dict{String, Any}(get(JSON.parsefile(gp), "attributes", Dict{String, Any}())) :
+        Dict{String, Any}()
+    return OutputSchema(;
+        dims = dims, time_dim = time_dim, vars = mk(vdefs),
+        chunk_shape = chunk, shard_shape = shard, coords = coords,
+        profile = profile, attrs = gattrs, time_dtype = tdt,
+        statics = mk(sdefs), time_mode = time_mode
+    )
 end
 
 # Load the committed state a manifest records into a fresh handle.
@@ -905,9 +1005,15 @@ function _load_state!(h::ZarrWriteHandle, m)
         h.static_committed[String(e["name"])] = Bool(e["committed"])
         h.static_generation[String(e["name"])] = Int(e["generation"])
     end
-    h.blobs = sort!(_BlobId[(String(b["scope"]), b["record"] === nothing ? -1 : Int(b["record"]),
-                             Int(b["writer"]), String(b["key"])) for b in m["blobs"]])
-    h.writers = Pair{Int,_Region}[Int(w["id"]) => _parse_region(w["region"]) for w in m["writers"]]
+    h.blobs = sort!(
+        _BlobId[
+            (
+                String(b["scope"]), b["record"] === nothing ? -1 : Int(b["record"]),
+                Int(b["writer"]), String(b["key"]),
+            ) for b in m["blobs"]
+        ]
+    )
+    h.writers = Pair{Int, _Region}[Int(w["id"]) => _parse_region(w["region"]) for w in m["writers"]]
     return h
 end
 
@@ -946,17 +1052,22 @@ function _check_role(role::Symbol, n::Int, id::Int, r::_Region, s::OutputSchema)
     end
     if role === :single
         lens = Dict(s.dims)
-        all(ab == (0, lens[d]) for (d, ab) in r) || throw(ArgumentError(
-            "a :single writer writes the whole extent; use :owner for a region"))
+        all(ab == (0, lens[d]) for (d, ab) in r) || throw(
+            ArgumentError(
+                "a :single writer writes the whole extent; use :owner for a region"
+            )
+        )
     end
     return nothing
 end
 
 # --- write_open! / join -----------------------------------------------------
 
-function write_open!(::ZarrWriter, store, base_url::AbstractString, schema::OutputSchema;
-                     role::Symbol = :single, n_writers::Integer = 1, id::Integer = 0,
-                     region = nothing)
+function write_open!(
+        ::ZarrWriter, store, base_url::AbstractString, schema::OutputSchema;
+        role::Symbol = :single, n_writers::Integer = 1, id::Integer = 0,
+        region = nothing
+    )
     _check_schema(schema)
     r = _check_region(region, schema)                    # before any I/O
     _check_role(role, Int(n_writers), Int(id), r, schema)
@@ -973,19 +1084,22 @@ function write_open!(::ZarrWriter, store, base_url::AbstractString, schema::Outp
 end
 
 # A contributor opens the store the owner created (spec §5.1 `join`).
-function _join(base_url, schema::Union{OutputSchema,Nothing}, n::Int, id::Int, r::_Region)
+function _join(base_url, schema::Union{OutputSchema, Nothing}, n::Int, id::Int, r::_Region)
     base = _output_base(base_url)
     m = read_output_manifest(base)
     m === nothing && error("join: no output manifest at $base (the owner creates the store first)")
     m isa AbstractDict || error(
-        "join: the store at $base has a v1 (single-writer) manifest; contributors join v2 stores")
+        "join: the store at $base has a v1 (single-writer) manifest; contributors join v2 stores"
+    )
     rebuilt = _schema_from_manifest(m, base)
     fp = schema_fingerprint(rebuilt)
     String(m["schema_fingerprint"]) == fp ||
         error("join: the manifest's schema_fingerprint does not match the schema it describes")
     schema === nothing || schema_fingerprint(schema) == fp ||
-        error("join: the caller's schema fingerprint $(schema_fingerprint(schema)) differs " *
-              "from the store's $fp")
+        error(
+        "join: the caller's schema fingerprint $(schema_fingerprint(schema)) differs " *
+            "from the store's $fp"
+    )
     s = schema === nothing ? rebuilt : schema
     r = _check_region(r, s)
     h = _new_handle(base, s, :contributor, max(n, id + 1), id, r, 2, String(m["created_at"]))
@@ -997,9 +1111,11 @@ end
 
 # --- write_resume -----------------------------------------------------------
 
-function write_resume(::ZarrWriter, store, base_url::AbstractString;
-                      role::Symbol = :single, n_writers::Integer = 1, id::Integer = 0,
-                      region = nothing, at = nothing, schema = nothing)
+function write_resume(
+        ::ZarrWriter, store, base_url::AbstractString;
+        role::Symbol = :single, n_writers::Integer = 1, id::Integer = 0,
+        region = nothing, at = nothing, schema = nothing
+    )
     base = _output_base(base_url)
     m = read_output_manifest(base)
     m === nothing && error("resume: no output manifest at $base")
@@ -1049,12 +1165,16 @@ end
 function write_record!(::ZarrWriter, h::ZarrWriteHandle, t, arrays; region = nothing)
     _check_open(h)
     _check_bound_region(h, region)
-    _indexed(h) && error("write_record! is the append-mode call; use write_record_at! " *
-                         "in indexed mode")
+    _indexed(h) && error(
+        "write_record! is the append-mode call; use write_record_at! " *
+            "in indexed mode"
+    )
     t64 = Float64(t)
     h.last_t === nothing || t64 > h.last_t ||
-        error("write_record!: t = $t64 is not after the previous record's t = $(h.last_t) " *
-              "(append order is time order)")
+        error(
+        "write_record!: t = $t64 is not after the previous record's t = $(h.last_t) " *
+            "(append order is time order)"
+    )
     i = h.n_written
     _put_record!(h, i, t64, arrays)
     h.n_written += 1
@@ -1067,12 +1187,16 @@ end
 
 Indexed mode: write record `index` (0-based, any order). `t` must equal
 `times[index]` bitwise. A committed record must be invalidated first."""
-function write_record_at!(::ZarrWriter, h::ZarrWriteHandle, index::Integer, t, arrays;
-                          region = nothing)
+function write_record_at!(
+        ::ZarrWriter, h::ZarrWriteHandle, index::Integer, t, arrays;
+        region = nothing
+    )
     _check_open(h)
     _check_bound_region(h, region)
-    _indexed(h) || error("write_record_at! is the indexed-mode call; use write_record! " *
-                         "in append mode")
+    _indexed(h) || error(
+        "write_record_at! is the indexed-mode call; use write_record! " *
+            "in append mode"
+    )
     i = Int(index)
     0 <= i < _ntime(h) || error("record index $i outside 0..$(_ntime(h) - 1)")
     t64 = Float64(t)
@@ -1081,7 +1205,8 @@ function write_record_at!(::ZarrWriter, h::ZarrWriteHandle, index::Integer, t, a
     if _is_committed(h, i)
         h.role === :contributor && _refresh_view!(h)
         _is_committed(h, i) && error(
-            "record $i is committed: the owner must write_invalidate! it before it is rewritten")
+            "record $i is committed: the owner must write_invalidate! it before it is rewritten"
+        )
     end
     _put_record!(h, i, t64, arrays)
     return nothing
@@ -1095,11 +1220,13 @@ function write_static!(::ZarrWriter, h::ZarrWriteHandle, name::AbstractString, a
     ov = s.statics[k].second
     _supplies(h, ov.dims) || error(
         "contributor $(h.id) cannot write the replicated static '$name' " *
-        "(only the owner writes statics without a region dim)")
+            "(only the owner writes statics without a region dim)"
+    )
     if h.static_committed[name]
         h.role === :contributor && _refresh_view!(h)
         h.static_committed[name] && error(
-            "static '$name' is committed: write_invalidate_statics! it before it is rewritten")
+            "static '$name' is committed: write_invalidate_statics! it before it is rewritten"
+        )
     end
     want = Tuple(h.hi[d] - h.lo[d] for d in ov.dims)
     size(array) == want ||
@@ -1107,8 +1234,10 @@ function write_static!(::ZarrWriter, h::ZarrWriteHandle, name::AbstractString, a
     data = Array{ov.dtype}(undef, want...)
     data .= array
     _writes_objects(h, ov.dims) &&
-        _put_region_shards!(h, name, ov.dims, ov.dtype, data,
-                            Int[h.lo[d] for d in ov.dims], Int[h.hi[d] for d in ov.dims])
+        _put_region_shards!(
+        h, name, ov.dims, ov.dtype, data,
+        Int[h.lo[d] for d in ov.dims], Int[h.hi[d] for d in ov.dims]
+    )
     push!(h.pending_statics, String(name))
     return nothing
 end
@@ -1126,12 +1255,16 @@ end
 _blob_key(scope, record, writer, key) =
     scope == "static" ? "blobs/static/$writer/$key" : "blobs/record/$record/$writer/$key"
 
-function write_blob!(::ZarrWriter, h::ZarrWriteHandle, scope, key::AbstractString,
-                     bytes::AbstractVector{UInt8})
+function write_blob!(
+        ::ZarrWriter, h::ZarrWriteHandle, scope, key::AbstractString,
+        bytes::AbstractVector{UInt8}
+    )
     _check_open(h)
-    h.version == 1 && error("write_blob! needs a v2 store: this :single append store " *
-                            "without statics writes the v1 manifest (open with role = :owner, " *
-                            "n_writers = 1 instead)")
+    h.version == 1 && error(
+        "write_blob! needs a v2 store: this :single append store " *
+            "without statics writes the v1 manifest (open with role = :owner, " *
+            "n_writers = 1 instead)"
+    )
     (occursin(r"^[A-Za-z0-9._-]+$", key) && key != "." && key != "..") ||
         throw(ArgumentError("blob key '$key' must match [A-Za-z0-9._-]+ and not be '.' or '..'"))
     sc, rec = _blob_scope(scope)
@@ -1145,11 +1278,15 @@ end
 # --- flush / commit / invalidate / close ------------------------------------
 
 function _take_token!(h::ZarrWriteHandle)
-    recs = sort!(Tuple{Int,Float64}[(i, t) for (i, t) in h.pending_records]; by = first)
-    blobs = Tuple{String,Union{Int,Nothing},String}[(sc, r < 0 ? nothing : r, k)
-                                                    for (sc, r, k) in sort!(collect(h.pending_blobs))]
-    tok = CommitToken(h.id, copy(h.region), h.fingerprint, recs,
-                      sort!(collect(h.pending_statics)), blobs, sort!(collect(h.objects)))
+    recs = sort!(Tuple{Int, Float64}[(i, t) for (i, t) in h.pending_records]; by = first)
+    blobs = Tuple{String, Union{Int, Nothing}, String}[
+        (sc, r < 0 ? nothing : r, k)
+            for (sc, r, k) in sort!(collect(h.pending_blobs))
+    ]
+    tok = CommitToken(
+        h.id, copy(h.region), h.fingerprint, recs,
+        sort!(collect(h.pending_statics)), blobs, sort!(collect(h.objects))
+    )
     merge!(h.tokened, h.pending_records)
     empty!(h.pending_records); empty!(h.pending_statics)
     empty!(h.pending_blobs); empty!(h.objects)
@@ -1165,8 +1302,12 @@ function write_flush!(::ZarrWriter, h::ZarrWriteHandle)
     if h.role === :single
         # commits only when something is pending; else a no-op (spec §5.1). A
         # failed commit leaves the writes pending, so the flush can be retried.
-        saved = deepcopy((h.pending_records, h.pending_statics, h.pending_blobs, h.objects,
-                          h.tokened))
+        saved = deepcopy(
+            (
+                h.pending_records, h.pending_statics, h.pending_blobs, h.objects,
+                h.tokened,
+            )
+        )
         tok = _take_token!(h)
         try
             isempty(tok) || _commit!(h, [tok])
@@ -1194,7 +1335,7 @@ function _commit!(h::ZarrWriteHandle, tokens::AbstractVector)
     s = h.schema
     n = h.n_writers
     # 1. exactly one token per writer id
-    byid = Dict{Int,CommitToken}()
+    byid = Dict{Int, CommitToken}()
     for t in tokens
         t isa CommitToken || throw(ArgumentError("commit takes CommitTokens, got $(typeof(t))"))
         0 <= t.writer < n ||
@@ -1208,49 +1349,73 @@ function _commit!(h::ZarrWriteHandle, tokens::AbstractVector)
     toks = [byid[i] for i in 0:(n - 1)]
     # 2. one schema
     for t in toks
-        t.fingerprint == h.fingerprint || throw(CommitError(
-            "writer $(t.writer)'s schema fingerprint $(t.fingerprint) differs from the owner's"))
+        t.fingerprint == h.fingerprint || throw(
+            CommitError(
+                "writer $(t.writer)'s schema fingerprint $(t.fingerprint) differs from the owner's"
+            )
+        )
     end
     # 3. the regions tile the store
     rd = Set{String}(first.(toks[1].region))
     for t in toks
-        Set{String}(first.(t.region)) == rd || throw(CommitError(
-            "writer $(t.writer) names region dims $(sort(first.(t.region))), writer 0 " *
-            "names $(sort(collect(rd)))"))
+        Set{String}(first.(t.region)) == rd || throw(
+            CommitError(
+                "writer $(t.writer) names region dims $(sort(first.(t.region))), writer 0 " *
+                    "names $(sort(collect(rd)))"
+            )
+        )
         p = _region_problem(t.region, s)
         p === nothing || throw(CommitError("writer $(t.writer): $(p[2])"))
     end
     for a in 1:n, b in (a + 1):n
         ra, rb = Dict(toks[a].region), Dict(toks[b].region)
-        all(d -> max(ra[d][1], rb[d][1]) < min(ra[d][2], rb[d][2]), rd) && throw(CommitError(
-            "overlap between writers $(a - 1) $(toks[a].region) and $(b - 1) $(toks[b].region)"))
+        all(d -> max(ra[d][1], rb[d][1]) < min(ra[d][2], rb[d][2]), rd) && throw(
+            CommitError(
+                "overlap between writers $(a - 1) $(toks[a].region) and $(b - 1) $(toks[b].region)"
+            )
+        )
     end
     lens = Dict(s.dims)
     total = prod((lens[d] for d in rd); init = 1)
     vol = sum(prod((ab[2] - ab[1] for (_, ab) in t.region); init = 1) for t in toks)
-    vol == total || throw(CommitError(
-        "gap: the writers' regions cover $vol of the $total cells over the region dims " *
-        "$(sort(collect(rd)))"))
+    vol == total || throw(
+        CommitError(
+            "gap: the writers' regions cover $vol of the $total cells over the region dims " *
+                "$(sort(collect(rd)))"
+        )
+    )
     # 4. records
     ref = toks[1].records
     for t in toks[2:end]
-        (length(t.records) == length(ref) &&
-         all(x[1] == y[1] && _same_bits(x[2], y[2]) for (x, y) in zip(t.records, ref))) ||
-            throw(CommitError("writer $(t.writer) carries records $(first.(t.records)) but " *
-                              "writer 0 carries $(first.(ref)) (or their t differ)"))
+        (
+            length(t.records) == length(ref) &&
+                all(x[1] == y[1] && _same_bits(x[2], y[2]) for (x, y) in zip(t.records, ref))
+        ) ||
+            throw(
+            CommitError(
+                "writer $(t.writer) carries records $(first.(t.records)) but " *
+                    "writer 0 carries $(first.(ref)) (or their t differ)"
+            )
+        )
     end
     if _indexed(h)
         for (i, t) in ref
             0 <= i < _ntime(h) || throw(CommitError("record index $i outside 0..$(_ntime(h) - 1)"))
             _same_bits(t, _times(h)[i + 1]) ||
                 throw(CommitError("record $i: t = $t is not times[$i] = $(_times(h)[i + 1])"))
-            h.rec_committed[i + 1] && throw(CommitError(
-                "record $i is committed; invalidate it before rewriting"))
+            h.rec_committed[i + 1] && throw(
+                CommitError(
+                    "record $i is committed; invalidate it before rewriting"
+                )
+            )
         end
     else
         nc = length(h.committed_t)
-        first.(ref) == collect(nc:(nc + length(ref) - 1)) || throw(CommitError(
-            "append records $(first.(ref)) are not the continuation $nc.. of the committed prefix"))
+        first.(ref) == collect(nc:(nc + length(ref) - 1)) || throw(
+            CommitError(
+                "append records $(first.(ref)) are not the continuation $nc.. of the committed prefix"
+            )
+        )
     end
     # 5. statics
     for t in toks, nm in t.statics
@@ -1258,24 +1423,35 @@ function _commit!(h::ZarrWriteHandle, tokens::AbstractVector)
         k === nothing && throw(CommitError("writer $(t.writer)'s token names unknown static '$nm'"))
         if _partitioned(rd, s.statics[k].second.dims)
             for u in toks
-                nm in u.statics || throw(CommitError(
-                    "partitioned static '$nm' is in writer $(t.writer)'s token but not in " *
-                    "writer $(u.writer)'s"))
+                nm in u.statics || throw(
+                    CommitError(
+                        "partitioned static '$nm' is in writer $(t.writer)'s token but not in " *
+                            "writer $(u.writer)'s"
+                    )
+                )
             end
         else
-            t.writer == 0 || throw(CommitError(
-                "replicated static '$nm' is in contributor $(t.writer)'s token"))
+            t.writer == 0 || throw(
+                CommitError(
+                    "replicated static '$nm' is in contributor $(t.writer)'s token"
+                )
+            )
         end
-        h.static_committed[nm] && throw(CommitError(
-            "static '$nm' is committed; invalidate it before rewriting"))
+        h.static_committed[nm] && throw(
+            CommitError(
+                "static '$nm' is committed; invalidate it before rewriting"
+            )
+        )
     end
 
     # --- verified: apply, then shapes, then the manifest LAST
     return _transaction!(() -> _apply_commit!(h, toks, ref), h)
 end
 
-const _COMMITTED_FIELDS = (:committed_t, :rec_committed, :rec_generation, :static_committed,
-                           :static_generation, :blobs, :writers, :commit_seq, :tokened)
+const _COMMITTED_FIELDS = (
+    :committed_t, :rec_committed, :rec_generation, :static_committed,
+    :static_generation, :blobs, :writers, :commit_seq, :tokened,
+)
 
 # Run `f`, which changes the committed state and ends in store writes; if it
 # throws (a store error on the shapes or the manifest), restore that state, so
@@ -1311,7 +1487,7 @@ function _apply_commit!(h::ZarrWriteHandle, toks, ref)
         id in h.blobs || push!(h.blobs, id)      # a rewritten blob replaces itself
     end
     sort!(h.blobs)
-    h.writers = Pair{Int,_Region}[t.writer => t.region for t in toks]
+    h.writers = Pair{Int, _Region}[t.writer => t.region for t in toks]
     h.commit_seq += 1
     empty!(h.tokened)
     !_indexed(h) && !isempty(ref) && _update_shapes!(h)
@@ -1376,9 +1552,11 @@ function write_close!(w::ZarrWriter, h::ZarrWriteHandle, tokens::AbstractVector 
     if h.role === :contributor
         isempty(tokens) || error("a contributor's close takes no tokens")
         unflushed = !isempty(h.pending_records) || !isempty(h.pending_statics) ||
-                    !isempty(h.pending_blobs) || any(b -> b.dirty, values(h.shards))
-        unflushed && error("contributor $(h.id) closes with unflushed writes: " *
-                           "write_flush! and deliver the token first")
+            !isempty(h.pending_blobs) || any(b -> b.dirty, values(h.shards))
+        unflushed && error(
+            "contributor $(h.id) closes with unflushed writes: " *
+                "write_flush! and deliver the token first"
+        )
         h.closed = true
         return nothing
     elseif h.role === :single

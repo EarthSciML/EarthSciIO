@@ -148,13 +148,10 @@ def _check_region(schema: OutputSchema, region: Region) -> None:
             raise ValueError(f"region names unknown dim {d!r}")
         n, s = dimlen[d], schema.shard_shape[d]
         if not (0 <= a < b <= n):
-            raise RegionNotShardAligned(
-                f"region {d}=[{a}, {b}) is out of range for length {n}"
-            )
+            raise RegionNotShardAligned(f"region {d}=[{a}, {b}) is out of range for length {n}")
         if a % s != 0:
             raise RegionNotShardAligned(
-                f"region {d}=[{a}, {b}): start {a} is not a multiple of the "
-                f"shard length {s}"
+                f"region {d}=[{a}, {b}): start {a} is not a multiple of the shard length {s}"
             )
         if b % s != 0 and b != n:
             raise RegionNotShardAligned(
@@ -329,9 +326,7 @@ def _validate_schema(schema: OutputSchema) -> None:
                     f"streaming var {nm!r} must include the time dim {schema.time_dim!r}"
                 )
             if kind == "static" and has_t:
-                raise ValueError(
-                    f"static {nm!r} must not include the time dim {schema.time_dim!r}"
-                )
+                raise ValueError(f"static {nm!r} must not include the time dim {schema.time_dim!r}")
     if schema.indexed and np.dtype(schema.time_dtype) != np.float64:
         raise ValueError("the time coordinate of an indexed store is float64")
 
@@ -460,8 +455,11 @@ def _whole_shard_pipeline(p):
         return p
     sub = _WHOLE_SHARD_PIPELINES.get(cls)
     if sub is None:
-        sub = type(f"_WholeShard{cls.__name__}", (cls,),
-                   {"supports_partial_encode": property(lambda self: False)})
+        sub = type(
+            f"_WholeShard{cls.__name__}",
+            (cls,),
+            {"supports_partial_encode": property(lambda self: False)},
+        )
         sub = dataclasses.dataclass(frozen=True)(sub)
         _WHOLE_SHARD_PIPELINES[cls] = sub
     return sub(**{f.name: getattr(p, f.name) for f in dataclasses.fields(p) if f.init})
@@ -474,8 +472,9 @@ class _Geo:
     """Where one array (streaming var, static, or the time coordinate) sits
     relative to a writer's region."""
 
-    def __init__(self, schema: OutputSchema, name: str, ov: OutputVar,
-                 region: Region, role: str) -> None:
+    def __init__(
+        self, schema: OutputSchema, name: str, ov: OutputVar, region: Region, role: str
+    ) -> None:
         self.name = name
         self.dims = list(ov.dims)
         self.dtype = np.dtype(ov.dtype)
@@ -503,9 +502,7 @@ class _Geo:
         if not self.partitioned:
             self.writes = role != "contributor"
         else:
-            self.writes = all(
-                region[d][0] == 0 for d in region if d not in self.sdims
-            )
+            self.writes = all(region[d][0] == 0 for d in region if d not in self.sdims)
 
     def place(self, buf: np.ndarray, slot: Optional[int], arr: np.ndarray) -> None:
         idx: List[Any] = [slice(0, n) for n in self.shape]
@@ -529,10 +526,7 @@ class _Geo:
         axes = [range(l // s, h // s) for l, h, s in zip(self.lo, self.hi_pad, self.shard)]
         if self.ti is not None:
             axes.insert(self.ti, [ts])
-        return [
-            f"{self.name}/c/" + "/".join(str(c) for c in cc)
-            for cc in itertools.product(*axes)
-        ]
+        return [f"{self.name}/c/" + "/".join(str(c) for c in cc) for cc in itertools.product(*axes)]
 
 
 class _Shard:
@@ -559,8 +553,18 @@ class ZarrStreamHandle:
     a contributor holds its view (the manifest at join plus what it has
     tokened since)."""
 
-    def __init__(self, *, store, base: str, schema: OutputSchema, role: str,
-                 n_writers: int, wid: int, region: Region, version: int) -> None:
+    def __init__(
+        self,
+        *,
+        store,
+        base: str,
+        schema: OutputSchema,
+        role: str,
+        n_writers: int,
+        wid: int,
+        region: Region,
+        version: int,
+    ) -> None:
         self.store = store
         self.base = base
         self.schema = schema
@@ -577,21 +581,22 @@ class ZarrStreamHandle:
 
         self.vars = [_Geo(schema, nm, ov, region, role) for nm, ov in schema.vars]
         self.statics = {nm: _Geo(schema, nm, ov, region, role) for nm, ov in schema.statics}
-        self._tgeo = _Geo(schema, schema.time_dim,
-                          OutputVar([schema.time_dim], schema.time_dtype), {}, role)
+        self._tgeo = _Geo(
+            schema, schema.time_dim, OutputVar([schema.time_dim], schema.time_dtype), {}, role
+        )
         self._meta: Dict[str, Any] = {}
 
         # committed state (authoritative for owner / single; a view otherwise)
         self.commit_seq = 0
-        self.n_committed = 0                       # append
-        self.committed_t: List[float] = []         # append (owner / single)
+        self.n_committed = 0  # append
+        self.committed_t: List[float] = []  # append (owner / single)
         self.last_committed_t: Optional[float] = None
-        self.entries: List[Dict[str, Any]] = (     # indexed
+        self.entries: List[Dict[str, Any]] = (  # indexed
             [{"t": float(t), "committed": False, "generation": 0} for t in self.times]
-            if self.indexed else []
+            if self.indexed
+            else []
         )
-        self.static_state = {nm: {"committed": False, "generation": 0}
-                             for nm, _ in schema.statics}
+        self.static_state = {nm: {"committed": False, "generation": 0} for nm, _ in schema.statics}
         self.blobs: Set[Tuple[str, Optional[int], int, str]] = set()
         self.writers: List[Dict[str, Any]] = [{"id": 0, "region": _region_wire(region)}]
         self._base_manifest: Dict[str, Any] = {}
@@ -607,8 +612,8 @@ class ZarrStreamHandle:
         # writing state
         self.next_index = 0
         self.last_t: Optional[float] = None
-        self._touched: Set[int] = set()            # indexed: records written here
-        self._tokened_records: Set[int] = set()    # contributor view
+        self._touched: Set[int] = set()  # indexed: records written here
+        self._tokened_records: Set[int] = set()  # contributor view
         self._tokened_statics: Set[str] = set()
         self._pending_records: Dict[int, float] = {}
         self._pending_statics: Set[str] = set()
@@ -628,8 +633,10 @@ class ZarrStreamHandle:
         return self.role in ("single", "owner")
 
     def __repr__(self) -> str:
-        return (f"ZarrStreamHandle({self.base!r}, role={self.role!r}, "
-                f"id={self.writer_id}, region={_region_wire(self.region)})")
+        return (
+            f"ZarrStreamHandle({self.base!r}, role={self.role!r}, "
+            f"id={self.writer_id}, region={_region_wire(self.region)})"
+        )
 
     # -- internals: arrays ------------------------------------------------ #
 
@@ -648,8 +655,9 @@ class ZarrStreamHandle:
         dims = list(meta.dimension_names or [])
         if time_len is not None and self.schema.time_dim in dims:
             shape[dims.index(self.schema.time_dim)] = time_len
-        am = AsyncArray(metadata=meta.update_shape(tuple(shape)),
-                        store_path=StorePath(self.store, name))
+        am = AsyncArray(
+            metadata=meta.update_shape(tuple(shape)), store_path=StorePath(self.store, name)
+        )
         object.__setattr__(am, "codec_pipeline", _whole_shard_pipeline(am.codec_pipeline))
         return zarr.Array(am)
 
@@ -849,8 +857,7 @@ class ZarrStreamHandle:
             raise ValueError(f"record {i}: t = {t!r} != times[{i}] = {float(self.times[i])!r}")
         if self._record_committed(i):
             raise EarthSciIOError(
-                f"record {i} is committed: the owner must invalidate it before it "
-                f"is rewritten"
+                f"record {i} is committed: the owner must invalidate it before it is rewritten"
             )
         self._put_record(i, float(self.times[i]), arrays)
         self._touched.add(i)
@@ -959,8 +966,9 @@ class ZarrStreamHandle:
             except (RegionNotShardAligned, ValueError) as e:
                 raise CommitError(f"writer {t.writer}: {e}") from None
         for a, b in itertools.combinations(tokens, 2):
-            if all(a.region[d][0] < b.region[d][1] and b.region[d][0] < a.region[d][1]
-                   for d in rdims):
+            if all(
+                a.region[d][0] < b.region[d][1] and b.region[d][0] < a.region[d][1] for d in rdims
+            ):
                 raise CommitError(
                     f"overlap between writers {a.writer} {_region_wire(a.region)} and "
                     f"{b.writer} {_region_wire(b.region)}"
@@ -1020,8 +1028,17 @@ class ZarrStreamHandle:
                 )
         return tokens, ref, names
 
-    _COMMITTED_STATE = ("commit_seq", "n_committed", "committed_t", "last_committed_t",
-                        "entries", "static_state", "blobs", "writers", "_v1_time_shards")
+    _COMMITTED_STATE = (
+        "commit_seq",
+        "n_committed",
+        "committed_t",
+        "last_committed_t",
+        "entries",
+        "static_state",
+        "blobs",
+        "writers",
+        "_v1_time_shards",
+    )
 
     @contextlib.contextmanager
     def _transaction(self):
@@ -1058,12 +1075,14 @@ class ZarrStreamHandle:
             self.committed_t.extend(t for _, t in recs)
             self.last_committed_t = recs[-1][1]
             if self.version == 1:
-                self._v1_time_shards.append({
-                    "index": len(self._v1_time_shards),
-                    "t_start": recs[0][1],
-                    "t_end": recs[-1][1],
-                    "n_records": len(recs),
-                })
+                self._v1_time_shards.append(
+                    {
+                        "index": len(self._v1_time_shards),
+                        "t_start": recs[0][1],
+                        "t_end": recs[-1][1],
+                        "n_records": len(recs),
+                    }
+                )
         for i, _ in recs if self.indexed else ():
             self.entries[i]["committed"] = True
             self.entries[i]["generation"] += 1
@@ -1123,11 +1142,14 @@ class ZarrStreamHandle:
         if self.role == "contributor":
             if tokens:
                 raise ValueError("a contributor's close takes no tokens")
-            if (self._pending_records or self._pending_statics or self._pending_blobs
-                    or any(sh.dirty for sh in self._shards.values())):
+            if (
+                self._pending_records
+                or self._pending_statics
+                or self._pending_blobs
+                or any(sh.dirty for sh in self._shards.values())
+            ):
                 raise EarthSciIOError(
-                    "contributor close with unflushed writes: flush and deliver the "
-                    "token first"
+                    "contributor close with unflushed writes: flush and deliver the token first"
                 )
             self._closed = True
             return None
@@ -1154,8 +1176,9 @@ class ZarrStreamHandle:
             tv = [t for _, t in grp]
             if out and out[-1]["index"] == ts:  # extends a kept, partial shard
                 e = out[-1]
-                e.update(t_start=min(e["t_start"], *tv), t_end=max(e["t_end"], *tv),
-                         n=e["n"] + len(tv))
+                e.update(
+                    t_start=min(e["t_start"], *tv), t_end=max(e["t_end"], *tv), n=e["n"] + len(tv)
+                )
             else:
                 out.append({"index": ts, "t_start": min(tv), "t_end": max(tv), "n": len(tv)})
         return out
@@ -1164,12 +1187,14 @@ class ZarrStreamHandle:
         s = self.schema
         if self.version == 1:
             m = dict(self._base_manifest)
-            m.update({
-                "time_shards": [dict(e) for e in self._v1_time_shards],
-                "last_t": self.last_committed_t,
-                "total_records": self.n_committed,
-                "written_at": _now(),
-            })
+            m.update(
+                {
+                    "time_shards": [dict(e) for e in self._v1_time_shards],
+                    "last_t": self.last_committed_t,
+                    "total_records": self.n_committed,
+                    "written_at": _now(),
+                }
+            )
             return m
         if self.indexed:
             committed = [i for i, e in enumerate(self.entries) if e["committed"]]
@@ -1177,9 +1202,15 @@ class ZarrStreamHandle:
             last_t = max((self.entries[i]["t"] for i in committed), default=None)
             records: Dict[str, Any] = {
                 "committed": _ranges(committed),
-                "entries": [{"index": i, "t": e["t"], "committed": e["committed"],
-                             "generation": e["generation"]}
-                            for i, e in enumerate(self.entries)],
+                "entries": [
+                    {
+                        "index": i,
+                        "t": e["t"],
+                        "committed": e["committed"],
+                        "generation": e["generation"],
+                    }
+                    for i, e in enumerate(self.entries)
+                ],
             }
             time_mode = {"kind": "indexed", "n_records": self.N}
         else:
@@ -1196,25 +1227,38 @@ class ZarrStreamHandle:
             return d
 
         m = dict(self._base_manifest)
-        m.update({
-            "schema": OUTPUT_MANIFEST_V2,
-            "dims": [{"name": d, "length": shape_t if d == s.time_dim else n}
-                     for d, n in s.dims],
-            "vars": [_vmeta(nm, ov) for nm, ov in s.vars],
-            "time_shards": self._time_shards_v2(),
-            "last_t": last_t,
-            "n_records": shape_t,
-            "schema_fingerprint": self.fingerprint,
-            "time_mode": time_mode,
-            "writers": [dict(w) for w in self.writers],
-            "records": records,
-            "statics": [_vmeta(nm, ov, {"committed": self.static_state[nm]["committed"],
-                                        "generation": self.static_state[nm]["generation"]})
-                        for nm, ov in s.statics],
-            "blobs": [{"scope": sc, "record": r, "writer": w, "key": k}
-                      for sc, r, w, k in sorted(self.blobs, key=_blob_sort)],
-            "commit_seq": self.commit_seq,
-        })
+        m.update(
+            {
+                "schema": OUTPUT_MANIFEST_V2,
+                "dims": [
+                    {"name": d, "length": shape_t if d == s.time_dim else n} for d, n in s.dims
+                ],
+                "vars": [_vmeta(nm, ov) for nm, ov in s.vars],
+                "time_shards": self._time_shards_v2(),
+                "last_t": last_t,
+                "n_records": shape_t,
+                "schema_fingerprint": self.fingerprint,
+                "time_mode": time_mode,
+                "writers": [dict(w) for w in self.writers],
+                "records": records,
+                "statics": [
+                    _vmeta(
+                        nm,
+                        ov,
+                        {
+                            "committed": self.static_state[nm]["committed"],
+                            "generation": self.static_state[nm]["generation"],
+                        },
+                    )
+                    for nm, ov in s.statics
+                ],
+                "blobs": [
+                    {"scope": sc, "record": r, "writer": w, "key": k}
+                    for sc, r, w, k in sorted(self.blobs, key=_blob_sort)
+                ],
+                "commit_seq": self.commit_seq,
+            }
+        )
         return m
 
     def _write_manifest(self) -> Dict[str, Any]:
@@ -1222,8 +1266,11 @@ class ZarrStreamHandle:
         store the arrays use. Never called by a contributor."""
         assert self.is_owner
         m = self._manifest_dict()
-        _put_bytes(self.store, MANIFEST_KEY,
-                   (json.dumps(m, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        _put_bytes(
+            self.store,
+            MANIFEST_KEY,
+            (json.dumps(m, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
         return m
 
 
@@ -1241,15 +1288,18 @@ def _load_state(h: ZarrStreamHandle, m: Dict[str, Any]) -> None:
     h.writers = [dict(w) for w in m.get("writers", [])]
     if h.indexed:
         for e in m["records"]["entries"]:
-            h.entries[e["index"]].update(committed=bool(e["committed"]),
-                                         generation=int(e["generation"]))
+            h.entries[e["index"]].update(
+                committed=bool(e["committed"]), generation=int(e["generation"])
+            )
     else:
         h.n_committed = int(m["n_records"])
         h.last_committed_t = m.get("last_t")
     for st in m.get("statics", []):
         if st["name"] in h.static_state:
-            h.static_state[st["name"]] = {"committed": bool(st["committed"]),
-                                          "generation": int(st["generation"])}
+            h.static_state[st["name"]] = {
+                "committed": bool(st["committed"]),
+                "generation": int(st["generation"]),
+            }
     h.blobs = {(b["scope"], b["record"], int(b["writer"]), b["key"]) for b in m.get("blobs", [])}
 
 
@@ -1265,21 +1315,27 @@ def _base_manifest(schema: OutputSchema, base: str, version: int) -> Dict[str, A
     }
     if version == 1:
         # exactly the pre-contract Python v1 manifest
-        common.update({
-            "schema": OUTPUT_MANIFEST_V1,
-            "dims": [[k, v] for k, v in schema.dims],
-            "vars": [{"name": nm, "dims": list(ov.dims), "dtype": _v3_dtype(ov.dtype)}
-                     for nm, ov in schema.vars],
-            "chunk_shape": dict(schema.chunk_shape),
-            "shard_shape": dict(schema.shard_shape),
-        })
+        common.update(
+            {
+                "schema": OUTPUT_MANIFEST_V1,
+                "dims": [[k, v] for k, v in schema.dims],
+                "vars": [
+                    {"name": nm, "dims": list(ov.dims), "dtype": _v3_dtype(ov.dtype)}
+                    for nm, ov in schema.vars
+                ],
+                "chunk_shape": dict(schema.chunk_shape),
+                "shard_shape": dict(schema.shard_shape),
+            }
+        )
         return common
     dims = [d for d, _ in schema.dims]
-    common.update({
-        "chunk_shape": {d: schema.chunk_shape[d] for d in dims},
-        "shard_shape": {d: schema.shard_shape[d] for d in dims},
-        "created_at": _now(),
-    })
+    common.update(
+        {
+            "chunk_shape": {d: schema.chunk_shape[d] for d in dims},
+            "shard_shape": {d: schema.shard_shape[d] for d in dims},
+            "created_at": _now(),
+        }
+    )
     return common
 
 
@@ -1316,9 +1372,14 @@ def _check_single_region(schema: OutputSchema, role: str, region: Region) -> Non
 # --- open / join / resume ---------------------------------------------------- #
 
 
-def open_writer(base_url: str, schema: OutputSchema, role: str = "single",
-                n_writers: int = 1, id: int = 0,
-                region: Optional[Any] = None) -> ZarrStreamHandle:
+def open_writer(
+    base_url: str,
+    schema: OutputSchema,
+    role: str = "single",
+    n_writers: int = 1,
+    id: int = 0,
+    region: Optional[Any] = None,
+) -> ZarrStreamHandle:
     """Create (``single`` / ``owner``) or join (``contributor``) a store.
     See :meth:`earthsciio.backends.zarr_write.ZarrWriter.write_open`."""
     role, n_writers, wid = _norm_role(role, n_writers, id)
@@ -1333,8 +1394,16 @@ def open_writer(base_url: str, schema: OutputSchema, role: str = "single",
 
     store, base = _open_store(base_url, create=True)
     version = 1 if (role == "single" and not schema.indexed and not schema.statics) else 2
-    h = ZarrStreamHandle(store=store, base=base, schema=schema, role=role,
-                         n_writers=n_writers, wid=wid, region=region, version=version)
+    h = ZarrStreamHandle(
+        store=store,
+        base=base,
+        schema=schema,
+        role=role,
+        n_writers=n_writers,
+        wid=wid,
+        region=region,
+        version=version,
+    )
 
     group = zarr.open_group(store=store, mode="w", zarr_format=3)
     if schema.attrs:
@@ -1368,14 +1437,25 @@ def open_writer(base_url: str, schema: OutputSchema, role: str = "single",
         varr = np.asarray(vals)
         _mk(nm, [nm], varr.dtype, varr.shape, attrs, varr)
     if schema.indexed:
-        _mk(schema.time_dim, [schema.time_dim], np.float64, (h.N,), time_attrs,
-            np.asarray(h.times, dtype=np.float64))
+        _mk(
+            schema.time_dim,
+            [schema.time_dim],
+            np.float64,
+            (h.N,),
+            time_attrs,
+            np.asarray(h.times, dtype=np.float64),
+        )
     else:
         _mk(schema.time_dim, [schema.time_dim], schema.time_dtype, (0,), time_attrs)
     tlen = h.N if schema.indexed else 0
     for nm, ov in schema.vars:
-        _mk(nm, ov.dims, ov.dtype,
-            [tlen if d == schema.time_dim else dimlen[d] for d in ov.dims], ov.attrs)
+        _mk(
+            nm,
+            ov.dims,
+            ov.dtype,
+            [tlen if d == schema.time_dim else dimlen[d] for d in ov.dims],
+            ov.attrs,
+        )
     for nm, ov in schema.statics:
         _mk(nm, ov.dims, ov.dtype, [dimlen[d] for d in ov.dims], ov.attrs)
 
@@ -1385,8 +1465,14 @@ def open_writer(base_url: str, schema: OutputSchema, role: str = "single",
     return h
 
 
-def _open_existing(base_url: str, role: str, n_writers: int, wid: int, region: Region,
-                   schema: Optional[OutputSchema]) -> ZarrStreamHandle:
+def _open_existing(
+    base_url: str,
+    role: str,
+    n_writers: int,
+    wid: int,
+    region: Region,
+    schema: Optional[OutputSchema],
+) -> ZarrStreamHandle:
     store, base = _open_store(base_url, create=False)
     m = _read_manifest(store)
     if m is None:
@@ -1407,36 +1493,48 @@ def _open_existing(base_url: str, role: str, n_writers: int, wid: int, region: R
         )
     if schema is not None and schema_fingerprint(schema) != fp:
         raise EarthSciIOError(
-            f"the caller's schema fingerprint {schema_fingerprint(schema)} != the "
-            f"store's {fp}"
+            f"the caller's schema fingerprint {schema_fingerprint(schema)} != the store's {fp}"
         )
     _check_region(rebuilt, region)
     _check_single_region(rebuilt, role, region)
-    h = ZarrStreamHandle(store=store, base=m.get("base_url", base), schema=rebuilt,
-                         role=role, n_writers=n_writers, wid=wid, region=region,
-                         version=2 if v2 else 1)
+    h = ZarrStreamHandle(
+        store=store,
+        base=m.get("base_url", base),
+        schema=rebuilt,
+        role=role,
+        n_writers=n_writers,
+        wid=wid,
+        region=region,
+        version=2 if v2 else 1,
+    )
     h._base_manifest = {k: v for k, v in m.items()}
     h.time_coord = _get_bytes(store, f"{rebuilt.time_dim}/zarr.json") is not None
     names = [g.name for g in h.vars if g.writes] + [g.name for g in h.statics.values() if g.writes]
     if h.is_owner:
-        names = ([rebuilt.time_dim] * h.time_coord + [g.name for g in h.vars]
-                 + list(h.statics))
+        names = [rebuilt.time_dim] * h.time_coord + [g.name for g in h.vars] + list(h.statics)
     for nm in names:
         h._meta[nm] = _load_meta(store, nm)
     _load_state(h, m)
     return h
 
 
-def _join(base_url: str, schema: Optional[OutputSchema], n_writers: int, wid: int,
-          region: Region) -> ZarrStreamHandle:
+def _join(
+    base_url: str, schema: Optional[OutputSchema], n_writers: int, wid: int, region: Region
+) -> ZarrStreamHandle:
     h = _open_existing(base_url, "contributor", n_writers, wid, region, schema)
     h.next_index = h.n_committed
     h.last_t = h.last_committed_t
     return h
 
 
-def resume_writer(base_url: str, role: str = "single", n_writers: int = 1, id: int = 0,
-                  region: Optional[Any] = None, at: Optional[float] = None) -> ZarrStreamHandle:
+def resume_writer(
+    base_url: str,
+    role: str = "single",
+    n_writers: int = 1,
+    id: int = 0,
+    region: Optional[Any] = None,
+    at: Optional[float] = None,
+) -> ZarrStreamHandle:
     """Reopen a store after preemption (``spec/writer.md`` §7). ``append``:
     the committed records are truncated to those with ``t <= at`` (when that
     drops any, the owner / single writer rewrites the shapes and the manifest);
@@ -1521,8 +1619,9 @@ def _record_committed(m: Dict[str, Any], i: int) -> bool:
     return 0 <= i < int(m.get("n_records", m.get("total_records", 0)))
 
 
-def _read_region(base_url: str, name: str, dims: List[str], time_dim: Optional[str],
-                 i: Optional[int], region) -> np.ndarray:
+def _read_region(
+    base_url: str, name: str, dims: List[str], time_dim: Optional[str], i: Optional[int], region
+) -> np.ndarray:
     import zarr
 
     arr = zarr.open_array(store=_open_read_store(base_url), path=name, mode="r")
@@ -1570,8 +1669,7 @@ def read_blob(base_url: str, scope: BlobScope, writer: int, key: str) -> bytes:
     ``("record", i)``. Errors if not committed."""
     sc, rec = _parse_scope(scope)
     m = read_output_manifest(base_url)
-    committed = {(b["scope"], b["record"], int(b["writer"]), b["key"])
-                 for b in m.get("blobs", [])}
+    committed = {(b["scope"], b["record"], int(b["writer"]), b["key"]) for b in m.get("blobs", [])}
     if (sc, rec, int(writer), key) not in committed:
         raise EarthSciIOError(f"blob {(sc, rec, writer, key)} is not committed")
     data = _get_bytes(_open_read_store(base_url), _blob_key(sc, rec, int(writer), key))

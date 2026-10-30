@@ -46,9 +46,9 @@ def _write_geotiff(path, data, *, geographic=True, nodata=NODATA):
     epsg = 4326 if geographic else 32610
     geokeys = (1, 1, 0, 3, 1024, 0, 1, geo_model_type, 1025, 0, 1, 1, epsg_key, 0, 1, epsg)
     extratags = [
-        (33550, "d", 3, (RES, RES, 0.0)),                 # ModelPixelScaleTag
+        (33550, "d", 3, (RES, RES, 0.0)),  # ModelPixelScaleTag
         (33922, "d", 6, (0.0, 0.0, 0.0, LON0, LAT0, 0.0)),  # ModelTiepointTag
-        (34735, "H", len(geokeys), geokeys),              # GeoKeyDirectoryTag
+        (34735, "H", len(geokeys), geokeys),  # GeoKeyDirectoryTag
     ]
     if nodata is not None:
         sentinel = f"{nodata}\x00"
@@ -88,14 +88,14 @@ def test_geotiff_decodes_band_grid_and_nodata(landfire_like_tif):
     nds = reader.read_native(reader.open(landfire_like_tif))
 
     assert isinstance(nds, NativeDataset)
-    assert nds.variable_names() == ["Band1"]            # 1-based GDAL convention
-    assert nds.coord_names() == ["lat", "lon"]          # geographic CRS -> lon/lat
+    assert nds.variable_names() == ["Band1"]  # 1-based GDAL convention
+    assert nds.coord_names() == ["lat", "lon"]  # geographic CRS -> lon/lat
 
     band = nds["Band1"]
-    assert list(band.dims) == ["lat", "lon"]            # on-disk (row=lat, col=lon)
+    assert list(band.dims) == ["lat", "lon"]  # on-disk (row=lat, col=lon)
     assert list(band.shape) == [4, 3]
-    assert band.data.dtype == np.float64                # numeric -> float64 (§3)
-    assert np.isnan(band.data[1, 1])                    # GDAL_NODATA sentinel -> NaN
+    assert band.data.dtype == np.float64  # numeric -> float64 (§3)
+    assert np.isnan(band.data[1, 1])  # GDAL_NODATA sentinel -> NaN
     # every other cell is its raw value (row-major arange), untouched
     expected = np.arange(12, dtype="float64").reshape(4, 3)
     finite = ~np.isnan(band.data)

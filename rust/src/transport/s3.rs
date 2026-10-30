@@ -278,7 +278,12 @@ impl S3Transport {
     /// ETag still matches, a bounded memory profile on a file that may be
     /// gigabytes, and a size to write against.
     #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
-    fn fetch_signed(&self, url: &str, dest: &Path, conditional: &Conditional) -> Result<FetchResult> {
+    fn fetch_signed(
+        &self,
+        url: &str,
+        dest: &Path,
+        conditional: &Conditional,
+    ) -> Result<FetchResult> {
         use std::io::Write;
 
         // `head` / `get_range` are convenience methods on `ObjectStoreExt`; the
@@ -483,7 +488,10 @@ mod tests {
     fn only_the_named_buckets_are_signed() {
         let t = S3Transport::new().signing_buckets(["my-private-bucket"]);
         assert!(t.signs("my-private-bucket"));
-        assert!(!t.signs("inmap-model"), "a public bucket must not start signing");
+        assert!(
+            !t.signs("inmap-model"),
+            "a public bucket must not start signing"
+        );
         assert!(!t.signs("my-private-bucket-2"), "prefixes are not matches");
     }
 
@@ -611,7 +619,9 @@ mod tests {
         // There is deliberately no wildcard: `*` is a bucket name, not "all".
         let star = parse_signed_buckets("*");
         assert!(star.contains("*"));
-        assert!(!S3Transport::new().signing_buckets(["*"]).signs("inmap-model"));
+        assert!(!S3Transport::new()
+            .signing_buckets(["*"])
+            .signs("inmap-model"));
     }
 
     #[test]

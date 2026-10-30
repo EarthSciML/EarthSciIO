@@ -127,10 +127,7 @@ def _values_equal(got: List[Any], exp: List[Any]) -> Optional[str]:
         if gnull:
             continue
         if abs(float(g) - float(e)) > ATOL + RTOL * abs(float(e)):
-            return (
-                f"value differs at [{i}]: {g} != {e} "
-                f"(beyond atol={ATOL:g}, rtol={RTOL:g})"
-            )
+            return f"value differs at [{i}]: {g} != {e} (beyond atol={ATOL:g}, rtol={RTOL:g})"
     return None
 
 
@@ -244,9 +241,18 @@ def compare_stores(stores: Dict[str, pathlib.Path], spec: Dict[str, Any]) -> Tup
 
 def _diff_struct(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
     diffs = []
-    for k in ("data_type", "shape", "dimension_names", "shard_shape",
-              "inner_chunk_shape", "inner_codec_chain", "blosc", "zstd",
-              "fill_value", "cf_attrs"):
+    for k in (
+        "data_type",
+        "shape",
+        "dimension_names",
+        "shard_shape",
+        "inner_chunk_shape",
+        "inner_codec_chain",
+        "blosc",
+        "zstd",
+        "fill_value",
+        "cf_attrs",
+    ):
         if a.get(k) != b.get(k):
             diffs.append(f"{k}: {a.get(k)!r} != {b.get(k)!r}")
     return diffs
@@ -297,8 +303,10 @@ def main(argv: List[str]) -> int:
     print(f"profile:   {spec.get('profile', '(unset)')}")
     print(f"readbacks: {', '.join(d['_id'] for d in dumps) if dumps else '(none)'}")
     print(f"stores:    {', '.join(stores) if stores else '(none)'}")
-    print(f"tolerance: atol={ATOL:g}, rtol={RTOL:g} (float64 decoded); "
-          f"null↔NaN exact; fill_value 0.0 kept (NOT mapped to NaN) [RFC §16.6]")
+    print(
+        f"tolerance: atol={ATOL:g}, rtol={RTOL:g} (float64 decoded); "
+        f"null↔NaN exact; fill_value 0.0 kept (NOT mapped to NaN) [RFC §16.6]"
+    )
     print()
 
     failures = 0
@@ -363,8 +371,10 @@ def main(argv: List[str]) -> int:
     if failures:
         print(f"RESULT: FAIL ({failures} problem(s))")
         return 1
-    print("RESULT: PASS — every writer's store agrees with the spec oracle and "
-          "pairwise within tolerance; structural/CF metadata agrees.")
+    print(
+        "RESULT: PASS — every writer's store agrees with the spec oracle and "
+        "pairwise within tolerance; structural/CF metadata agrees."
+    )
     return 0
 
 

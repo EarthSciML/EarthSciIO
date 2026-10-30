@@ -57,9 +57,7 @@ class CountingFileTransport:
 
 
 def _register():
-    transport_registry.register(
-        "count", CountingFileTransport, keys=["count"], status="active"
-    )
+    transport_registry.register("count", CountingFileTransport, keys=["count"], status="active")
 
 
 def _count_url(src, counter):

@@ -48,9 +48,7 @@ class FileTransport:
         try:
             shutil.copyfile(src, os.fspath(dest))
         except OSError as exc:
-            raise TransportError(
-                f"file copy failed {src} -> {dest}: {exc}"
-            ) from exc
+            raise TransportError(f"file copy failed {src} -> {dest}: {exc}") from exc
         return FetchResult(
             DOWNLOADED,
             etag=None,

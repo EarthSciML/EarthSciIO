@@ -19,9 +19,11 @@ end
 
 # A scenario's DISCRETE source as a Julia Provider, its times in Unix seconds.
 _scenario_provider(cache, src, rps) =
-    discrete_provider(cache, _scenario_url(src), Float64.(src["refresh_times_s"]);
-                      format = String(src["format"]), time_dim = String(src["time_dim"]),
-                      variables = String.(src["variables"]), records_per_sample = rps)
+    discrete_provider(
+    cache, _scenario_url(src), Float64.(src["refresh_times_s"]);
+    format = String(src["format"]), time_dim = String(src["time_dim"]),
+    variables = String.(src["variables"]), records_per_sample = rps
+)
 
 # BITWISE equality of decoded samples — names, dims, attrs, eltypes, shapes and
 # the bytes themselves (NaN for NaN, -0.0 apart from 0.0), strings by value. A
@@ -30,8 +32,12 @@ _field_bits(a) = isbitstype(eltype(a)) ? reinterpret(UInt8, vec(collect(a))) : v
 function bitwise_same(a::NativeDataset, b::NativeDataset)
     Set(keys(a.variables)) == Set(keys(b.variables)) || return false
     Set(keys(a.coords)) == Set(keys(b.coords)) || return false
-    for (fa, fb) in Iterators.flatten((((a.variables[n], b.variables[n]) for n in keys(a.variables)),
-                                       ((a.coords[n], b.coords[n]) for n in keys(a.coords))))
+    for (fa, fb) in Iterators.flatten(
+            (
+                ((a.variables[n], b.variables[n]) for n in keys(a.variables)),
+                ((a.coords[n], b.coords[n]) for n in keys(a.coords)),
+            )
+        )
         fa.dims == fb.dims && fa.attrs == fb.attrs && size(fa.data) == size(fb.data) &&
             eltype(fa.data) == eltype(fb.data) && _field_bits(fa.data) == _field_bits(fb.data) ||
             return false
@@ -53,10 +59,18 @@ end
 function slice_by_name(nds::NativeDataset, window)
     named = select_form(window)["dims"]
     idx = Dict(String(d) => _ref_indices(s) for (d, s) in named)
-    cut(f) = NativeField(f.data[(get(idx, d, nothing) === nothing ? Colon() : idx[d] .+ 1
-                                 for d in f.dims)...], copy(f.dims), copy(f.attrs))
-    return NativeDataset(Dict(n => cut(f) for (n, f) in nds.variables),
-                         Dict(n => cut(f) for (n, f) in nds.coords))
+    cut(f) = NativeField(
+        f.data[
+            (
+                get(idx, d, nothing) === nothing ? Colon() : idx[d] .+ 1
+                    for d in f.dims
+            )...,
+        ], copy(f.dims), copy(f.attrs)
+    )
+    return NativeDataset(
+        Dict(n => cut(f) for (n, f) in nds.variables),
+        Dict(n => cut(f) for (n, f) in nds.coords)
+    )
 end
 
 # The error `f()` raises (or `nothing`), and its message.
@@ -97,12 +111,18 @@ end
     # Unnamed dimensions are "all": an empty map selects nothing away, and a time
     # dimension named "all" is not a time selection.
     @test bitwise_same(read_native(reader, blob; select = Dict("dims" => Dict())), full)
-    @test bitwise_same(read_native(reader, blob; select = Dict("dims" => Dict("time" => "all"))),
-                       full)
+    @test bitwise_same(
+        read_native(reader, blob; select = Dict("dims" => Dict("time" => "all"))),
+        full
+    )
 
     # Order and repetition are the caller's; a one-index axis is kept at length 1.
-    rep = Dict("dims" => Dict("lon" => Dict("indices" => [4, 4, 1]),
-                              "lat" => Dict("indices" => [2])))
+    rep = Dict(
+        "dims" => Dict(
+            "lon" => Dict("indices" => [4, 4, 1]),
+            "lat" => Dict("indices" => [2])
+        )
+    )
     r = read_native(reader, blob; select = rep)
     @test bitwise_same(r, slice_by_name(full, rep))
     @test size(r["T"].data) == (2, 3, 1, 3)
@@ -118,29 +138,47 @@ end
     end
 
     # Exactly one of `axes` and `dims`.
-    err, msg = _raised(() -> read_native(reader, blob;
-        select = Dict("axes" => Any["all", "all"], "dims" => Dict("lat" => "all"))))
+    err, msg = _raised(
+        () -> read_native(
+            reader, blob;
+            select = Dict("axes" => Any["all", "all"], "dims" => Dict("lat" => "all"))
+        )
+    )
     @test err isa ArgumentError
     @test occursin("both", msg)
 
     # A named dimension no field of the read carries is an error naming the ones
     # that are present — never a window that silently means nothing.
-    err, msg = _raised(() -> read_native(reader, blob;
-        select = Dict("dims" => Dict("depth" => Dict("indices" => [0])))))
+    err, msg = _raised(
+        () -> read_native(
+            reader, blob;
+            select = Dict("dims" => Dict("depth" => Dict("indices" => [0])))
+        )
+    )
     @test err isa ArgumentError
     @test occursin("depth", msg) && occursin("lon_edge", msg)
 
     # Time is the Provider's: anything but "all" on it is refused.
-    err, msg = _raised(() -> read_native(reader, blob;
-        select = Dict("dims" => Dict("time" => Dict("indices" => [0])))))
+    err, msg = _raised(
+        () -> read_native(
+            reader, blob;
+            select = Dict("dims" => Dict("time" => Dict("indices" => [0])))
+        )
+    )
     @test err isa ArgumentError
     @test occursin("time", msg)
 
     # Bounds, against the FILE length: never a clamp, never a negative wrap.
-    for ax in (Dict("slice" => [2, 9]), Dict("slice" => [-1, 2]), Dict("indices" => [4]),
-               Dict("indices" => [-1]))
-        err, msg = _raised(() -> read_native(reader, blob;
-            select = Dict("dims" => Dict("lat" => ax))))
+    for ax in (
+            Dict("slice" => [2, 9]), Dict("slice" => [-1, 2]), Dict("indices" => [4]),
+            Dict("indices" => [-1]),
+        )
+        err, msg = _raised(
+            () -> read_native(
+                reader, blob;
+                select = Dict("dims" => Dict("lat" => ax))
+            )
+        )
         @test err !== nothing
         @test occursin("out of range", msg)
     end
@@ -209,31 +247,47 @@ end
     @test isempty(intersect(Set(store.gets), poisoned))
 
     # The poison is real: a window that intersects a poisoned chunk fails.
-    @test_throws Exception read_store(ZarrReader(), cache, url; variables = vars,
-        select = Dict("dims" => Dict("lat" => Dict("slice" => [0, 2]))))
+    @test_throws Exception read_store(
+        ZarrReader(), cache, url; variables = vars,
+        select = Dict("dims" => Dict("lat" => Dict("slice" => [0, 2])))
+    )
 
     # Every array's metadata is read and every selector bounds-checked BEFORE the
     # first chunk: a selector out of range for T3 alone costs no chunk at all.
-    meta = Set(cache_key(o["url"]) for o in case["objects"]
-               if endswith(o["url"], ".zarray") || endswith(o["url"], ".zattrs"))
-    for bad in (Dict("lat" => Dict("slice" => [2, 4]), "lev" => Dict("indices" => [3])),
-                Dict("lon" => Dict("indices" => [5, 3]), "depth" => "all"))
+    meta = Set(
+        cache_key(o["url"]) for o in case["objects"]
+            if endswith(o["url"], ".zarray") || endswith(o["url"], ".zattrs")
+    )
+    for bad in (
+            Dict("lat" => Dict("slice" => [2, 4]), "lev" => Dict("indices" => [3])),
+            Dict("lon" => Dict("indices" => [5, 3]), "depth" => "all"),
+        )
         empty!(store.gets)
-        err, msg = _raised(() -> read_store(ZarrReader(), cache, url; variables = vars,
-                                            select = Dict("dims" => bad)))
+        err, msg = _raised(
+            () -> read_store(
+                ZarrReader(), cache, url; variables = vars,
+                select = Dict("dims" => bad)
+            )
+        )
         @test err !== nothing
         @test issubset(Set(store.gets), meta)
     end
-    err, msg = _raised(() -> read_store(ZarrReader(), cache, url; variables = vars,
-        select = Dict("dims" => Dict("depth" => "all"))))
+    err, msg = _raised(
+        () -> read_store(
+            ZarrReader(), cache, url; variables = vars,
+            select = Dict("dims" => Dict("depth" => "all"))
+        )
+    )
     @test err isa ArgumentError && occursin("depth", msg) && occursin("lev", msg)
-    @test_throws ArgumentError read_store(ZarrReader(), cache, url; variables = vars,
-        select = Dict("axes" => Any["all"], "dims" => Dict()))
+    @test_throws ArgumentError read_store(
+        ZarrReader(), cache, url; variables = vars,
+        select = Dict("axes" => Any["all"], "dims" => Dict())
+    )
 
     # Time, and SYNTHESIZED names, on a Julia-built store: `v[time, x]` with
     # `_ARRAY_DIMENSIONS`, and `u` with no `.zattrs` at all (so `dim_0`, `dim_1`).
     zb = "s3://earthsci-fixtures/named-mini.zarr"
-    objs = Dict{String,Vector{UInt8}}()
+    objs = Dict{String, Vector{UInt8}}()
     objs["$zb/v/.zarray"] = _z_zarray((2, 3), (1, 3), "<f8")
     objs["$zb/v/.zattrs"] = Vector{UInt8}(codeunits(JSON.json(Dict("_ARRAY_DIMENSIONS" => ["time", "x"]))))
     objs["$zb/u/.zarray"] = _z_zarray((2, 3), (1, 3), "<f8")
@@ -242,14 +296,22 @@ end
         objs["$zb/u/$r.0"] = _z_encode(reshape(Float64[100r, 100r + 1, 100r + 2], 1, 3))
     end
     zc = Cache(_z_populate(mktempdir(), objs); offline = true, verify = false)
-    err, msg = _raised(() -> read_store(ZarrReader(), zc, zb; variables = ["v"],
-        select = Dict("dims" => Dict("time" => Dict("indices" => [0])))))
+    err, msg = _raised(
+        () -> read_store(
+            ZarrReader(), zc, zb; variables = ["v"],
+            select = Dict("dims" => Dict("time" => Dict("indices" => [0])))
+        )
+    )
     @test err isa ArgumentError && occursin("time", msg)
-    v = read_store(ZarrReader(), zc, zb; variables = ["v"],
-                   select = Dict("dims" => Dict("time" => "all", "x" => Dict("indices" => [2, 0]))))
+    v = read_store(
+        ZarrReader(), zc, zb; variables = ["v"],
+        select = Dict("dims" => Dict("time" => "all", "x" => Dict("indices" => [2, 0])))
+    )
     @test v["v"].data == [2.0 0.0; 12.0 10.0]
-    u = read_store(ZarrReader(), zc, zb; variables = ["u"],
-                   select = Dict("dims" => Dict("dim_1" => Dict("slice" => [1, 3]))))
+    u = read_store(
+        ZarrReader(), zc, zb; variables = ["u"],
+        select = Dict("dims" => Dict("dim_1" => Dict("slice" => [1, 3])))
+    )
     @test u["u"].dims == ["dim_0", "dim_1"]
     @test u["u"].data == [1.0 2.0; 101.0 102.0]
 end
@@ -303,20 +365,29 @@ end
     w = DimWindow("lat" => (1, 2), "lon" => [2, 0])
 
     # DimWindow spellings -> the wire vocabulary, 0-based.
-    @test select_form(DimWindow("a" => (1, 5, 2), "b" => Int[], "c" => :all, "d" => "all",
-                                "e" => Dict("indices" => [3]))) ==
-          Dict{String,Any}("dims" => Dict{String,Any}(
-              "a" => Dict{String,Any}("slice" => [1, 5, 2]),
-              "b" => Dict{String,Any}("indices" => Int[]), "c" => "all", "d" => "all",
-              "e" => Dict{String,Any}("indices" => [3])))
-    @test select_form(DimWindow()) == Dict{String,Any}("dims" => Dict{String,Any}())
+    @test select_form(
+        DimWindow(
+            "a" => (1, 5, 2), "b" => Int[], "c" => :all, "d" => "all",
+            "e" => Dict("indices" => [3])
+        )
+    ) ==
+        Dict{String, Any}(
+        "dims" => Dict{String, Any}(
+            "a" => Dict{String, Any}("slice" => [1, 5, 2]),
+            "b" => Dict{String, Any}("indices" => Int[]), "c" => "all", "d" => "all",
+            "e" => Dict{String, Any}("indices" => [3])
+        )
+    )
+    @test select_form(DimWindow()) == Dict{String, Any}("dims" => Dict{String, Any}())
     @test DimWindow(Dict("lat" => (1, 2))) == DimWindow("lat" => (1, 2))
-    for bad in (() -> DimWindow("lat" => 1:3), () -> DimWindow("lat" => (1, 2, 3, 4)),
-                () -> DimWindow("lat" => (1, 5, 0)), () -> DimWindow("lat" => [1.5]),
-                () -> DimWindow("lat" => (1, 2), "lat" => [0]),
-                () -> DimWindow("lat" => Dict("range" => [1, 2])),
-                () -> select_form(Dict("axes" => Any["all"])),
-                () -> select_form(Dict("axes" => Any["all"], "dims" => Dict())))
+    for bad in (
+            () -> DimWindow("lat" => 1:3), () -> DimWindow("lat" => (1, 2, 3, 4)),
+            () -> DimWindow("lat" => (1, 5, 0)), () -> DimWindow("lat" => [1.5]),
+            () -> DimWindow("lat" => (1, 2), "lat" => [0]),
+            () -> DimWindow("lat" => Dict("range" => [1, 2])),
+            () -> select_form(Dict("axes" => Any["all"])),
+            () -> select_form(Dict("axes" => Any["all"], "dims" => Dict())),
+        )
         @test_throws ArgumentError bad()
     end
 
@@ -330,21 +401,27 @@ end
     for t in refresh_times(p)
         @test bitwise_same(sample_at(pw, t), slice_by_name(sample_at(p, t), w))
     end
-    @test bitwise_same(sample_at(with_window(p, select_form(w)), first(refresh_times(p))),
-                       sample_at(pw, first(refresh_times(p))))
+    @test bitwise_same(
+        sample_at(with_window(p, select_form(w)), first(refresh_times(p))),
+        sample_at(pw, first(refresh_times(p)))
+    )
 
     # Refused at once and before any I/O — this provider's resolver throws if it
     # is ever asked for a URL.
-    noio = discrete_provider(cache, t -> error("with_window must not do I/O"),
-                             Float64.(src["refresh_times_s"]); format = "netcdf",
-                             time_dim = "time")
+    noio = discrete_provider(
+        cache, t -> error("with_window must not do I/O"),
+        Float64.(src["refresh_times_s"]); format = "netcdf",
+        time_dim = "time"
+    )
     err, msg = _raised(() -> with_window(with_window(noio, w), w))      # two windows
     @test err isa ArgumentError && occursin("already bakes", msg)
     err, msg = _raised(() -> with_window(noio, DimWindow("time" => "all")))  # the time_dim
     @test err isa ArgumentError && occursin("time_dim", msg)
     openaq = "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
-    csv = const_provider(cache, openaq; format = "csv",
-                         reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],))
+    csv = const_provider(
+        cache, openaq; format = "csv",
+        reader_kwargs = (numeric_columns = ["latitude", "longitude", "value"],)
+    )
     err, msg = _raised(() -> with_window(csv, w))                         # no selection
     @test err isa ArgumentError && occursin("supports_selection", msg)
     @test with_window(noio, w) isa Provider                               # a bare window is fine
@@ -378,8 +455,10 @@ end
             g = sample_windows_at(p, t, d["windows"])
             sep = [sample_at(with_window(p, w), t) for w in d["windows"]]
             @test bitwise_same(g, sep)
-            @test all(bitwise_same(g[i], slice_by_name(sample_at(p, t), w))
-                      for (i, w) in enumerate(d["windows"]))
+            @test all(
+                bitwise_same(g[i], slice_by_name(sample_at(p, t), w))
+                    for (i, w) in enumerate(d["windows"])
+            )
         end
     end
 
@@ -390,10 +469,16 @@ end
     # The with_window preconditions apply to every window, before any I/O.
     p1 = _scenario_provider(cache, d["source"], 1)
     t1 = first(refresh_times(p1))
-    @test_throws ArgumentError sample_windows_at(p1, t1, [DimWindow("lat" => (0, 1)),
-                                                         DimWindow("time" => "all")])
-    @test_throws ArgumentError sample_windows_at(with_window(p1, DimWindow()), t1,
-                                                 [DimWindow("lat" => (0, 1))])
+    @test_throws ArgumentError sample_windows_at(
+        p1, t1, [
+            DimWindow("lat" => (0, 1)),
+            DimWindow("time" => "all"),
+        ]
+    )
+    @test_throws ArgumentError sample_windows_at(
+        with_window(p1, DimWindow()), t1,
+        [DimWindow("lat" => (0, 1))]
+    )
     # ...and the reader's own checks still bind each window: a dimension the read
     # lacks, a time selection, and an index out of range — the last two where the
     # union reads that dimension whole, so the slice-back has to check them itself.

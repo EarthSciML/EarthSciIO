@@ -204,9 +204,7 @@ class _FileShare:
 
 
 def _str_bytes(values: Sequence[Any]) -> int:
-    return sum(
-        len(v) if isinstance(v, bytes) else len(str(v).encode("utf-8")) for v in values
-    )
+    return sum(len(v) if isinstance(v, bytes) else len(str(v).encode("utf-8")) for v in values)
 
 
 def _dataset_nbytes(ds: NativeDataset) -> int:
@@ -297,8 +295,9 @@ def _proc_run(key: str, t: _dt.datetime) -> Tuple[Any, int, Optional[BaseExcepti
         time.sleep(max(0.0, float(w["latency"]())))
     t0 = time.perf_counter()
     try:
-        data, nbytes = _produce(w["members"][key], w["files"][key], w["union"],
-                                w["no_windows"], w["transform"], key, t)
+        data, nbytes = _produce(
+            w["members"][key], w["files"][key], w["union"], w["no_windows"], w["transform"], key, t
+        )
         err: Optional[BaseException] = None
     except Exception as exc:
         data, nbytes, err = None, 0, exc
@@ -318,8 +317,7 @@ class _Task:
     """One ``(member, anchor)`` sample, decoded once and shared by every held
     slot that needs it."""
 
-    __slots__ = ("key", "anchor", "t", "gen", "done", "data", "error", "nbytes",
-                 "future", "refs")
+    __slots__ = ("key", "anchor", "t", "gen", "done", "data", "error", "nbytes", "future", "refs")
 
     def __init__(self, key: str, anchor: _dt.datetime, t: _dt.datetime, gen: int) -> None:
         self.key = key
@@ -348,7 +346,11 @@ class _Slot:
 
 
 _IDLE, _RUNNING, _CANCELLED, _FAILED, _CLOSED = (
-    "idle", "running", "cancelled", "failed", "closed",
+    "idle",
+    "running",
+    "cancelled",
+    "failed",
+    "closed",
 )
 
 
@@ -485,16 +487,19 @@ class PrefetchGroup:
         self._warmed: set = set()
         self._fetch_end = 0
         self._stats: Dict[str, Any] = {
-            "waited_s": 0.0, "decode_s": 0.0, "peak_bytes": 0, "epochs_decoded": 0,
-            "samples_decoded": 0, "samples_reused": 0, "oversize_epochs": 0,
+            "waited_s": 0.0,
+            "decode_s": 0.0,
+            "peak_bytes": 0,
+            "epochs_decoded": 0,
+            "samples_decoded": 0,
+            "samples_reused": 0,
+            "oversize_epochs": 0,
             "overlap": True,
         }
 
         if executor == "process":
             try:
-                payload = pickle.dumps(
-                    (self._members, self._windows, transform, _decode_latency)
-                )
+                payload = pickle.dumps((self._members, self._windows, transform, _decode_latency))
             except Exception as exc:
                 raise TypeError(
                     "executor='process' decodes in worker processes, so its "
@@ -695,11 +700,13 @@ class PrefetchGroup:
                 raise ValueError("an explicit order must name at least one epoch")
             bad = sorted({e for e in seq if not 0 <= e < n})
             if bad:
-                raise ValueError(f"epochs {bad} are out of range: the group has {n} epochs (0..{n - 1})")
+                raise ValueError(
+                    f"epochs {bad} are out of range: the group has {n} epochs (0..{n - 1})"
+                )
         if from_ is not None:
             f = _epoch_index(from_)
             try:
-                seq = seq[seq.index(f):]
+                seq = seq[seq.index(f) :]
             except ValueError:
                 raise ValueError(f"from_={f} is not an epoch of the order") from None
         return seq
@@ -721,8 +728,7 @@ class PrefetchGroup:
                 "resumes past it"
             )
         raise RuntimeError(
-            f"the order is exhausted (all {len(self._order)} entries taken); call "
-            "start() again"
+            f"the order is exhausted (all {len(self._order)} entries taken); call start() again"
         )
 
     def _end_order_locked(self, state: str) -> None:
@@ -766,8 +772,11 @@ class PrefetchGroup:
         todo: List[_Task] = []
         if self._state != _RUNNING:
             return todo
-        while (self._stop is None and self._next < len(self._order)
-               and self._next < self._head + self._depth):
+        while (
+            self._stop is None
+            and self._next < len(self._order)
+            and self._next < self._head + self._depth
+        ):
             pos = self._next
             epoch = self._order[pos]
             t = self._B[epoch]
@@ -867,6 +876,7 @@ class PrefetchGroup:
                 self._futures.discard(fut)
             if self._executor == "process" and not fut.cancelled():
                 self._results.put((task, fut))
+
         return done
 
     def _run_thread(self, task: _Task) -> None:
@@ -878,9 +888,15 @@ class PrefetchGroup:
             if self._latency is not None:
                 time.sleep(max(0.0, float(self._latency())))
                 t0 = time.perf_counter()
-            data, nbytes = _produce(self._members[task.key], self._files[task.key],
-                                    self._union, self._no_windows, self._transform,
-                                    task.key, task.t)
+            data, nbytes = _produce(
+                self._members[task.key],
+                self._files[task.key],
+                self._union,
+                self._no_windows,
+                self._transform,
+                task.key,
+                task.t,
+            )
             err: Optional[BaseException] = None
         except BaseException as exc:  # anything uncaught would leave take() waiting
             data, nbytes, err = None, 0, exc
@@ -900,8 +916,9 @@ class PrefetchGroup:
                 _freeze(data)
             self._finish(task, data, nbytes, err, secs)
 
-    def _finish(self, task: _Task, data: Any, nbytes: int,
-                err: Optional[BaseException], seconds: float) -> None:
+    def _finish(
+        self, task: _Task, data: Any, nbytes: int, err: Optional[BaseException], seconds: float
+    ) -> None:
         with self._cv:
             self._stats["decode_s"] += seconds
             if task.gen != self._gen or task.done:

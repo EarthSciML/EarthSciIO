@@ -19,7 +19,11 @@ from earthsciio import AuthError, Cache, cache_key, cds_auth, era5
 
 def _era5_url():
     return era5.era5_cds_url(
-        2018, 11, [8], ["temperature"], [1000, 500],
+        2018,
+        11,
+        [8],
+        ["temperature"],
+        [1000, 500],
         era5.era5_area_from_bbox(-100.5, 39.0, -80.2, 45.7),
     )
 
