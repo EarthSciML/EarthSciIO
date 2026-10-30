@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   lint:
-    uses: EarthSciML/.github/.github/workflows/lint.yml@main
+    uses: EarthSciML/.github/.github/workflows/lint.yml@ci/shared-lint
     with:
       rust-dirs: '["rust"]'
       # Host with every native feature, and the browser build (wasm32 + OPFS,
