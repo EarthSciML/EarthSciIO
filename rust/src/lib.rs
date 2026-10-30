@@ -134,6 +134,11 @@ pub use error::{Error, Result};
 
 // The output half — available on every target.
 pub use format::{
+    read_blob, read_output_manifest, read_record, read_static, schema_fingerprint, BlobScope,
+    CommitReceipt, CommitToken, RecordArrays, Region, Role, StreamDType, StreamSchema, StreamVar,
+    TimeMode, TypedArray, TypedVec, ZarrStreamWriter,
+};
+pub use format::{
     write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
     ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
 };

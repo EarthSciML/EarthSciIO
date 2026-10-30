@@ -43,6 +43,7 @@ mod zarr_object_store;
 mod zarr_opfs;
 #[cfg(not(target_arch = "wasm32"))]
 mod zarr_store;
+pub mod zarr_stream;
 mod zarr_write;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,6 +60,11 @@ pub use shapefile::ShapefileReader;
 pub use zarr::ZarrReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use zarr_write::write_zarr_v3;
+pub use zarr_stream::{
+    read_blob, read_output_manifest, read_record, read_static, schema_fingerprint, BlobScope,
+    CommitReceipt, CommitToken, RecordArrays, Region, Role, StreamDType, StreamSchema, StreamVar,
+    TimeMode, TypedArray, TypedVec, ZarrStreamWriter,
+};
 pub use zarr_write::{
     write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
     ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,

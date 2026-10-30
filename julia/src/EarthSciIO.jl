@@ -60,6 +60,13 @@ export write_output_manifest, read_output_manifest
 export ZarrWriter, OutputSchema, OutputVar, CodecProfile, BloscProfile, ZstdProfile
 export BLOSC_DIAGNOSTIC, BLOSC_CHECKPOINT, ZSTD_WASM
 export write_open!, write_record!, write_flush!, write_close!
+# the streaming writer contract (spec/writer.md, RFC U12): regions, roles + the
+# commit protocol, indexed records, statics, blobs, read-back and resume
+export IndexedTime, CommitToken, token_json, parse_token, schema_fingerprint
+export write_record_at!, write_static!, write_blob!, write_commit!
+export write_invalidate!, write_invalidate_statics!, write_resume
+export read_record, read_static, read_blob
+export RegionNotShardAligned, CommitError
 export Transport, HttpTransport, FileTransport, S3Transport
 export AuthResolver, NoAuth, BearerAuth
 
@@ -97,6 +104,7 @@ include("cache.jl")
 include("readers.jl")
 include("zarr.jl")
 include("zarr_write.jl")
+include("zarr_stream.jl")
 include("provider.jl")
 include("windows.jl")
 include("prefetch.jl")

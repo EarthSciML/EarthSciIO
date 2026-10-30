@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://earthsci.dev/earthsciio/schemas/output-manifest.schema.json",
+  "title": "EarthSciIO output manifest (output_manifest.json)",
+  "description": "The per-store record of a streaming Zarr v3 write (spec/writer.md §8). v1: a single-writer, append-only store without statics (each binding keeps the v1 spelling it always wrote, so v1 is described loosely). v2: regions, indexed records, statics or blobs; its manifest write is the commit point.",
+  "oneOf": [{"$ref": "#/$defs/v1"}, {"$ref": "#/$defs/v2"}],
+  "$defs": {
+    "dims": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["name", "length"],
+            "properties": {"name": {"type": "string"}, "length": {"type": "integer", "minimum": 0}}
+          },
+          {
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": "integer", "minimum": 0}],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        ]
+      }
+    },
+    "dtype": {"enum": ["float64", "float32", "int32", "int64", "uint8", "uint32", "uint64"]},
+    "var": {
+      "type": "object",
+      "required": ["name", "dims", "dtype"],
+      "properties": {
+        "name": {"type": "string"},
+        "dims": {"type": "array", "items": {"type": "string"}},
+        "dtype": {"$ref": "#/$defs/dtype"},
+        "attrs": {"type": "object"}
+      }
+    },
+    "intmap": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+    "region": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 1}],
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "common": {
+      "type": "object",
+      "required": ["schema", "format", "zarr_format", "profile", "codec", "time_dim", "dims", "vars", "chunk_shape", "shard_shape", "time_shards", "last_t"],
+      "properties": {
+        "base_url": {"type": "string"},
+        "format": {"const": "zarr"},
+        "zarr_format": {"const": 3},
+        "profile": {"enum": ["diagnostic", "checkpoint", "wasm"]},
+        "codec": {"type": "object", "required": ["id"], "properties": {"id": {"enum": ["blosc", "zstd"]}}},
+        "time_dim": {"type": "string"},
+        "dims": {"$ref": "#/$defs/dims"},
+        "vars": {"type": "array", "items": {"$ref": "#/$defs/var"}},
+        "chunk_shape": {"$ref": "#/$defs/intmap"},
+        "shard_shape": {"$ref": "#/$defs/intmap"},
+        "time_shards": {"type": "array", "items": {"type": "object", "required": ["index", "t_start", "t_end"]}},
+        "last_t": {"type": ["number", "null"]}
+      }
+    },
+    "v1": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {"properties": {"schema": {"const": "earthsciio/output-manifest/v1"}}}
+      ]
+    },
+    "v2": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "required": ["base_url", "n_records", "created_at", "schema_fingerprint", "time_mode", "writers", "records", "statics", "blobs", "commit_seq"],
+          "properties": {
+            "schema": {"const": "earthsciio/output-manifest/v2"},
+            "dims": {"type": "array", "items": {"type": "object", "required": ["name", "length"]}},
+            "time_shards": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["index", "t_start", "t_end", "n"],
+                "properties": {
+                  "index": {"type": "integer", "minimum": 0},
+                  "t_start": {"type": "number"},
+                  "t_end": {"type": "number"},
+                  "n": {"type": "integer", "minimum": 1}
+                }
+              }
+            },
+            "n_records": {"type": "integer", "minimum": 0},
+            "created_at": {"type": "string"},
+            "schema_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "time_mode": {
+              "oneOf": [
+                {"type": "object", "required": ["kind"], "properties": {"kind": {"const": "append"}}, "additionalProperties": false},
+                {
+                  "type": "object",
+                  "required": ["kind", "n_records"],
+                  "properties": {"kind": {"const": "indexed"}, "n_records": {"type": "integer", "minimum": 0}},
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "writers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "region"],
+                "properties": {"id": {"type": "integer", "minimum": 0}, "region": {"$ref": "#/$defs/region"}}
+              }
+            },
+            "records": {
+              "type": "object",
+              "required": ["committed"],
+              "properties": {
+                "committed": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 1}],
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["index", "t", "committed", "generation"],
+                    "properties": {
+                      "index": {"type": "integer", "minimum": 0},
+                      "t": {"type": "number"},
+                      "committed": {"type": "boolean"},
+                      "generation": {"type": "integer", "minimum": 0}
+                    }
+                  }
+                }
+              }
+            },
+            "statics": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {"$ref": "#/$defs/var"},
+                  {"required": ["committed", "generation"], "properties": {"committed": {"type": "boolean"}, "generation": {"type": "integer", "minimum": 0}}}
+                ]
+              }
+            },
+            "blobs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["scope", "record", "writer", "key"],
+                "properties": {
+                  "scope": {"enum": ["static", "record"]},
+                  "record": {"type": ["integer", "null"], "minimum": 0},
+                  "writer": {"type": "integer", "minimum": 0},
+                  "key": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+                }
+              }
+            },
+            "commit_seq": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    }
+  }
+}

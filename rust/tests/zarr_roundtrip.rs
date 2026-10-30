@@ -333,3 +333,23 @@ fn unknown_codec_profile_is_rejected() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn a_bad_time_coordinate_is_rejected_before_any_io() {
+    // Each record's t is the time coordinate's value and append-mode t must
+    // be strictly increasing: the whole coordinate is checked up front.
+    for (vals, want) in [
+        (vec![0.0, 0.0], "strictly increasing"),
+        (vec![3.0, 0.0], "strictly increasing"),
+        (vec![0.0, f64::NAN], "NaN"),
+        (vec![0.0], "has 1 values"),
+    ] {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut schema, ..) = fixture_schema("diagnostic");
+        schema.coords[0].values = vals.clone();
+        let path = scratch.path().join("bad.zarr");
+        let err = write_zarr_v3(&path, &schema).expect_err("a bad time coordinate");
+        assert!(format!("{err}").contains(want), "{vals:?}: {err}");
+        assert!(!path.join("zarr.json").exists(), "{vals:?}: wrote before checking");
+    }
+}

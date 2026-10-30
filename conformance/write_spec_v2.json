@@ -1,0 +1,3478 @@
+{
+ "schema": "earthsciio/write-conformance-spec/v2",
+ "description": "RFC U12 writer-contract cases (spec/writer.md \u00a710): regions and the commit protocol, indexed records, statics, blobs, dtypes, resume. Values come from the generator base = seed + 13*r + sum_j (i_j+1)*P[j], P = [3, 5, 11, 17, 23]; floats add 0.25, uint8 takes base % 251.",
+ "generator": {
+  "P": [
+   3,
+   5,
+   11,
+   17,
+   23
+  ],
+  "record_stride": 13,
+  "float_offset": 0.25,
+  "uint8_modulus": 251
+ },
+ "cases": [
+  {
+   "name": "region-tiling-single",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a"
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v1",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": []
+   }
+  },
+  {
+   "name": "region-tiling-2x2",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 4
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ],
+      "lon": [
+       0,
+       4
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ],
+      "lon": [
+       4,
+       5
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w2",
+     "role": {
+      "contributor": 2
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ],
+      "lon": [
+       0,
+       4
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w3",
+     "role": {
+      "contributor": 3
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ],
+      "lon": [
+       4,
+       5
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w2",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w3",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w2",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w3",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "write_record",
+     "writer": "w2",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "write_record",
+     "writer": "w3",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "w0a"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "w1a"
+    },
+    {
+     "op": "flush",
+     "writer": "w2",
+     "token": "w2a"
+    },
+    {
+     "op": "flush",
+     "writer": "w3",
+     "token": "w3a"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "w0a",
+      "w1a",
+      "w2a",
+      "w3a"
+     ]
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w2",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w3",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "write_record",
+     "writer": "w2",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "write_record",
+     "writer": "w3",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "w1b"
+    },
+    {
+     "op": "flush",
+     "writer": "w2",
+     "token": "w2b"
+    },
+    {
+     "op": "flush",
+     "writer": "w3",
+     "token": "w3b"
+    },
+    {
+     "op": "close",
+     "writer": "w1",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "w2",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "w3",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": [
+      "w1b",
+      "w2b",
+      "w3b"
+     ]
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 2
+   }
+  },
+  {
+   "name": "region-misaligned",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "bad",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       3
+      ]
+     },
+     "expect_error": "RegionNotShardAligned"
+    },
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       2
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       1,
+       6
+      ]
+     },
+     "expect_error": "RegionNotShardAligned"
+    },
+    {
+     "op": "join",
+     "writer": "w2",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lon": [
+       2,
+       5
+      ]
+     },
+     "expect_error": "RegionNotShardAligned"
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 0
+   }
+  },
+  {
+   "name": "region-gap",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       2
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       2,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a0"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "a1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "a0",
+      "a1"
+     ]
+    },
+    {
+     "op": "join",
+     "writer": "w9",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w9",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "b0"
+    },
+    {
+     "op": "flush",
+     "writer": "w9",
+     "token": "b1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "b0",
+      "b1"
+     ],
+     "expect_error": "CommitError"
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 1
+   }
+  },
+  {
+   "name": "region-overlap",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       2
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       2,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a0"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "a1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "a0",
+      "a1"
+     ]
+    },
+    {
+     "op": "join",
+     "writer": "w9",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       0,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w9",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "b0"
+    },
+    {
+     "op": "flush",
+     "writer": "w9",
+     "token": "b1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "b0",
+      "b1"
+     ],
+     "expect_error": "CommitError"
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 1
+   }
+  },
+  {
+   "name": "indexed-reverse",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "indexed",
+     "times": [
+      0.0,
+      3600.0,
+      7200.0,
+      10800.0,
+      14400.0
+     ]
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 4,
+     "r": 4
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 3,
+     "r": 3
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 2,
+     "r": 2
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 1,
+     "r": 1
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 0,
+     "r": 0
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 1,
+    "generations": {
+     "0": 1,
+     "1": 1,
+     "2": 1,
+     "3": 1,
+     "4": 1
+    }
+   }
+  },
+  {
+   "name": "indexed-reverse-regions",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "indexed",
+     "times": [
+      0.0,
+      3600.0,
+      7200.0,
+      10800.0,
+      14400.0
+     ]
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 4,
+     "r": 4
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w1",
+     "index": 4,
+     "r": 4
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 3,
+     "r": 3
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w1",
+     "index": 3,
+     "r": 3
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a0"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "a1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "a0",
+      "a1"
+     ]
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 2,
+     "r": 2
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w1",
+     "index": 2,
+     "r": 2
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 1,
+     "r": 1
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w1",
+     "index": 1,
+     "r": 1
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 0,
+     "r": 0
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w1",
+     "index": 0,
+     "r": 0
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "b1"
+    },
+    {
+     "op": "close",
+     "writer": "w1",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": [
+      "b1"
+     ]
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 2,
+    "generations": {
+     "0": 1,
+     "1": 1,
+     "2": 1,
+     "3": 1,
+     "4": 1
+    }
+   }
+  },
+  {
+   "name": "indexed-invalidate",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "indexed",
+     "times": [
+      0.0,
+      3600.0
+     ]
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 0,
+     "r": 0
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 1,
+     "r": 1
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a"
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 0,
+     "r": 7,
+     "expect_error": "Error"
+    },
+    {
+     "op": "invalidate",
+     "writer": "w0",
+     "indices": [
+      0
+     ]
+    },
+    {
+     "op": "write_record_at",
+     "writer": "w0",
+     "index": 0,
+     "r": 7
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "b"
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 7
+     },
+     {
+      "index": 1,
+      "r": 1
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 3,
+    "generations": {
+     "0": 2,
+     "1": 1
+    }
+   }
+  },
+  {
+   "name": "partial-shard-resume",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a"
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "drop",
+     "writer": "w0"
+    },
+    {
+     "op": "resume",
+     "writer": "w0b",
+     "role": "single",
+     "region": {},
+     "at": null
+    },
+    {
+     "op": "write_record",
+     "writer": "w0b",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w0b",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "close",
+     "writer": "w0b",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v1",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": []
+   }
+  },
+  {
+   "name": "partial-shard-resume-regions",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a0"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "a1"
+    },
+    {
+     "op": "commit",
+     "writer": "w0",
+     "tokens": [
+      "a0",
+      "a1"
+     ]
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "x0"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "x1"
+    },
+    {
+     "op": "drop",
+     "writer": "w0"
+    },
+    {
+     "op": "drop",
+     "writer": "w1"
+    },
+    {
+     "op": "resume",
+     "writer": "v0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ]
+     },
+     "at": null
+    },
+    {
+     "op": "resume",
+     "writer": "v1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ]
+     },
+     "at": null
+    },
+    {
+     "op": "write_record",
+     "writer": "v0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "v1",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "v0",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "write_record",
+     "writer": "v1",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "flush",
+     "writer": "v1",
+     "token": "b1"
+    },
+    {
+     "op": "close",
+     "writer": "v1",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "v0",
+     "tokens": [
+      "b1"
+     ]
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 3
+     },
+     {
+      "index": 4,
+      "r": 4
+     }
+    ],
+    "statics": [],
+    "blobs": [],
+    "commit_seq": 2
+   }
+  },
+  {
+   "name": "truncate-on-resume",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 10800.0,
+     "r": 3
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 14400.0,
+     "r": 4
+    },
+    {
+     "op": "flush",
+     "writer": "w0",
+     "token": "a"
+    },
+    {
+     "op": "drop",
+     "writer": "w0"
+    },
+    {
+     "op": "resume",
+     "writer": "w1",
+     "role": "single",
+     "region": {},
+     "at": 7200.0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 10800.0,
+     "r": 13
+    },
+    {
+     "op": "close",
+     "writer": "w1",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v1",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     },
+     {
+      "index": 3,
+      "r": 13
+     }
+    ],
+    "statics": [],
+    "blobs": []
+   }
+  },
+  {
+   "name": "dtypes",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "v_float64",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 1
+     },
+     {
+      "name": "v_float32",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 11
+     },
+     {
+      "name": "v_int32",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "int32",
+      "seed": 21
+     },
+     {
+      "name": "v_int64",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "int64",
+      "seed": 31
+     },
+     {
+      "name": "v_uint8",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "uint8",
+      "seed": 41
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v1",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     }
+    ],
+    "statics": [],
+    "blobs": []
+   }
+  },
+  {
+   "name": "statics-and-blobs",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [
+     {
+      "name": "dJ_dfield",
+      "dims": [
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 500,
+      "attrs": {
+       "long_name": "gradient wrt field"
+      }
+     },
+     {
+      "name": "dJ_dlon",
+      "dims": [
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 600
+     },
+     {
+      "name": "step_count",
+      "dims": [
+       "lat",
+       "lon"
+      ],
+      "dtype": "int64",
+      "seed": 700
+     }
+    ],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": {
+      "owner": 2
+     },
+     "region": {
+      "lat": [
+       0,
+       4
+      ]
+     }
+    },
+    {
+     "op": "join",
+     "writer": "w1",
+     "role": {
+      "contributor": 1
+     },
+     "region": {
+      "lat": [
+       4,
+       6
+      ]
+     }
+    },
+    {
+     "op": "write_static",
+     "writer": "w1",
+     "name": "dJ_dlon",
+     "expect_error": "Error"
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w1",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_static",
+     "writer": "w0",
+     "name": "dJ_dfield"
+    },
+    {
+     "op": "write_static",
+     "writer": "w1",
+     "name": "dJ_dfield"
+    },
+    {
+     "op": "write_static",
+     "writer": "w0",
+     "name": "dJ_dlon"
+    },
+    {
+     "op": "write_static",
+     "writer": "w0",
+     "name": "step_count"
+    },
+    {
+     "op": "write_static",
+     "writer": "w1",
+     "name": "step_count"
+    },
+    {
+     "op": "write_blob",
+     "writer": "w0",
+     "scope": "static",
+     "record": null,
+     "key": "rng",
+     "hex": "00010203"
+    },
+    {
+     "op": "write_blob",
+     "writer": "w1",
+     "scope": "static",
+     "record": null,
+     "key": "rng",
+     "hex": "ff10"
+    },
+    {
+     "op": "write_blob",
+     "writer": "w1",
+     "scope": "record",
+     "record": 1,
+     "key": "ctrl.state",
+     "hex": "deadbeef"
+    },
+    {
+     "op": "flush",
+     "writer": "w1",
+     "token": "a1"
+    },
+    {
+     "op": "close",
+     "writer": "w1",
+     "tokens": []
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": [
+      "a1"
+     ]
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v2",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     }
+    ],
+    "statics": [
+     "dJ_dfield",
+     "dJ_dlon",
+     "step_count"
+    ],
+    "blobs": [
+     {
+      "scope": "record",
+      "record": 1,
+      "writer": 1,
+      "key": "ctrl.state",
+      "hex": "deadbeef"
+     },
+     {
+      "scope": "static",
+      "record": null,
+      "writer": 0,
+      "key": "rng",
+      "hex": "00010203"
+     },
+     {
+      "scope": "static",
+      "record": null,
+      "writer": 1,
+      "key": "rng",
+      "hex": "ff10"
+     }
+    ],
+    "commit_seq": 1
+   }
+  },
+  {
+   "name": "manifest-v1-compat",
+   "schema": {
+    "dims": [
+     [
+      "time",
+      0
+     ],
+     [
+      "lat",
+      6
+     ],
+     [
+      "lon",
+      5
+     ]
+    ],
+    "time_dim": "time",
+    "chunk_shape": {
+     "time": 1,
+     "lat": 1,
+     "lon": 2
+    },
+    "shard_shape": {
+     "time": 2,
+     "lat": 2,
+     "lon": 4
+    },
+    "coords": [
+     {
+      "name": "lat",
+      "values": [
+       0.0,
+       10.0,
+       20.0,
+       30.0,
+       40.0,
+       50.0
+      ],
+      "attrs": {
+       "units": "degrees_north",
+       "standard_name": "latitude"
+      }
+     },
+     {
+      "name": "lon",
+      "values": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0
+      ],
+      "attrs": {
+       "units": "degrees_east",
+       "standard_name": "longitude"
+      }
+     },
+     {
+      "name": "time",
+      "values": [],
+      "attrs": {
+       "units": "seconds since 2020-01-01 00:00:00"
+      }
+     }
+    ],
+    "vars": [
+     {
+      "name": "temperature",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 100,
+      "attrs": {
+       "units": "K",
+       "standard_name": "air_temperature"
+      }
+     },
+     {
+      "name": "pressure",
+      "dims": [
+       "time",
+       "lat",
+       "lon"
+      ],
+      "dtype": "float32",
+      "seed": 200,
+      "attrs": {
+       "units": "Pa"
+      }
+     },
+     {
+      "name": "zonal_mean",
+      "dims": [
+       "time",
+       "lon"
+      ],
+      "dtype": "float64",
+      "seed": 400,
+      "attrs": {
+       "units": "K"
+      }
+     },
+     {
+      "name": "global_mean",
+      "dims": [
+       "time"
+      ],
+      "dtype": "float64",
+      "seed": 300,
+      "attrs": {
+       "units": "K"
+      }
+     }
+    ],
+    "statics": [],
+    "time_mode": {
+     "kind": "append"
+    },
+    "group_attrs": {
+     "title": "EarthSciIO write-conformance v2"
+    },
+    "profile": "diagnostic"
+   },
+   "ops": [
+    {
+     "op": "create",
+     "writer": "w0",
+     "role": "single",
+     "region": {}
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 0.0,
+     "r": 0
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 3600.0,
+     "r": 1
+    },
+    {
+     "op": "write_record",
+     "writer": "w0",
+     "t": 7200.0,
+     "r": 2
+    },
+    {
+     "op": "close",
+     "writer": "w0",
+     "tokens": []
+    }
+   ],
+   "expect": {
+    "manifest_schema": "earthsciio/output-manifest/v1",
+    "records": [
+     {
+      "index": 0,
+      "r": 0
+     },
+     {
+      "index": 1,
+      "r": 1
+     },
+     {
+      "index": 2,
+      "r": 2
+     }
+    ],
+    "statics": [],
+    "blobs": []
+   }
+  }
+ ]
+}

@@ -93,8 +93,10 @@ end
 
 _timeshard_dict(s::TimeShardRecord) = Dict{String,Any}(
     "index" => s.index, "t_start" => s.t_start, "t_end" => s.t_end, "n" => s.n)
+# (`n_records` is the Python v1 spelling of `n`.)
 _timeshard_from(d) = TimeShardRecord(
-    Int(d["index"]), Float64(d["t_start"]), Float64(d["t_end"]), Int(d["n"]))
+    Int(d["index"]), Float64(d["t_start"]), Float64(d["t_end"]),
+    Int(haskey(d, "n") ? d["n"] : d["n_records"]))
 
 """
     OutputManifest
@@ -150,11 +152,44 @@ function write_output_manifest(path::AbstractString, m::OutputManifest)
     return path
 end
 
-"""Read an [`OutputManifest`] from `path`, or `nothing` if absent."""
-function read_output_manifest(path::AbstractString)::Union{OutputManifest,Nothing}
-    isfile(path) || return nothing
-    d = JSON.parsefile(path)
+"""The v2 label (spec/writer.md §8.2): every store that is not single-writer,
+append-mode and static-free. Represented as the parsed JSON object."""
+const OUTPUT_MANIFEST_SCHEMA_V2 = "earthsciio/output-manifest/v2"
+
+# `path` may be the manifest file itself, the store directory, or a `file://` URL
+# of either.
+function _output_manifest_path(path::AbstractString)
+    p = startswith(path, "file://") ? file_url_to_path(path) : String(path)
+    return isdir(p) ? joinpath(p, "output_manifest.json") : p
+end
+
+"""
+    read_output_manifest(path) -> OutputManifest | AbstractDict | nothing
+
+Read a store's output manifest. `path` is the `output_manifest.json` file, the
+store directory, or a `file://` URL of either; `nothing` when absent. A v1
+manifest (`earthsciio/output-manifest/v1`) parses to an [`OutputManifest`]; a v2
+manifest (spec/writer.md §8.2) is returned as the parsed JSON object (keys as in
+the spec: `commit_seq`, `records`, `statics`, `blobs`, `writers`, …). Any other
+`schema` label is an error (readers pin the label exactly)."""
+function read_output_manifest(path::AbstractString)
+    p = _output_manifest_path(path)
+    isfile(p) || return nothing
+    d = JSON.parsefile(p)
+    label = get(d, "schema", nothing)
+    label == OUTPUT_MANIFEST_SCHEMA_V2 && return d
+    label == OUTPUT_MANIFEST_SCHEMA ||
+        error("unknown output manifest schema $(repr(label)) in $p")
+    return _output_manifest_v1(d)
+end
+
+# The v1 parse. Tolerates the Python v1 spelling (`total_records`, `dims` as
+# `[name, length]` pairs, `written_at`) so a Python-written v1 store reads back.
+function _output_manifest_v1(d)
     lt = get(d, "last_t", nothing)
+    dims = Pair{String,Int}[e isa AbstractVector ? String(e[1]) => Int(e[2]) :
+                            String(e["name"]) => Int(e["length"]) for e in d["dims"]]
+    n = haskey(d, "n_records") ? d["n_records"] : d["total_records"]
     return OutputManifest(
         String(d["base_url"]),
         String(d["format"]),
@@ -162,13 +197,13 @@ function read_output_manifest(path::AbstractString)::Union{OutputManifest,Nothin
         String(d["profile"]),
         Dict{String,Any}(d["codec"]),
         String(d["time_dim"]),
-        Pair{String,Int}[String(e["name"]) => Int(e["length"]) for e in d["dims"]],
+        dims,
         Vector{Dict{String,Any}}(Dict{String,Any}.(d["vars"])),
         Dict{String,Int}(String(k) => Int(v) for (k, v) in d["chunk_shape"]),
         Dict{String,Int}(String(k) => Int(v) for (k, v) in d["shard_shape"]),
         TimeShardRecord[_timeshard_from(s) for s in d["time_shards"]],
         lt === nothing ? nothing : Float64(lt),
-        Int(d["n_records"]),
-        String(d["created_at"]),
+        Int(n),
+        String(get(d, "created_at", get(d, "written_at", ""))),
     )
 end

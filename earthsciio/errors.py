@@ -37,6 +37,9 @@ __all__ = [
     "FetchError",
     "OfflineError",
     "AuthError",
+    # streaming writer contract (spec/writer.md)
+    "RegionNotShardAligned",
+    "CommitError",
 ]
 
 
@@ -301,3 +304,21 @@ class AuthError(EarthSciIOError):
             f"no auth resolver registered for realm {realm!r}; "
             f"registered realms: {self.available}"
         )
+
+
+class RegionNotShardAligned(EarthSciIOError, ValueError):
+    """A writer region violates the alignment rule of ``spec/writer.md`` §4.
+
+    For every region dim ``d``: ``0 <= start < stop <= len(d)``,
+    ``start % shard[d] == 0`` and ``stop % shard[d] == 0 or stop == len(d)``.
+    Raised at open / join / resume, before any write, so every shard object of
+    a partitioned array is owned by exactly one writer.
+    """
+
+
+class CommitError(EarthSciIOError):
+    """An owner's ``commit`` refused the delivered tokens (``spec/writer.md``
+    §5.3): a missing or duplicate writer, a divergent fingerprint, a gap or an
+    overlap between regions, divergent records / statics, or data that is
+    already committed. Nothing was written; the committed state is unchanged.
+    """

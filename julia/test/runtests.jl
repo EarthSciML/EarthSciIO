@@ -27,6 +27,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
     include("test_parquet_reader.jl")  # parquet reader via the Parquet2.jl weakdep ext
     include("test_zarr.jl")          # store-backed zarr reader: lazy orthogonal selection
     include("zarr_write_test.jl")    # zarr v3 sharded WRITER round-trip (write -> read)
+    include("test_zarr_stream.jl")   # the streaming writer contract (spec/writer.md, RFC U12)
     include("test_provider.jl")      # cadence + the full offline pipeline; reuses helpers
     # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11)
     include("test_windows.jl")       # `dims` select, sample_at, with_window, multi-window scenario
