@@ -19,14 +19,16 @@ concurrency:
 
 jobs:
   lint:
-    uses: EarthSciML/.github/.github/workflows/lint.yml@ci/shared-lint
+    uses: EarthSciML/.github/.github/workflows/lint.yml@main
     with:
       rust-dirs: '["rust"]'
       # Host with every native feature, and the browser build (wasm32 + OPFS,
-      # which is wasm32-only; see the target split in rust/Cargo.toml).
+      # which is wasm32-only; see the target split in rust/Cargo.toml). The
+      # wasm32 run checks the library only: the tests and examples drive the
+      # native cache and transports.
       rust-clippy: >-
         [{"dir": "rust", "args": "--features object-store"},
-         {"dir": "rust", "target": "wasm32-unknown-unknown",
+         {"dir": "rust", "target": "wasm32-unknown-unknown", "targets": "--lib",
           "args": "--no-default-features --features opfs"}]
       python-dir: "."
       julia-paths: "."
