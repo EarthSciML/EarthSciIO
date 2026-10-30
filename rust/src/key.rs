@@ -37,9 +37,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// integrity re-verification (cheap; off by default, on for CI/conformance).
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha256Writer::new(std::io::sink());
     std::io::copy(&mut file, &mut hasher)?;
-    Ok(hex_lower(&hasher.finalize()))
+    Ok(hasher.finalize())
 }
 
 /// A writer that folds every byte it forwards into a sha256, so a transport

@@ -39,7 +39,7 @@ fn blob_path() -> PathBuf {
 fn members() -> Vec<(String, Vec<u8>)> {
     let mut archive = zip::ZipArchive::new(Cursor::new(fs::read(blob_path()).unwrap())).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     names
         .into_iter()

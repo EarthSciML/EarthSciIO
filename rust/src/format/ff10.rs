@@ -322,8 +322,11 @@ fn read_zip_selected(path: &Path, members: &[String], glob: Option<&str>) -> Res
     let mut archive = zip::ZipArchive::new(file).map_err(zip_err)?;
     let names: Vec<String> = archive
         .file_names()
+        .map(|n| n.map(|n| n.into_owned()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(zip_err)?
+        .into_iter()
         .filter(|n| !n.ends_with('/'))
-        .map(str::to_string)
         .collect();
 
     // BTreeSet: dedup + the sorted (byte-lexicographic) concatenation order.
