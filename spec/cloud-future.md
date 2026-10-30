@@ -75,16 +75,20 @@ The future object-store home for the content-addressed cache. Today every
 **LANDED (wave2-zarr-s3):** `status:"active"` in all three tracks as a
 **store-backed** reader (the Provider hands it `(cache, base_url, variables,
 select)` — a default-off, additive capability; active whole-file readers are
-untouched). It parses per-array `.zarray`/`.zattrs` (Zarr v2; **no** consolidated
-`.zmetadata`), computes the chunk set a lazy **orthogonal** selection intersects
-(`select = {axes: [...]}`), and fetches **only** those chunk objects (each its
-own `sha256(object_url)` blob) through the existing cache — blosc/lz4+shuffle
-decode, C-order unpack, `<f4`/`<f8`→float64, dims from `_ARRAY_DIMENSIONS`, no
+untouched). It reads Zarr **v2** (per-array `.zarray`/`.zattrs`) and Zarr **v3**
+(`zarr.json`, including the `sharding_indexed` codec), detected per array, with
+**no** consolidated metadata; computes the chunk set a lazy **orthogonal**
+selection intersects (`select = {axes: [...]}`), and fetches **only** those chunk
+or shard objects (each its own `sha256(object_url)` blob) through the existing
+cache — float→float64, dims from v3 `dimension_names` or `_ARRAY_DIMENSIONS`, no
 coords. **Deliberate deviation:** `fill_value` is **not** mapped to NaN (0.0 is
 real ISRM data). Proven by the `isrm-zarr-tile` conformance case (three-way
-byte/value equality). **Still `esio-cloud` scope:** Zarr **v3** + sharding, the
-NetCDF→Zarr conversion, non-`lz4` codecs, and `order:"F"`/filter pipelines
-(defended against but unexercised). The original charter below stands for those:
+byte/value equality, v2) and by each track's v3 write→read round-trip tests.
+Rust (`zarrs`) and Python (zarr-python 3) read v2 and v3 generally; the Julia v3
+path is narrower — sharded arrays only, C order, `index_location = end`
+(`registries.md` §2.1, `zarr` row). **Still `esio-cloud` scope:** the
+NetCDF→Zarr conversion, consolidated metadata, filter pipelines, and a v3
+conformance corpus case. The original charter below stands for those:
 
 - **Open a chunked store** — local directory *and* remote (`s3://…`) via the
   same `store`/transport seam; read **consolidated metadata** when present.
