@@ -393,12 +393,9 @@ fn a_time_subset_the_union_read_whole_is_still_refused() {
     let t = OffsetDateTime::UNIX_EPOCH;
     let a = DimWindow::new().range("time", 0, 1);
     let alone = p.with_window(a.clone()).and_then(|w| w.sample_at(t));
-    let msg = format!("{}", alone.err().expect("a time subset alone is refused"));
+    let msg = format!("{}", alone.expect_err("a time subset alone is refused"));
     assert!(msg.contains("subset of the time dimension"), "{msg}");
     let both = p.sample_windows_at(t, &[a.into(), DimWindow::new().range("lat", 0, 1).into()]);
-    let msg = format!(
-        "{}",
-        both.err().expect("a time subset in a union is refused")
-    );
+    let msg = format!("{}", both.expect_err("a time subset in a union is refused"));
     assert!(msg.contains("subset of the time dimension"), "{msg}");
 }
