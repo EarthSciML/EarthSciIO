@@ -4,7 +4,10 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
-## Unreleased
+## v0.2.0
+
+Changes since v0.1.4. A minor bump because the writers now reject
+non-increasing time values; see the **Breaking** notes below.
 
 RFC U12 from EarthSciIntegrator (#9): a Rust streaming Zarr v3 writer, and in
 every track region writes, a commit protocol and indexed records. The contract
