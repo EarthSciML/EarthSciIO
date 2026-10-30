@@ -41,7 +41,8 @@
           "cache_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "blob_path": {"type": "string", "description": "Corpus-relative path to the object's cached blob."},
           "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "bytes": {"type": "integer", "minimum": 0}
+          "bytes": {"type": "integer", "minimum": 0},
+          "poisoned": {"type": "boolean", "description": "The object is committed and manifest-valid but undecodable: a chunk the case's select does not intersect, so a reader that fetches it fails the case (named-window-zarr)."}
         }
       }
     },

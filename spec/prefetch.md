@@ -170,7 +170,7 @@ PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=
   boundaries() -> [time]          # sorted ∪ refresh_times of the members; epoch k = [B[k], B[k+1])
   start(order, from=None)         # "forward" | "reverse" | [epoch, ...]; cancels any previous order
   take(k) -> EpochSample          # blocks; k must be the next entry of the order
-  ready(k) -> bool                # non-blocking
+  ready(k) -> bool                # non-blocking: k is the next entry and its slot is finished
   cancel(wait=false)              # drop pending work; discard in-flight results
   close()                         # cancel(wait=true), join workers
   stats() -> {waited_s, decode_s, peak_bytes, epochs_decoded, samples_decoded,

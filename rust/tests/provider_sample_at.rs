@@ -278,3 +278,20 @@ fn check_windows(ctx: &str, p: &Provider, t: OffsetDateTime, windows: &[Selectio
         assert_ds_bitwise(&format!("{ctx} window {i} vs sliced"), &got[i], &slice_by_name(&full, w));
     }
 }
+
+/// Window B leaves `time` unnamed, so the union reads it whole; window A's
+/// subset of it must still be refused, as A's own read refuses it — on a CONST
+/// provider, where `time` is just a dimension of the file.
+#[test]
+fn a_time_subset_the_union_read_whole_is_still_refused() {
+    let url = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc";
+    let p = Provider::new(DataSource::new("geosfp", "netcdf", url), corpus_cache(), None).unwrap();
+    let t = OffsetDateTime::UNIX_EPOCH;
+    let a = DimWindow::new().range("time", 0, 1);
+    let alone = p.with_window(a.clone()).and_then(|w| w.sample_at(t));
+    let msg = format!("{}", alone.err().expect("a time subset alone is refused"));
+    assert!(msg.contains("subset of the time dimension"), "{msg}");
+    let both = p.sample_windows_at(t, &[a.into(), DimWindow::new().range("lat", 0, 1).into()]);
+    let msg = format!("{}", both.err().expect("a time subset in a union is refused"));
+    assert!(msg.contains("subset of the time dimension"), "{msg}");
+}

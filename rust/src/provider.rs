@@ -1311,6 +1311,19 @@ fn slice_window(
                 .map(|g| held.binary_search(g).expect("the union holds every window index"))
                 .collect(),
             _ => match axis_len(ds, dim) {
+                // The union read this dimension whole for some OTHER window, so
+                // the reader never refused this window's subset of a time axis:
+                // refuse it here, as the window's own read would.
+                Some(_) if is_time_dim(ds, dim) => {
+                    return Err(Error::Format {
+                        format: format.to_string(),
+                        detail: format!(
+                            "select asks for a subset of the time dimension '{dim}'; record \
+                             selection is the Provider's, not the reader's — a time \
+                             dimension may only be \"all\""
+                        ),
+                    })
+                }
                 Some(len) => axis.resolve_in(len, format)?,
                 None => continue, // carried by no field: the union read refused it
             },
@@ -1318,6 +1331,16 @@ fn slice_window(
         picks.insert(dim.clone(), positions);
     }
     Ok(ds.take_by_name(&picks))
+}
+
+/// Is `dim` the decoded dataset's time axis? A same-named coordinate with CF
+/// `"<step> since <ref>"` units, or a dimension literally named `time` — the
+/// union of the readers' rules, since only a refusal rests on it.
+fn is_time_dim(ds: &NativeDataset, dim: &str) -> bool {
+    let cf = ds.coords.get(dim).and_then(|c| c.units.as_deref()).is_some_and(|u| {
+        u.split_whitespace().any(|w| w.eq_ignore_ascii_case("since"))
+    });
+    cf || dim.eq_ignore_ascii_case("time")
 }
 
 /// The length of `dim` in the first field (variable or coordinate) carrying it.

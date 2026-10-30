@@ -541,7 +541,8 @@ impl<T: Send + Sync + 'static> PrefetchGroup<T> {
             Phase::Failed { epoch } => {
                 return Err(prefetch_err(format!(
                     "take({k}): the order ended when take({epoch}) raised its stored \
-                     error; call start again (start(order, Some(epoch)) resumes there)"
+                     error; call start again (start(order, Some({})) resumes past it)",
+                    epoch + 1
                 )))
             }
             Phase::Closed => return Err(closed()),
@@ -986,16 +987,18 @@ impl<T> State<T> {
             }
             let epoch = self.order[self.admitted];
             let keys: Vec<CellKey> = (0..cfg.members.len()).map(|i| (i, cfg.anchors[i][epoch])).collect();
-            let held = |st: &Self, k: &CellKey| {
-                st.cells.contains_key(k)
-                    || matches!(&st.last_taken[k.0], Some((a, ..)) if *a == k.1)
-            };
             // The head slot is always admitted; behind it, a slot must fit.
             if self.admitted > self.next {
                 if let Some(max) = cfg.max_bytes {
+                    // A revived last-taken sample is not in `cells` yet, so
+                    // `committed_bytes` misses it: count its real size here.
                     let mut estimate = Some(0u64);
-                    for k in keys.iter().filter(|k| !held(self, k)) {
-                        estimate = estimate.zip(self.last_size[k.0]).map(|(a, b)| a + b);
+                    for k in keys.iter().filter(|k| !self.cells.contains_key(k)) {
+                        let size = match &self.last_taken[k.0] {
+                            Some((a, _, bytes)) if *a == k.1 => Some(*bytes),
+                            _ => self.last_size[k.0],
+                        };
+                        estimate = estimate.zip(size).map(|(a, b)| a + b);
                     }
                     // An unknown size admits a slot only when nothing else is
                     // held or in flight — never true behind a live head.

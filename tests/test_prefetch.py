@@ -544,7 +544,7 @@ def test_prefetch_errors_cachemiss_at_its_take_and_not_before(cache, errors_scen
             if k == miss - 2 and depth > 2:
                 # the workers reach the missing file EARLY: its slot completes
                 # (failed) while two good epochs are still ahead of it...
-                assert _wait_until(lambda: g.ready(miss))
+                assert _wait_until(lambda: g._slot_done(miss))
             assert_bitwise(g.take(k)["Q"].data, ref.refresh(B[k]), f"epoch {k}")
         # ...and its error is still raised by its own take, as a CacheMiss
         with pytest.raises(CacheMiss) as info:
@@ -883,3 +883,80 @@ def test_netcdf_decodes_take_the_process_wide_lock(cache):
             assert not done.wait(0.2), "decoded while another thread held the lock"
         assert done.wait(5.0)
         worker.join()
+
+
+# --------------------------------------------------------------------------- #
+# Regressions: no take() may hang, and the tracks agree.
+# --------------------------------------------------------------------------- #
+
+
+def test_prefetch_fetch_ahead_url_errors_are_dropped(tmp_path):
+    """A url callable that raises during the warm-up skips that warm: it never
+    reaches start/take and never strands an admitted decode."""
+    src = _file_source(tmp_path, end="2024-01-01T12:00:00Z")
+    member = _provider(src, 1, Cache(root=tmp_path / "cache"))
+
+    def boom(t):
+        raise KeyError("no url for this anchor")
+
+    member._sample_urls = boom  # the warm path only; decodes resolve through the loader
+    ref = _provider(src, 1, Cache(root=tmp_path / "cache"))
+    with PrefetchGroup({"Q": member}, depth=1, fetch_ahead=3, workers=1) as g:
+        B = g.boundaries()
+        g.start("forward")
+        for k in range(len(B)):
+            assert_bitwise(g.take(k)["Q"].data, ref.refresh(B[k]), f"epoch {k}")
+
+
+def test_prefetch_a_worker_exception_reaches_take(cache, equivalence):
+    """Whatever escapes a thread worker — even a BaseException from the test
+    latency hook — is stored and raised by take, never left to hang it."""
+    class Stop(BaseException):
+        pass
+
+    def hook():
+        raise Stop("hook")
+
+    with PrefetchGroup(_members(equivalence, cache), workers=2, _decode_latency=hook) as g:
+        g.start("forward")
+        with pytest.raises(Stop):
+            g.take(0)
+
+
+def test_prefetch_transform_results_are_read_only(cache, equivalence):
+    def double(key, ds):
+        from earthsciio import NativeDataset, NativeField
+        return NativeDataset(
+            {n: NativeField(np.asarray(f.data) * 2, f.dims, f.attrs) for n, f in ds.variables.items()},
+            dict(ds.coords),
+        )
+
+    with PrefetchGroup(_members(equivalence, cache), transform=double) as g:
+        g.start("forward")
+        ep = g.take(0)
+    with pytest.raises(ValueError, match="read-only"):
+        ep["Q1"].data.variables["Q"].data[...] = 0.0
+
+
+def test_prefetch_ready_reports_only_the_next_entry(cache, equivalence):
+    with PrefetchGroup(_members(equivalence, cache), depth=3, workers=2) as g:
+        g.start("forward")
+        assert _wait_until(lambda: g._slot_done(1))
+        assert g.ready(1) is False  # decoded, but take(1) would raise: 0 is next
+        assert _wait_until(lambda: g.ready(0))
+
+
+def test_window_union_refuses_a_time_subset_it_read_whole():
+    """Window B leaves `time` unnamed, so the union reads it whole; window A's
+    subset of it is still refused, as A's own read would refuse it."""
+    from earthsciio import NativeDataset, NativeField
+    from earthsciio.selection import _WindowUnion
+
+    u = _WindowUnion([DimWindow({"time": [0]}), DimWindow({"lat": [1]})])
+    assert u.select["dims"]["time"] == "all"
+    ds = NativeDataset(
+        {"T": NativeField(np.zeros((2, 3)), ("time", "lat"), {})},
+        {"time": NativeField(np.arange(2.0), ("time",), {"units": "hours since 2024-01-01"})},
+    )
+    with pytest.raises(ValueError, match="subset of the time dimension"):
+        u.split(ds)

@@ -335,8 +335,11 @@ function start!(g::PrefetchGroup, order; from = nothing)
         g.status = :running
         if g.overlap && isempty(g.workers)
             for _ in 1:g.nworkers
-                push!(g.workers, errormonitor(Threads.@spawn _prefetch_worker(g)))
+                push!(g.workers, errormonitor(Threads.@spawn _prefetch_worker(g, false)))
             end
+            # Warm-ups get a task of their own, so a long download never sits in
+            # front of a decode the consumer is about to need.
+            push!(g.workers, errormonitor(Threads.@spawn _prefetch_worker(g, true)))
         end
         _advance!(g)
     end
@@ -414,20 +417,19 @@ end
 """
     isready(g::PrefetchGroup, k::Integer) -> Bool
 
-Non-blocking: whether `take!(g, k)` would return at once — `k` is an epoch held in
-the decode window ahead of the consumer and all its member samples are finished
-(decoded, or failed: a stored error is raised by `take!`, never here). `false`
-before `start!`, after `cancel!`, and for an epoch not (yet) in the window. In the
+Non-blocking: whether `take!(g, k)` would return at once — `k` is the next epoch of
+the order and all its member samples are finished (decoded, or failed: a stored
+error is raised by `take!`, never here). `false` before `start!`, after `cancel!`,
+and for any epoch other than the next one, decoded or not. In the
 single-thread fallback a slot is decoded by its `take!`, so it is ready only when
 every member sample is a reused one."""
 function Base.isready(g::PrefetchGroup, k::Integer)
     lock(g.lock) do
         g.status === :running || return false
-        for slot in g.window
-            slot.epoch == k || continue
-            return all(j -> j.status === :done || j.status === :failed, slot.jobs)
-        end
-        return false
+        isempty(g.window) && return false
+        slot = g.window[1]  # the head: the only slot `take!` can deliver
+        slot.epoch == k || return false
+        return all(j -> j.status === :done || j.status === :failed, slot.jobs)
     end
 end
 
@@ -728,22 +730,23 @@ function _decode_inline!(g::PrefetchGroup, slot::_PrefetchSlot)
     return nothing
 end
 
-# A worker: take the next decode, else the next warm-up, else sleep on the
-# condition; exit when the group closes. Decode jobs always go first, so warming
-# never delays a slot the consumer is about to need.
-function _prefetch_worker(g::PrefetchGroup)
+# A worker: a decode worker takes the next decode, the one fetcher the next
+# warm-up; else it sleeps on the condition. Exits when the group closes. Warming
+# runs on its own task so it never delays a slot the consumer is about to need.
+function _prefetch_worker(g::PrefetchGroup, fetcher::Bool)
     try
         while true
             job, warm = lock(g.lock) do
                 while true
                     g.status === :closed && return (nothing, nothing)
-                    if !isempty(g.queue)
+                    if fetcher
+                        isempty(g.fetch_queue) || return (nothing, popfirst!(g.fetch_queue))
+                    elseif !isempty(g.queue)
                         j = popfirst!(g.queue)
                         j.status = :running
                         g.running += 1
                         return (j, nothing)
                     end
-                    isempty(g.fetch_queue) || return (nothing, popfirst!(g.fetch_queue))
                     wait(g.cond)
                 end
             end

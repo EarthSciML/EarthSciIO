@@ -414,6 +414,18 @@ class _WindowUnion:
         return [self._one(ds, wanted) for wanted in self._wanted]
 
     def _one(self, ds: NativeDataset, wanted: Dict[str, Optional[List[int]]]) -> NativeDataset:
+        for dim, want in wanted.items():
+            if want is not None and self._union[dim] is None and _is_time_dim(ds, dim):
+                # The union read this dimension whole for some OTHER window, so
+                # the reader never saw this window's subset of it: refuse it
+                # here, as the read alone would have.
+                raise ValueError(
+                    f"select asks for a subset of the time dimension {dim!r}; record "
+                    "selection is the Provider's (it owns the cadence: "
+                    "records_per_sample), not the reader's — a time dimension may "
+                    'only be "all"'
+                )
+
         def cut(f: NativeField) -> NativeField:
             data = f.data
             for axis, dim in enumerate(f.dims):
@@ -439,3 +451,15 @@ class _WindowUnion:
             {n: cut(f) for n, f in ds.variables.items()},
             {n: cut(f) for n, f in ds.coords.items()},
         )
+
+
+def _is_time_dim(ds: NativeDataset, dim: str) -> bool:
+    """Is ``dim`` the decoded dataset's time axis? A same-named coordinate with
+    CF ``"<step> since <ref>"`` units, or a dimension literally named ``time`` —
+    the union of the readers' rules, since only a refusal rests on it."""
+    coord = ds.coords.get(dim)
+    if coord is not None:
+        units = coord.attrs.get("units")
+        if units and "since" in str(units).lower().split():
+            return True
+    return str(dim).lower() == "time"

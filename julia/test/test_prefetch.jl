@@ -19,6 +19,12 @@ function _wait_until(f; timeout = 30.0)
     return true
 end
 
+# Whether epoch `k`'s slot in the window is finished, head or not (`isready` only
+# reports the head).
+_slot_done(g, k) = lock(g.lock) do
+    any(s -> s.epoch == k && all(j -> j.status in (:done, :failed), s.jobs), g.window)
+end
+
 _epochs(order, n) = order === :forward ? collect(1:n) :
                     order === :reverse ? collect(n:-1:1) : order
 
@@ -133,7 +139,7 @@ end
                     # With room ahead, let the failing slot finish BEFORE taking the
                     # one in front of it: its stored error must not leak out early.
                     if k == miss - 1 && depth > 1 && Threads.nthreads() > 1
-                        @test _wait_until(() -> isready(g, miss))
+                        @test _wait_until(() -> _slot_done(g, miss))
                     end
                     ok &= bitwise_same(take!(g, k)["Q"].data, ref[k])
                 end

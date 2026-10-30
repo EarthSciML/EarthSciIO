@@ -261,9 +261,12 @@ def _produce(
     else:
         data = provider._sample_windows(t, union, files)
         nbytes = sum(_dataset_nbytes(d) for d in data)
+    # Frozen before transform (the decoded arrays may be views into a shared
+    # decoded file) and again after it, so what the consumer gets is read-only
+    # alike in both executors (process mode re-freezes after unpickling).
     _freeze(data)
     if transform is not None:
-        data = transform(key, data)
+        data = _freeze(transform(key, data))
     return data, nbytes
 
 
@@ -480,6 +483,7 @@ class PrefetchGroup:
         self._size: Dict[str, int] = {}
         self._futures: set = set()
         self._warmed: set = set()
+        self._fetch_end = 0
         self._stats: Dict[str, Any] = {
             "waited_s": 0.0, "decode_s": 0.0, "peak_bytes": 0, "epochs_decoded": 0,
             "samples_decoded": 0, "samples_reused": 0, "oversize_epochs": 0,
@@ -545,6 +549,7 @@ class PrefetchGroup:
             self._stop = None
             self._prev_anchor.clear()
             self._warmed.clear()
+            self._fetch_end = 0
             self._state = _RUNNING
             todo = self._admit_locked()
         self._submit(todo)
@@ -601,14 +606,21 @@ class PrefetchGroup:
         return ep
 
     def ready(self, k: int) -> bool:
-        """Whether the next occurrence of epoch ``k`` in the order is decoded (or
-        failed — its error is still raised only by :meth:`take`). Never blocks,
-        never raises for a decode error; ``False`` before ``start`` or after
-        ``cancel``."""
+        """Whether :meth:`take` ``(k)`` would return at once: ``k`` is the next
+        entry of the order and its slot is decoded (or failed — its error is
+        still raised only by :meth:`take`). Never blocks, never raises for a
+        decode error; ``False`` before ``start``, after ``cancel``, and for any
+        epoch other than the next one, decoded or not."""
         k = operator.index(k)
         with self._cv:
-            if self._state != _RUNNING:
+            if self._state != _RUNNING or self._head >= self._next:
                 return False
+            return self._order[self._head] == k and self._slots[self._head].done
+
+    def _slot_done(self, k: int) -> bool:
+        """Test aid: whether the next occurrence of epoch ``k`` in the window is
+        finished, head or not."""
+        with self._cv:
             for pos in range(self._head, self._next):
                 if self._order[pos] == k:
                     return self._slots[pos].done
@@ -861,15 +873,16 @@ class PrefetchGroup:
         with self._cv:
             if task.gen != self._gen:
                 return  # its order was cancelled before it started
-        if self._latency is not None:
-            time.sleep(max(0.0, float(self._latency())))
         t0 = time.perf_counter()
         try:
+            if self._latency is not None:
+                time.sleep(max(0.0, float(self._latency())))
+                t0 = time.perf_counter()
             data, nbytes = _produce(self._members[task.key], self._files[task.key],
                                     self._union, self._no_windows, self._transform,
                                     task.key, task.t)
             err: Optional[BaseException] = None
-        except Exception as exc:
+        except BaseException as exc:  # anything uncaught would leave take() waiting
             data, nbytes, err = None, 0, exc
         self._finish(task, data, nbytes, err, time.perf_counter() - t0)
 
@@ -911,29 +924,48 @@ class PrefetchGroup:
 
     def _fetch_ahead_locked(self) -> None:
         """Warm the disk cache for the ``fetch_ahead`` slots past the decode
-        window. Downloads only; errors dropped; never blocks."""
+        window. Downloads only; errors dropped; never blocks.
+
+        Each position is handed to the warm thread once per order (a watermark,
+        not a rescan), and its URLs are resolved THERE: the members' url
+        callables never run under the group lock, and one that raises only
+        skips that warm.
+        """
         if self._fetch_ahead == 0 or self._stop is not None:
             return
-        urls: List[Tuple[Provider, str]] = []
+        begin = max(self._next, self._fetch_end)
         end = min(len(self._order), self._next + self._fetch_ahead)
-        for pos in range(self._next, end):
-            t = self._B[self._order[pos]]
-            for key in self._keys:
-                prov = self._members[key]
-                if getattr(prov._reader, "store_backed", False) or prov.cache.offline:
-                    continue
-                for url in prov._sample_urls(t):
-                    if url not in self._warmed:
-                        self._warmed.add(url)
-                        urls.append((prov, url))
-        if not urls:
+        if begin >= end:
             return
+        self._fetch_end = end
+        times = [self._B[self._order[pos]] for pos in range(begin, end)]
         if self._warm_pool is None:
             self._warm_pool = _cf.ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="earthsciio-fetch-ahead"
             )
-        for prov, url in urls:
-            self._warm_pool.submit(_warm, prov, url)
+        try:
+            self._warm_pool.submit(self._warm_times, self._gen, times)
+        except RuntimeError:
+            pass  # the warm pool is shut down: close() is under way
+
+    def _warm_times(self, gen: int, times: List[_dt.datetime]) -> None:
+        for t in times:
+            for key in self._keys:
+                prov = self._members[key]
+                if getattr(prov._reader, "store_backed", False) or prov.cache.offline:
+                    continue
+                try:
+                    urls = prov._sample_urls(t)
+                except Exception:
+                    continue  # best-effort: the decode raises the real error at take()
+                for url in urls:
+                    with self._cv:
+                        if gen != self._gen or self._state != _RUNNING:
+                            return  # the order this warm was for is gone
+                        if url in self._warmed:
+                            continue
+                        self._warmed.add(url)
+                    _warm(prov, url)
 
 
 def _warm(provider: Provider, url: str) -> None:
