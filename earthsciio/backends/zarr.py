@@ -87,7 +87,8 @@ same optional-extra culture the old ``numcodecs`` dependency followed).
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -107,7 +108,6 @@ from ..selection import (
     _select_axes,
     _select_dims,
 )
-
 
 # --------------------------------------------------------------------------- #
 # The cache-backed zarr Store: bridges zarr-python object access to the
@@ -182,7 +182,7 @@ def _make_cache_store(cache: Any, base_url: str):
             return False
 
         # -- the one load-bearing method: fetch an object through the cache -- #
-        def _raw(self, key: str) -> Optional[bytes]:
+        def _raw(self, key: str) -> bytes | None:
             url = f"{self._base}/{key}"
             try:
                 entry = self._cache.fetch(url)
@@ -257,7 +257,7 @@ def _finalize_dtype(np_dtype: np.dtype) -> np.dtype:
     return np_dtype
 
 
-def _dims_of(arr: Any) -> List[str]:
+def _dims_of(arr: Any) -> list[str]:
     """Ordered dim names for a zarr array: v3 ``dimension_names`` or v2
     ``_ARRAY_DIMENSIONS``; synthesize ``dim_0…`` when neither is present."""
     ndim = arr.ndim
@@ -297,10 +297,10 @@ class ZarrReader:
     #: projection pushdown — see :func:`earthsciio.registry.supports_selection`).
     supports_selection = True
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -315,7 +315,7 @@ class ZarrReader:
         self,
         handle: Any,
         variables: Any = None,
-        select: Optional[Any] = None,
+        select: Any | None = None,
         **_: Any,
     ) -> NativeDataset:
         raise Unsupported(
@@ -331,8 +331,8 @@ class ZarrReader:
         self,
         cache: Any,
         base_url: str,
-        variables: Optional[Sequence[str]],
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None,
+        select: Any | None = None,
         **_: Any,
     ) -> NativeDataset:
         """Read ``variables`` from the Zarr store at ``base_url`` under ``select``.
@@ -377,7 +377,7 @@ class ZarrReader:
         if named is not None:
             return self._read_named(zarr, store, variables, named)
 
-        out_vars: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
         for array in variables:
             arr = zarr.open_array(store=store, path=str(array), mode="r")
             dims = _dims_of(arr)
@@ -406,7 +406,7 @@ class ZarrReader:
         zarr: Any,
         store: Any,
         variables: Sequence[str],
-        named: Dict[str, Tuple],
+        named: dict[str, tuple],
     ) -> NativeDataset:
         """The named-dimension read: plan every array, THEN fetch chunks.
 
@@ -440,7 +440,7 @@ class ZarrReader:
             )
             plans.append((name, arr, key))
 
-        out_vars: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
         for name, arr, key in plans:
             if all(isinstance(k, slice) for k in key):
                 data = arr[...]
@@ -453,7 +453,7 @@ class ZarrReader:
 
     # -- shape probe -------------------------------------------------------- #
 
-    def array_shape(self, cache: Any, base_url: str, var: str) -> Tuple[int, ...]:
+    def array_shape(self, cache: Any, base_url: str, var: str) -> tuple[int, ...]:
         """The full (dims-order) shape of array ``var`` in the Zarr store at
         ``base_url``, learned by opening ONLY that array's metadata object —
         NEVER a chunk. A lightweight honour/refuse probe for projection-pushdown

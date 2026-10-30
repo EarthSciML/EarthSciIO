@@ -18,9 +18,9 @@ import pytest
 
 pytest.importorskip("zarr")
 
-import zarr  # noqa: E402
+import zarr
 
-from earthsciio.backends.zarr_stream import (  # noqa: E402
+from earthsciio.backends.zarr_stream import (
     COMMIT_TOKEN_SCHEMA,
     OUTPUT_MANIFEST_V1,
     OUTPUT_MANIFEST_V2,
@@ -35,7 +35,7 @@ from earthsciio.backends.zarr_stream import (  # noqa: E402
     read_static,
     schema_fingerprint,
 )
-from earthsciio.errors import CommitError, EarthSciIOError, RegionNotShardAligned  # noqa: E402
+from earthsciio.errors import CommitError, EarthSciIOError, RegionNotShardAligned
 
 DT = 3600.0
 NLAT, NLON = 6, 5

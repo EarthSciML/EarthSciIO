@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import string
 from dataclasses import dataclass
-from typing import Optional
 from urllib.parse import urlsplit
 
 from .config import expand_datadir, resolve_cache_root
@@ -37,8 +36,8 @@ class FetchResult:
     """
 
     status: str
-    etag: Optional[str] = None
-    last_modified: Optional[str] = None
+    etag: str | None = None
+    last_modified: str | None = None
     bytes_written: int = 0
 
     @property

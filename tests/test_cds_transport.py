@@ -24,7 +24,6 @@ from earthsciio.backends.cds import (
 from earthsciio.config import env_live
 from earthsciio.errors import TransportError
 
-
 # --------------------------------------------------------------------------- #
 # Credential + endpoint resolution (port of cds_api.jl `cds_api_key`).
 # --------------------------------------------------------------------------- #

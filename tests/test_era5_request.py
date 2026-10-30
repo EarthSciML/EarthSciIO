@@ -16,7 +16,6 @@ import pytest
 
 from earthsciio import decode_cds_url, era5
 
-
 # --------------------------------------------------------------------------- #
 # area-from-domain — era5.jl rounds outward with a 1° margin.
 # --------------------------------------------------------------------------- #

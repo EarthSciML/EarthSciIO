@@ -28,8 +28,8 @@ import pytest
 numcodecs = pytest.importorskip("numcodecs")
 pytest.importorskip("zarr")
 
-from earthsciio import Cache, DataSource, Provider
-from earthsciio.errors import FetchError, TransportError
+from earthsciio import Cache, DataSource, Provider  # noqa: E402
+from earthsciio.errors import FetchError, TransportError  # noqa: E402
 
 
 def _blosc():

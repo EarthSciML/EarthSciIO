@@ -49,12 +49,12 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 INT_DTYPES = {"int32", "int64", "uint8"}
 
 
-def gen_value(gen: Dict[str, Any], dtype: str, seed: int, r: int, idx: List[int]):
+def gen_value(gen: dict[str, Any], dtype: str, seed: int, r: int, idx: list[int]):
     P = gen["P"]
     base = seed + gen["record_stride"] * r + sum((i + 1) * P[j] for j, i in enumerate(idx))
     if dtype == "uint8":
@@ -73,7 +73,7 @@ def gen_array(gen, dtype, seed, r, shape):
             out.append(gen_value(gen, dtype, seed, r, prefix))
             return
         for i in range(shape[len(prefix)]):
-            rec(prefix + [i])
+            rec([*prefix, i])
 
     rec([])
     return out
@@ -122,7 +122,7 @@ def _manifest_validator():
     return jsonschema.Draft202012Validator(json.loads(path.read_text()))
 
 
-def check_results(spec, root: pathlib.Path, writer: str) -> List[str]:
+def check_results(spec, root: pathlib.Path, writer: str) -> list[str]:
     errs = []
     validator = _manifest_validator()
     for case in spec["cases"]:
@@ -157,7 +157,7 @@ def check_results(spec, root: pathlib.Path, writer: str) -> List[str]:
     return errs
 
 
-def check_dump(spec, dump) -> List[str]:
+def check_dump(spec, dump) -> list[str]:
     gen = spec["generator"]
     who = f"{dump.get('reader')}<-{dump.get('writer')}"
     errs = []
@@ -219,12 +219,15 @@ def check_dump(spec, dump) -> List[str]:
                 want,
                 errs,
             )
-        key = lambda b: (
-            b["scope"],
-            -1 if b["record"] is None else b["record"],
-            b["writer"],
-            b["key"],
-        )
+
+        def key(b):
+            return (
+                b["scope"],
+                -1 if b["record"] is None else b["record"],
+                b["writer"],
+                b["key"],
+            )
+
         gb = sorted(got.get("blobs", []), key=key)
         eb = sorted(exp["blobs"], key=key)
         if gb != eb:
@@ -232,7 +235,7 @@ def check_dump(spec, dump) -> List[str]:
     return errs
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--spec", required=True)
     ap.add_argument("--results", help="root holding <writer>/<case>/result.json")
@@ -243,7 +246,7 @@ def main(argv: List[str]) -> int:
     a = ap.parse_args(argv)
     spec = json.loads(pathlib.Path(a.spec).read_text())
 
-    errs: List[str] = []
+    errs: list[str] = []
     if a.results:
         for w in a.writer:
             errs += check_results(spec, pathlib.Path(a.results), w)

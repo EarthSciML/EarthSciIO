@@ -18,7 +18,7 @@ import pytest
 numcodecs = pytest.importorskip("numcodecs")  # builds the v2 test fixtures
 pytest.importorskip("zarr")  # the reader is now built on zarr-python 3.x
 
-from earthsciio import (
+from earthsciio import (  # noqa: E402
     Cache,
     CSVReader,
     DataSource,
@@ -28,14 +28,14 @@ from earthsciio import (
     format_registry,
     supports_selection,
 )
-from earthsciio.backends.local import LocalStore
-from earthsciio.backends.zarr import (
+from earthsciio.backends.local import LocalStore  # noqa: E402
+from earthsciio.backends.zarr import (  # noqa: E402
     ZarrReader,
     _parse_axis,
     _resolve_axis_indices,
 )
-from earthsciio.cachekey import sha256_bytes
-from earthsciio.manifest import Manifest
+from earthsciio.cachekey import sha256_bytes  # noqa: E402
+from earthsciio.manifest import Manifest  # noqa: E402
 
 BASE = "s3://earthsci-fixtures/mini.zarr"
 
@@ -315,7 +315,7 @@ def test_over_selection_would_hit_poison(tmp_path):
         objs[f"{BASE}/sr/0.{c1}.0"] = b"\x00POISON\xff"
     _populate(tmp_path, objs)
     cache = Cache(root=tmp_path, offline=True, verify=True)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - the poison's error type is the codec's
         ZarrReader().read_store(
             cache,
             BASE,

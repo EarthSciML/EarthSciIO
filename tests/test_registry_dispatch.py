@@ -72,7 +72,7 @@ def test_s3_transport_is_active_and_rewrites():
     rewriter over the http transport (its fetch is exercised in
     tests/test_s3_transport.py)."""
     assert transport_registry.status("s3") == "active"
-    impl = transport_registry.create("s3")
+    transport_registry.create("s3")
     from earthsciio.backends.s3 import s3_https_url
 
     assert s3_https_url("s3://bucket/era5/2018/20181108.nc") == (

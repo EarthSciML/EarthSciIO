@@ -56,7 +56,7 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -87,7 +87,7 @@ class PeakSampler:
         self.interval = interval
         self.peak = 0
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -96,7 +96,7 @@ class PeakSampler:
                 self.peak = r
             time.sleep(self.interval)
 
-    def __enter__(self) -> "PeakSampler":
+    def __enter__(self) -> PeakSampler:
         self.peak = rss_bytes()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -138,7 +138,7 @@ def _zarray_json(shape, chunks, dtype: str = "<f4") -> bytes:
     ).encode()
 
 
-def build_store(root: pathlib.Path, n_chunks: int, chunk_rows: int, ncols: int) -> Dict[str, int]:
+def build_store(root: pathlib.Path, n_chunks: int, chunk_rows: int, ncols: int) -> dict[str, int]:
     """Write ``field/`` as a 2-D ``(n_chunks*chunk_rows, ncols)`` float32 v2 array
     chunked ``(chunk_rows, ncols)``.
 
@@ -218,7 +218,7 @@ class _LocalDirCache:
 NCOLS = 1000
 CHUNK_ROWS = 525  # 525 * 1000 * 4 B = 2.10 MB decompressed per chunk
 
-CASES: Dict[str, Dict[str, int]] = {
+CASES: dict[str, dict[str, int]] = {
     # -- A. THE DISCRIMINATOR: chunk-count scaling at a fixed, tiny output ---- #
     # The output is held ~constant-tiny while the intersected chunk volume grows
     # 32x. A buffering reader's peak grows with it; a streaming reader's does not.
@@ -264,7 +264,7 @@ _GROUPS = {
 }
 
 
-def parse_case(name: str) -> Dict[str, int]:
+def parse_case(name: str) -> dict[str, int]:
     """``NAME`` from :data:`CASES`, or an ad-hoc ``n_chunks,rows_per_chunk[,chunk_rows]``."""
     if name in CASES:
         cfg = dict(CASES[name])
@@ -277,7 +277,7 @@ def parse_case(name: str) -> Dict[str, int]:
     return cfg
 
 
-def run_case(name: str, keep: Optional[str] = None) -> Dict[str, Any]:
+def run_case(name: str, keep: str | None = None) -> dict[str, Any]:
     cfg = parse_case(name)
     n_chunks = cfg["n_chunks"]
     rows_per_chunk = cfg["rows_per_chunk"]
@@ -291,7 +291,7 @@ def run_case(name: str, keep: Optional[str] = None) -> Dict[str, Any]:
         # Rows taken from EVERY chunk, evenly spread inside the chunk.
         offsets = np.linspace(0, chunk_rows - 1, rows_per_chunk).astype(int).tolist()
         offsets = sorted(set(offsets))
-        idx: List[int] = []
+        idx: list[int] = []
         for c in range(n_chunks):
             for o in offsets:
                 idx.append(c * chunk_rows + o)
@@ -336,7 +336,7 @@ def run_case(name: str, keep: Optional[str] = None) -> Dict[str, Any]:
         if use_tm:
             import tracemalloc
 
-            tm_cur, tm_peak = tracemalloc.get_traced_memory()
+            _tm_cur, tm_peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
 
         assert data.shape == (n_out_rows, NCOLS), data.shape
@@ -379,7 +379,7 @@ def run_case(name: str, keep: Optional[str] = None) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _fmt(row: Dict[str, Any]) -> str:
+def _fmt(row: dict[str, Any]) -> str:
     d = row["delta_peak_bytes"]
     live = row["tracemalloc_peak_bytes"]
     out = row["out_f64_bytes"]
@@ -392,7 +392,7 @@ def _fmt(row: Dict[str, Any]) -> str:
     )
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case")
     ap.add_argument("--list", action="store_true")
@@ -427,8 +427,8 @@ def main(argv: List[str]) -> int:
     )
 
     env = dict(os.environ, BENCH_TRACEMALLOC="1")
-    rows: List[Dict[str, Any]] = []
-    by_name: Dict[str, Dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    by_name: dict[str, dict[str, Any]] = {}
     for title, names in _GROUPS.items():
         print(title)
         for name in names:
@@ -451,23 +451,17 @@ def main(argv: List[str]) -> int:
     vol_growth = hi["intersected_chunk_volume_bytes"] / lo["intersected_chunk_volume_bytes"]
     live_growth = hi["tracemalloc_peak_bytes"] / lo["tracemalloc_peak_bytes"]
     print(
-        "A: intersected chunk volume grew %.0fx (%.0f -> %.0f MB) at a near-constant %.2f MB "
-        "output; peak LIVE grew only %.2fx (%.1f -> %.1f MB)."
-        % (
-            vol_growth,
-            lo["intersected_chunk_volume_bytes"] / MB,
-            hi["intersected_chunk_volume_bytes"] / MB,
-            hi["out_f64_bytes"] / MB,
-            live_growth,
-            lo["tracemalloc_peak_bytes"] / MB,
-            hi["tracemalloc_peak_bytes"] / MB,
-        )
+        f"A: intersected chunk volume grew {vol_growth:.0f}x "
+        f"({lo['intersected_chunk_volume_bytes'] / MB:.0f} -> "
+        f"{hi['intersected_chunk_volume_bytes'] / MB:.0f} MB) at a near-constant "
+        f"{hi['out_f64_bytes'] / MB:.2f} MB output; peak LIVE grew only {live_growth:.2f}x "
+        f"({lo['tracemalloc_peak_bytes'] / MB:.1f} -> {hi['tracemalloc_peak_bytes'] / MB:.1f} MB)."
     )
     c = by_name["isrm-chunk-80"]
     print(
-        "C: with ISRM-sized %.0f MB chunks, peak LIVE is %.0f MB ~= async.concurrency x chunk "
+        f"C: with ISRM-sized {c['chunk_decompressed_bytes'] / MB:.0f} MB chunks, peak LIVE is "
+        f"{c['tracemalloc_peak_bytes'] / MB:.0f} MB ~= async.concurrency x chunk "
         "size, flat across 20/40/80 chunks — bounded by CONCURRENCY, not by chunk count."
-        % (c["chunk_decompressed_bytes"] / MB, c["tracemalloc_peak_bytes"] / MB)
     )
     streaming = live_growth < 0.25 * vol_growth
     print(

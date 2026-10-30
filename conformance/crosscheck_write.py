@@ -54,7 +54,7 @@ import json
 import math
 import pathlib
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 ATOL = 1e-9
 RTOL = 1e-6
@@ -70,7 +70,7 @@ CF_ATTR_KEYS = ("units", "standard_name", "axis", "coordinates", "calendar")
 # --------------------------------------------------------------------------- #
 
 
-def build_oracle(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def build_oracle(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """``{field_name: {dtype, dims, shape, data(flat row-major)}}`` — the exact
     arrays every writer's store must decode back to."""
     dim_len = {d: int(n) for d, n in spec["dims"]}
@@ -78,7 +78,7 @@ def build_oracle(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     records = spec["records"]
     dim_len[time_dim] = len(records)
 
-    fields: Dict[str, Dict[str, Any]] = {}
+    fields: dict[str, dict[str, Any]] = {}
 
     # coordinate variables (1-D over their own dim)
     for co in spec["coords"]:
@@ -100,7 +100,7 @@ def build_oracle(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         shape = [dim_len[d] for d in dims]
         # only (time, lat, lon)-shaped vars are in this spec; assemble row-major
         assert dims == [time_dim, "lat", "lon"], f"oracle assumes time,lat,lon; got {dims}"
-        flat: List[float] = []
+        flat: list[float] = []
         for r in records:
             block = r["vars"][name]  # [lat][lon]
             for row in block:
@@ -116,7 +116,7 @@ def build_oracle(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def _values_equal(got: List[Any], exp: List[Any]) -> Optional[str]:
+def _values_equal(got: list[Any], exp: list[Any]) -> str | None:
     if len(got) != len(exp):
         return f"length {len(got)} != {len(exp)}"
     for i, (g, e) in enumerate(zip(got, exp)):
@@ -131,8 +131,8 @@ def _values_equal(got: List[Any], exp: List[Any]) -> Optional[str]:
     return None
 
 
-def _cmp_field(got: Dict[str, Any], exp: Dict[str, Any], label: str) -> List[str]:
-    errs: List[str] = []
+def _cmp_field(got: dict[str, Any], exp: dict[str, Any], label: str) -> list[str]:
+    errs: list[str] = []
     if got.get("dtype") != exp["dtype"]:
         errs.append(f"{label}: dtype {got.get('dtype')} != {exp['dtype']}")
     if got.get("dims") != exp["dims"]:
@@ -150,14 +150,14 @@ def _cmp_field(got: Dict[str, Any], exp: Dict[str, Any], label: str) -> List[str
 # --------------------------------------------------------------------------- #
 
 
-def _read_array_meta(store_dir: pathlib.Path, name: str) -> Optional[Dict[str, Any]]:
+def _read_array_meta(store_dir: pathlib.Path, name: str) -> dict[str, Any] | None:
     p = store_dir / name / "zarr.json"
     if not p.exists():
         return None
     return json.loads(p.read_text())
 
 
-def _structural(meta: Dict[str, Any]) -> Dict[str, Any]:
+def _structural(meta: dict[str, Any]) -> dict[str, Any]:
     """Extract the language-neutral structural fingerprint of an array node."""
     cg = meta.get("chunk_grid", {}).get("configuration", {})
     codecs = meta.get("codecs", [])
@@ -198,9 +198,9 @@ def _structural(meta: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def compare_stores(stores: Dict[str, pathlib.Path], spec: Dict[str, Any]) -> Tuple[int, List[str]]:
+def compare_stores(stores: dict[str, pathlib.Path], spec: dict[str, Any]) -> tuple[int, list[str]]:
     """Pairwise structural comparison across writer stores. Returns (failures, log)."""
-    log: List[str] = []
+    log: list[str] = []
     failures = 0
     labels = list(stores)
     arrays = [c["name"] for c in spec["coords"]] + [v["name"] for v in spec["vars"]]
@@ -239,7 +239,7 @@ def compare_stores(stores: Dict[str, pathlib.Path], spec: Dict[str, Any]) -> Tup
     return failures, log
 
 
-def _diff_struct(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
+def _diff_struct(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
     diffs = []
     for k in (
         "data_type",
@@ -263,9 +263,9 @@ def _diff_struct(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
 # --------------------------------------------------------------------------- #
 
 
-def main(argv: List[str]) -> int:
-    dump_paths: List[str] = []
-    stores: Dict[str, pathlib.Path] = {}
+def main(argv: list[str]) -> int:
+    dump_paths: list[str] = []
+    stores: dict[str, pathlib.Path] = {}
     spec_path = SPEC_PATH
     i = 1
     while i < len(argv):
@@ -314,7 +314,7 @@ def main(argv: List[str]) -> int:
     # 1. decoded-array agreement: each readback vs oracle
     print("--- decoded arrays vs spec oracle ---")
     for d in dumps:
-        errs: List[str] = []
+        errs: list[str] = []
         fields = d["fields"]
         for name, exp in oracle.items():
             if name not in fields:

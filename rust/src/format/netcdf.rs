@@ -104,7 +104,7 @@ impl Reader for NetcdfReader {
     /// decode that pushdown narrows.
     fn dim_length(&self, blob_path: &Path, dim: &str) -> Result<Option<usize>> {
         let file = NcFile::open(blob_path).map_err(fmt_err)?;
-        Ok(nc_dim_length(&file, dim)?)
+        nc_dim_length(&file, dim)
     }
 
     /// Honours a per-axis `Selection` at DECODE time: the blob is already

@@ -18,21 +18,21 @@ from __future__ import annotations
 
 import calendar
 import math
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Mapping, Sequence, Tuple
 
 from .backends.cds import encode_cds_url
 
 __all__ = [
     "ERA5_DATASET",
-    "ERA5_PRESSURE_LEVELS_HPA",
     "ERA5_PLEV_TO_INDEX",
+    "ERA5_PRESSURE_LEVELS_HPA",
     "ERA5_VARIABLES",
     "era5_area_from_bbox",
-    "era5_levels_from_indices",
-    "era5_request",
     "era5_cds_url",
+    "era5_levels_from_indices",
     "era5_months_in_span",
+    "era5_request",
 ]
 
 #: The CDS dataset id for ERA5 reanalysis on pressure levels.
@@ -40,7 +40,7 @@ ERA5_DATASET = "reanalysis-era5-pressure-levels"
 
 #: ERA5 pressure levels (hPa), surface (highest pressure) → top (lowest).
 #: 1-based level index 1 = 1000 hPa … index 37 = 1 hPa (matches ``era5.jl``).
-ERA5_PRESSURE_LEVELS_HPA: Tuple[int, ...] = (
+ERA5_PRESSURE_LEVELS_HPA: tuple[int, ...] = (
     1000,
     975,
     950,
@@ -110,7 +110,7 @@ _DEFAULT_BUFFER = timedelta(hours=3)
 
 def era5_area_from_bbox(
     min_lon: float, min_lat: float, max_lon: float, max_lat: float
-) -> List[int]:
+) -> list[int]:
     """The CDS ``area`` ``[north, west, south, east]`` for a lon/lat bbox (degrees).
 
     Mirrors ``era5.jl``: round *outward* with a 1° margin so the requested grid
@@ -126,7 +126,7 @@ def era5_area_from_bbox(
     return [north, west, south, east]
 
 
-def era5_levels_from_indices(indices: Iterable[float]) -> List[int]:
+def era5_levels_from_indices(indices: Iterable[float]) -> list[int]:
     """Map 1-based ERA5 level indices to pressures in hPa (``era5.jl`` ordering).
 
     The loader carries vertical coordinates as level *indices*; CDS wants
@@ -134,7 +134,7 @@ def era5_levels_from_indices(indices: Iterable[float]) -> List[int]:
     nearest integer (the loader may hand fractional level coordinates) and must
     fall in ``1..len(ERA5_PRESSURE_LEVELS_HPA)``.
     """
-    levels: List[int] = []
+    levels: list[int] = []
     n = len(ERA5_PRESSURE_LEVELS_HPA)
     for raw in indices:
         idx = int(round(raw))
@@ -144,7 +144,7 @@ def era5_levels_from_indices(indices: Iterable[float]) -> List[int]:
     return levels
 
 
-def _normalize_variables(variables: Iterable[str]) -> List[str]:
+def _normalize_variables(variables: Iterable[str]) -> list[str]:
     """Canonical (sorted, de-duplicated) CDS variable list.
 
     CDS treats ``variable`` as a set, so sorting it makes the resulting request —
@@ -233,7 +233,7 @@ def era5_months_in_span(
     end: datetime,
     *,
     buffer: timedelta = _DEFAULT_BUFFER,
-) -> List[Tuple[int, int, List[int]]]:
+) -> list[tuple[int, int, list[int]]]:
     """Months (and the days within each) covering ``[start, end]`` for ERA5.
 
     Returns ``[(year, month, [day, ...]), ...]`` in chronological order — the
@@ -248,7 +248,7 @@ def era5_months_in_span(
     if t_end < t_start:
         raise ValueError("ERA5 span end precedes start")
 
-    out: List[Tuple[int, int, List[int]]] = []
+    out: list[tuple[int, int, list[int]]] = []
     year, month = t_start.year, t_start.month
     while (year, month) <= (t_end.year, t_end.month):
         last_dom = calendar.monthrange(year, month)[1]

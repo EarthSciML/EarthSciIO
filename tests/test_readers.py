@@ -22,8 +22,8 @@ import pytest
 
 from earthsciio import Cache, CSVReader, FF10Reader, NetCDFReader
 from earthsciio.native import NativeDataset
-from earthsciio.readers import FF10_POINT_COLUMNS, FF10_POINT_NUMERIC
 from earthsciio.provider import reader_option_names
+from earthsciio.readers import FF10_POINT_COLUMNS, FF10_POINT_NUMERIC
 from earthsciio.registry import dim_length as registry_dim_length
 from earthsciio.registry import format_registry
 

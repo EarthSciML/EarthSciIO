@@ -22,28 +22,28 @@ shape.
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from collections.abc import Iterable
 
 __all__ = [
-    # registry-seam errors (esio-9nb.8)
-    "EarthSciIOError",
+    "AuthError",
     "BackendNotRegistered",
-    "Unsupported",
-    "UnknownReaderOption",
     # cache/transport-core runtime errors (esio-9nb.2)
     "CacheMiss",
-    "IntegrityError",
-    "TransportError",
+    "CommitError",
+    # registry-seam errors (esio-9nb.8)
+    "EarthSciIOError",
     "FetchError",
+    "IntegrityError",
     "OfflineError",
-    "AuthError",
     # streaming writer contract (spec/writer.md)
     "RegionNotShardAligned",
-    "CommitError",
+    "TransportError",
+    "UnknownReaderOption",
+    "Unsupported",
 ]
 
 
-def _rebuild_error(cls: type, args: tuple, state: dict) -> "EarthSciIOError":
+def _rebuild_error(cls: type, args: tuple, state: dict) -> EarthSciIOError:
     """Unpickle an :class:`EarthSciIOError` without re-running its ``__init__``."""
     err = cls.__new__(cls)
     Exception.__init__(err, *args)
@@ -82,12 +82,12 @@ class BackendNotRegistered(EarthSciIOError, LookupError):
         registry_kind: str,
         keyed_by: str,
         key: str,
-        available: Optional[Iterable[str]] = None,
+        available: Iterable[str] | None = None,
     ) -> None:
         self.registry_kind = registry_kind
         self.keyed_by = keyed_by
         self.key = key
-        self.available: List[str] = sorted(available) if available is not None else []
+        self.available: list[str] = sorted(available) if available is not None else []
         super().__init__(
             f"no {registry_kind} backend registered for {keyed_by}={key!r}; "
             f"registered keys: {self.available}. Register one with "
@@ -113,7 +113,7 @@ class Unsupported(EarthSciIOError, NotImplementedError):
         self,
         backend: str,
         registry: str,
-        operation: Optional[str] = None,
+        operation: str | None = None,
         *,
         tracking: str = "esio-cloud",
         doc: str = "spec/cloud-future.md",
@@ -148,11 +148,11 @@ class UnknownReaderOption(EarthSciIOError, ValueError):
         self,
         fmt: str,
         unknown: Iterable[str],
-        accepted: Optional[Iterable[str]] = None,
+        accepted: Iterable[str] | None = None,
     ) -> None:
         self.format = fmt
-        self.unknown: List[str] = sorted(unknown)
-        self.accepted: List[str] = sorted(accepted) if accepted is not None else []
+        self.unknown: list[str] = sorted(unknown)
+        self.accepted: list[str] = sorted(accepted) if accepted is not None else []
         known = (
             f"it accepts {self.accepted}"
             if self.accepted
@@ -204,9 +204,9 @@ class IntegrityError(EarthSciIOError):
         self,
         message: str,
         *,
-        key: Optional[str] = None,
-        expected: Optional[str] = None,
-        actual: Optional[str] = None,
+        key: str | None = None,
+        expected: str | None = None,
+        actual: str | None = None,
     ) -> None:
         self.key = key
         self.expected = expected
@@ -233,7 +233,7 @@ class TransportError(EarthSciIOError):
         self,
         message: str,
         *,
-        status: Optional[int] = None,
+        status: int | None = None,
         not_found: bool = False,
     ) -> None:
         self.status = status
@@ -253,14 +253,14 @@ class FetchError(EarthSciIOError):
         self,
         resolved_url: str,
         *,
-        attempts: Optional[Iterable[str]] = None,
-        cause: Optional[BaseException] = None,
-        causes: Optional[Iterable[BaseException]] = None,
+        attempts: Iterable[str] | None = None,
+        cause: BaseException | None = None,
+        causes: Iterable[BaseException] | None = None,
     ) -> None:
         self.resolved_url = resolved_url
-        self.attempts: List[str] = list(attempts) if attempts is not None else []
+        self.attempts: list[str] = list(attempts) if attempts is not None else []
         self.cause = cause
-        self.causes: List[BaseException] = (
+        self.causes: list[BaseException] = (
             list(causes) if causes is not None else ([cause] if cause is not None else [])
         )
         #: True only when EVERY attempt failed with a definitive absence
@@ -294,9 +294,9 @@ class AuthError(EarthSciIOError):
     (``spec/cache-format.md`` §3).
     """
 
-    def __init__(self, realm: str, *, available: Optional[Iterable[str]] = None) -> None:
+    def __init__(self, realm: str, *, available: Iterable[str] | None = None) -> None:
         self.realm = realm
-        self.available: List[str] = sorted(available) if available is not None else []
+        self.available: list[str] = sorted(available) if available is not None else []
         super().__init__(
             f"no auth resolver registered for realm {realm!r}; registered realms: {self.available}"
         )

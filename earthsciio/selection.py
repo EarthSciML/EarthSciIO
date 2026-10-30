@@ -45,28 +45,29 @@ slices K windows back out of (§2.4) — both are pure vocabulary, no I/O.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
 from .native import NativeDataset, NativeField
 
 __all__ = [
-    "DimWindow",
     "_ALL",
-    "_parse_axis",
-    "_select_axes",
-    "_select_dims",
-    "_resolve_axis_indices",
+    "DimWindow",
+    "_WindowUnion",
     "_absent_dims_error",
     "_as_dims_select",
-    "_WindowUnion",
+    "_parse_axis",
+    "_resolve_axis_indices",
+    "_select_axes",
+    "_select_dims",
 ]
 
 _ALL = ("all",)
 
 
-def _parse_axis(spec: Any) -> Tuple:
+def _parse_axis(spec: Any) -> tuple:
     """Normalize one axis selector to a tagged tuple.
 
     Accepts ``"all"``/``None`` (whole axis), ``{"indices": [...]}`` (an explicit,
@@ -101,7 +102,7 @@ def _check_one_form(select: Mapping) -> None:
         )
 
 
-def _select_axes(select: Any) -> Optional[List[Any]]:
+def _select_axes(select: Any) -> list[Any] | None:
     """Extract the ordered per-axis selector list from a ``select`` argument.
 
     ``None`` ⇒ ``None`` (all). A ``{"axes": [...]}`` mapping or a bare list both
@@ -121,7 +122,7 @@ def _select_axes(select: Any) -> Optional[List[Any]]:
     return None
 
 
-def _select_dims(select: Any) -> Optional[Dict[str, Tuple]]:
+def _select_dims(select: Any) -> dict[str, tuple] | None:
     """The named form of ``select``, parsed: ``{dim: tagged selector}`` in the
     order given, or ``None`` when ``select`` is not the named form.
 
@@ -157,7 +158,7 @@ def _absent_dims_error(absent: Sequence[str], present: Iterable[str], hint: str 
     )
 
 
-def _resolve_axis_indices(axis: Tuple, dim_len: int) -> List[int]:
+def _resolve_axis_indices(axis: tuple, dim_len: int) -> list[int]:
     """Resolve a tagged axis selector to its ordered list of global indices."""
     if axis[0] == "all":
         return list(range(dim_len))
@@ -188,7 +189,7 @@ def _resolve_axis_indices(axis: Tuple, dim_len: int) -> List[int]:
     raise ValueError(f"unrecognized axis selector: {axis!r}")
 
 
-def _axis_indices_unbounded(axis: Tuple) -> Optional[List[int]]:
+def _axis_indices_unbounded(axis: tuple) -> list[int] | None:
     """An axis selector's index list WITHOUT the dimension length, or ``None``
     for ``"all"``.
 
@@ -271,18 +272,18 @@ class DimWindow:
 
     __slots__ = ("_dims",)
 
-    def __init__(self, dims: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(self, dims: Mapping[str, Any] | None = None) -> None:
         if dims is not None and not isinstance(dims, Mapping):
             raise TypeError(
                 "DimWindow takes a mapping of dimension name -> selector, got "
                 f"{type(dims).__name__}"
             )
-        self._dims: Dict[str, Any] = {
+        self._dims: dict[str, Any] = {
             str(d): _wire_axis(str(d), s) for d, s in (dims or {}).items()
         }
 
     @classmethod
-    def from_select(cls, select: Mapping[str, Any]) -> "DimWindow":
+    def from_select(cls, select: Mapping[str, Any]) -> DimWindow:
         """The window a wire ``{"dims": {...}}`` select spells."""
         named = _select_dims(select)
         if named is None:
@@ -293,12 +294,12 @@ class DimWindow:
         return cls(dict(select["dims"]))
 
     @property
-    def dims(self) -> Dict[str, Any]:
+    def dims(self) -> dict[str, Any]:
         """``{dim: wire selector}`` — a copy, in the order given."""
         return {d: _copy_wire(s) for d, s in self._dims.items()}
 
     @property
-    def select(self) -> Dict[str, Any]:
+    def select(self) -> dict[str, Any]:
         """The wire form, ``{"dims": {...}}`` — a fresh dict each call."""
         return {"dims": self.dims}
 
@@ -313,10 +314,10 @@ class DimWindow:
     def __repr__(self) -> str:
         return f"DimWindow({self._dims!r})"
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         return {"dims": self._dims}
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         self._dims = state["dims"]
 
 
@@ -326,7 +327,7 @@ def _copy_wire(s: Any) -> Any:
     return s
 
 
-def _as_dims_select(w: Any) -> Dict[str, Any]:
+def _as_dims_select(w: Any) -> dict[str, Any]:
     """A window argument (:class:`DimWindow` or the wire dict) → the wire dict.
 
     A window NAMES its dimensions; a positional ``{"axes": [...]}`` cannot be a
@@ -373,17 +374,17 @@ class _WindowUnion:
     """
 
     def __init__(self, windows: Sequence[Any]) -> None:
-        self.selects: List[Dict[str, Any]] = [_as_dims_select(w) for w in windows]
-        self._parsed: List[Dict[str, Tuple]] = [_select_dims(s) or {} for s in self.selects]
-        self._wanted: List[Dict[str, Optional[List[int]]]] = [
+        self.selects: list[dict[str, Any]] = [_as_dims_select(w) for w in windows]
+        self._parsed: list[dict[str, tuple]] = [_select_dims(s) or {} for s in self.selects]
+        self._wanted: list[dict[str, list[int] | None]] = [
             {d: _axis_indices_unbounded(a) for d, a in p.items()} for p in self._parsed
         ]
-        names: List[str] = []
+        names: list[str] = []
         for p in self._parsed:
             for d in p:
                 if d not in names:
                     names.append(d)
-        union: Dict[str, Optional[List[int]]] = {}
+        union: dict[str, list[int] | None] = {}
         for d in names:
             lists = [w.get(d) for w in self._wanted]  # unnamed and "all" are both None
             if any(lst is None for lst in lists):
@@ -391,21 +392,21 @@ class _WindowUnion:
             else:
                 union[d] = sorted({i for lst in lists for i in lst})
         self._union = union
-        self.select: Dict[str, Any] = {
+        self.select: dict[str, Any] = {
             "dims": {
                 d: ("all" if idx is None else {"indices": list(idx)}) for d, idx in union.items()
             }
         }
 
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         """Every dimension some window names."""
         return list(self._union)
 
-    def split(self, ds: NativeDataset) -> List[NativeDataset]:
+    def split(self, ds: NativeDataset) -> list[NativeDataset]:
         """Window ``i`` of ``ds`` (decoded under :attr:`select`), for every ``i``."""
         return [self._one(ds, wanted) for wanted in self._wanted]
 
-    def _one(self, ds: NativeDataset, wanted: Dict[str, Optional[List[int]]]) -> NativeDataset:
+    def _one(self, ds: NativeDataset, wanted: dict[str, list[int] | None]) -> NativeDataset:
         for dim, want in wanted.items():
             if want is not None and self._union[dim] is None and _is_time_dim(ds, dim):
                 # The union read this dimension whole for some OTHER window, so

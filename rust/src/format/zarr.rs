@@ -360,7 +360,6 @@ where
                 return Err(e);
             }
         }
-        drop(out);
 
         out_vars.insert(
             array_name.clone(),

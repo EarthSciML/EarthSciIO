@@ -455,8 +455,9 @@ def read_shapefile(path, expected, decode=None):
     rest -> str, with ``numeric_columns`` forcing a text column to float64.
     """
     import io
-    import shapefile as pyshp
     import zipfile
+
+    import shapefile as pyshp
 
     decode = decode or {}
     member = decode.get("member")
@@ -502,7 +503,7 @@ def read_shapefile(path, expected, decode=None):
             continue
         pts = list(shp.points)
         offs = [int(o) for o in (shp.parts or [])] or [0]
-        bounds = offs + [len(pts)]
+        bounds = [*offs, len(pts)]
         parts = [pts[bounds[k] : bounds[k + 1]] for k in range(len(offs))]
         bb = list(shp.bbox)
         for pi, ring in enumerate(parts):

@@ -18,7 +18,6 @@ from __future__ import annotations
 import getpass
 import os
 import pathlib
-from typing import Optional
 
 #: Cache-format version. Bumping this string invalidates every cached blob
 #: (the on-disk layout lives under ``<root>/<CACHE_FORMAT_VERSION>/``).
@@ -54,7 +53,7 @@ def _safe_getuser() -> str:
         return "earthsci"
 
 
-def resolve_cache_root(explicit: Optional[os.PathLike] = None) -> pathlib.Path:
+def resolve_cache_root(explicit: os.PathLike | None = None) -> pathlib.Path:
     """Resolve the cache root directory.
 
     Precedence: an explicit argument, then ``$EARTHSCIDATADIR``, then the
@@ -85,7 +84,7 @@ def env_live() -> bool:
     return os.environ.get("EARTHSCI_LIVE", "").strip().lower() in _TRUTHY
 
 
-def resolve_offline(explicit: Optional[bool] = None) -> bool:
+def resolve_offline(explicit: bool | None = None) -> bool:
     """Resolve effective offline mode.
 
     ``explicit`` of ``True``/``False`` wins; ``None`` means "consult the
@@ -111,7 +110,7 @@ def env_revalidate_file() -> bool:
     return raw.strip().lower() not in _FALSEY
 
 
-def resolve_revalidate_file(explicit: Optional[bool] = None) -> bool:
+def resolve_revalidate_file(explicit: bool | None = None) -> bool:
     """Resolve the effective ``file://`` recheck flag.
 
     ``explicit`` of ``True``/``False`` wins; ``None`` consults

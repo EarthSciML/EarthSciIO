@@ -31,8 +31,8 @@ import numpy as np
 import pytest
 
 from earthsciio import (
-    CacheMiss,
     Cache,
+    CacheMiss,
     DataSource,
     DimWindow,
     EpochSample,
@@ -489,6 +489,7 @@ def test_prefetch_a_coarse_member_is_decoded_once_per_anchor(cache, equivalence)
     m = _members(sc, cache)
     with PrefetchGroup({"PS": m["PS"], "Q1": m["Q1"]}, depth=1) as g:
         g.start("forward")
+        last = None
         for k in range(len(g.boundaries())):
             ep = g.take(k)
             if not ep["PS"].changed:
@@ -595,7 +596,7 @@ def test_prefetch_errors_cancel_then_start_from_reproduces_the_sequence(cache, e
             g.take(cut)
         assert g.ready(cut) is False
         g.start("forward", from_=cut)
-        first = True
+        first, prev = True, None
         for k in range(cut, miss):
             s = g.take(k)["Q"]
             assert s.changed  # hourly: every anchor is new, the first after start too
@@ -894,7 +895,7 @@ def test_prefetch_fetch_ahead_downloads_without_decoding_and_drops_errors(tmp_pa
     ) as g:
         g.start([0, 4, 8, 12])
         for k in (4, 8):
-            assert _wait_until(lambda: online.store.get_blob(cache_key(urls[k])) is not None)
+            assert _wait_until(lambda k=k: online.store.get_blob(cache_key(urls[k])) is not None)
         assert not decoded  # warmed while the head decode is still sleeping
         assert g.take(0)["Q"].anchor == _utc(src["refresh_times_s"][0])
         assert g.take(4) and g.take(8)
@@ -916,7 +917,7 @@ def test_netcdf_decodes_take_the_process_wide_lock(cache):
     reader = NetCDFReader()
     for call in (lambda: reader.read_native(path), lambda: reader.dim_length(path, "lat")):
         done = threading.Event()
-        worker = threading.Thread(target=lambda: (call(), done.set()))
+        worker = threading.Thread(target=lambda call=call, done=done: (call(), done.set()))
         with _NETCDF_LOCK:
             worker.start()
             assert not done.wait(0.2), "decoded while another thread held the lock"

@@ -75,7 +75,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -184,7 +184,7 @@ def _maxrss_bytes() -> int:
     return int(r if sys.platform == "darwin" else r * 1024)
 
 
-def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
+def run_case(spec: dict[str, Any]) -> dict[str, Any]:
     from earthsciio import PrefetchGroup
 
     members = _providers(spec["url"], spec["cache_root"], spec["files"], spec["records"])
@@ -199,9 +199,9 @@ def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
     NetCDFReader().read_native(B[0].strftime(spec["url"][len("file://") :]), ["U"])
 
     rss_base = _maxrss_bytes()
-    out: Dict[str, Any] = dict(spec, epochs=len(B), rss_base=rss_base)
+    out: dict[str, Any] = dict(spec, epochs=len(B), rss_base=rss_base)
     t_wall = time.perf_counter()
-    per_epoch: List[float] = []
+    per_epoch: list[float] = []
     if spec["mode"] == "sync":
         for t in B:
             t0 = time.perf_counter()
@@ -227,7 +227,7 @@ def run_case(spec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _spawn(spec: Dict[str, Any]) -> Dict[str, Any]:
+def _spawn(spec: dict[str, Any]) -> dict[str, Any]:
     proc = subprocess.run(
         [sys.executable, str(pathlib.Path(__file__).resolve()), "--case", json.dumps(spec)],
         capture_output=True,
@@ -247,7 +247,7 @@ def _hidden(blocked: float, sync: float) -> float:
     return 1.0 - blocked / sync if sync > 0 else float("nan")
 
 
-def _fmt(row: Dict[str, Any], sync: Dict[str, Any]) -> str:
+def _fmt(row: dict[str, Any], sync: dict[str, Any]) -> str:
     rss = (
         f"rss_peak={row['rss_peak'] / MB:6.1f} MB "
         f"(+{(row['rss_peak'] - row['rss_base']) / MB:5.1f})"
@@ -268,7 +268,7 @@ def _fmt(row: Dict[str, Any], sync: Dict[str, Any]) -> str:
     )
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case")
     ap.add_argument("--size", choices=sorted(SIZES), default="small")

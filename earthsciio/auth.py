@@ -15,12 +15,12 @@ it forwards, and a realm name it records.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from collections.abc import Iterable
 
 from .errors import AuthError
 
 #: One HTTP request header as a (name, value) pair.
-Header = Tuple[str, str]
+Header = tuple[str, str]
 
 
 class AuthResolver:
@@ -29,7 +29,7 @@ class AuthResolver:
     def realm(self) -> str:  # pragma: no cover - abstract
         raise NotImplementedError
 
-    def headers(self) -> List[Header]:  # pragma: no cover - abstract
+    def headers(self) -> list[Header]:  # pragma: no cover - abstract
         raise NotImplementedError
 
 
@@ -48,20 +48,20 @@ class StaticHeaderAuth(AuthResolver):
 
     def __init__(self, realm: str, headers: Iterable[Header]) -> None:
         self._realm = realm
-        self._headers: List[Header] = list(headers)
+        self._headers: list[Header] = list(headers)
 
     def realm(self) -> str:
         return self._realm
 
-    def headers(self) -> List[Header]:
+    def headers(self) -> list[Header]:
         return list(self._headers)
 
     @classmethod
-    def bearer(cls, realm: str, token: str) -> "StaticHeaderAuth":
+    def bearer(cls, realm: str, token: str) -> StaticHeaderAuth:
         return cls(realm, [("Authorization", f"Bearer {token}")])
 
     @classmethod
-    def header(cls, realm: str, name: str, value: str) -> "StaticHeaderAuth":
+    def header(cls, realm: str, name: str, value: str) -> StaticHeaderAuth:
         return cls(realm, [(name, value)])
 
 
@@ -78,11 +78,9 @@ class AuthRegistry:
 
     def __init__(
         self,
-        resolvers: Optional[
-            Union[AuthResolver, Iterable[AuthResolver], Dict[str, AuthResolver]]
-        ] = None,
+        resolvers: AuthResolver | Iterable[AuthResolver] | dict[str, AuthResolver] | None = None,
     ) -> None:
-        self._by_realm: Dict[str, AuthResolver] = {}
+        self._by_realm: dict[str, AuthResolver] = {}
         if resolvers is None:
             return
         if isinstance(resolvers, AuthResolver):
@@ -97,7 +95,7 @@ class AuthRegistry:
     def register(self, resolver: AuthResolver) -> None:
         self._by_realm[resolver.realm()] = resolver
 
-    def resolve(self, realm: Optional[str]) -> Optional[AuthResolver]:
+    def resolve(self, realm: str | None) -> AuthResolver | None:
         """Resolver for ``realm``; ``None`` when no realm; raises on unknown realm."""
         if realm is None:
             return None
@@ -106,7 +104,7 @@ class AuthRegistry:
         except KeyError:
             raise AuthError(realm, available=self._by_realm.keys()) from None
 
-    def realms(self) -> List[str]:
+    def realms(self) -> list[str]:
         return sorted(self._by_realm)
 
 

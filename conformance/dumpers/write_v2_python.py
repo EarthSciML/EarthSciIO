@@ -20,7 +20,7 @@ import json
 import pathlib
 import shutil
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -38,7 +38,7 @@ from earthsciio.backends.zarr_stream import (  # noqa: E402
 from earthsciio.errors import CommitError, RegionNotShardAligned  # noqa: E402
 
 
-def build_schema(s: Dict[str, Any]) -> OutputSchema:
+def build_schema(s: dict[str, Any]) -> OutputSchema:
     """Map a case's language-neutral schema onto ``OutputSchema``."""
     tm = s.get("time_mode", {"kind": "append"})
     return OutputSchema(
@@ -62,7 +62,7 @@ def build_schema(s: Dict[str, Any]) -> OutputSchema:
 
 
 def gen_array(
-    gen: Dict[str, Any], dtype: str, seed: int, r: int, ranges: List[range]
+    gen: dict[str, Any], dtype: str, seed: int, r: int, ranges: list[range]
 ) -> np.ndarray:
     """The generator (``spec/writer.md`` §10) over global index ``ranges``."""
     P = gen["P"]
@@ -82,7 +82,7 @@ class Writer:
     """A driver-side handle: the ZarrWriter handle plus what the driver needs
     to build arrays (role and region)."""
 
-    def __init__(self, h, role: str, region: Dict[str, List[int]]) -> None:
+    def __init__(self, h, role: str, region: dict[str, list[int]]) -> None:
         self.h = h
         self.role = role
         self.region = region
@@ -99,7 +99,7 @@ def parse_role(role: Any):
     raise ValueError(f"unknown role {role!r}")
 
 
-def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Dict[str, Any]:
+def run_case(case: dict[str, Any], gen: dict[str, Any], out: pathlib.Path) -> dict[str, Any]:
     sch = case["schema"]
     schema = build_schema(sch)
     dimlen = {d: int(n) for d, n in sch["dims"]}
@@ -108,12 +108,12 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
         shutil.rmtree(store)
     base = str(store)
     zw = ZarrWriter()
-    handles: Dict[str, Writer] = {}
-    tokens: Dict[str, str] = {}
+    handles: dict[str, Writer] = {}
+    tokens: dict[str, str] = {}
     times = sch.get("time_mode", {}).get("times")
 
-    def arrays_for(w: Writer, entries, r: int, *, only_partitioned: bool) -> Dict[str, np.ndarray]:
-        out_: Dict[str, np.ndarray] = {}
+    def arrays_for(w: Writer, entries, r: int, *, only_partitioned: bool) -> dict[str, np.ndarray]:
+        out_: dict[str, np.ndarray] = {}
         for v in entries:
             sdims = [d for d in v["dims"] if d != sch["time_dim"]]
             part = any(d in w.region for d in sdims)
@@ -123,7 +123,7 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
             out_[v["name"]] = gen_array(gen, v["dtype"], v["seed"], r, ranges)
         return out_
 
-    def run(op: Dict[str, Any]) -> None:
+    def run(op: dict[str, Any]) -> None:
         kind = op["op"]
         name = op.get("writer")
         if kind in ("create", "join"):
@@ -175,7 +175,7 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
 
     results = []
     for k, op in enumerate(case["ops"]):
-        err: Optional[str] = None
+        err: str | None = None
         msg = ""
         try:
             run(op)
@@ -183,7 +183,7 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
             err, msg = "RegionNotShardAligned", str(e)
         except CommitError as e:
             err, msg = "CommitError", str(e)
-        except Exception as e:  # noqa: BLE001 — every other failure is "Error"
+        except Exception as e:
             err, msg = "Error", f"{type(e).__name__}: {e}"
         results.append(
             {"index": k, "op": op["op"], "ok": err is None, "error": err, "message": msg}
@@ -191,7 +191,7 @@ def run_case(case: Dict[str, Any], gen: Dict[str, Any], out: pathlib.Path) -> Di
     return {"case": case["name"], "ops": results}
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("usage: write_v2_python.py SPEC.json OUT_ROOT", file=sys.stderr)
         return 2

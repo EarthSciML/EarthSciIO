@@ -33,7 +33,6 @@ import hashlib
 import io
 import itertools
 import json
-import os
 import pathlib
 import zipfile
 
@@ -1771,7 +1770,7 @@ def build_geosfp_mixed_netcdf():
     # value self-encodes its indices; one cell INSIDE the named window is masked.
     scale, offset, fill = 0.01, 250.0, np.int16(-32767)
     t_raw = np.fromfunction(
-        lambda t, l, y, x: t * 1000 + l * 100 + y * 10 + x, (nt, nlev, nlat, nlon), dtype=int
+        lambda t, lev, y, x: t * 1000 + lev * 100 + y * 10 + x, (nt, nlev, nlat, nlon), dtype=int
     ).astype("i2")
     t_raw[1, 2, 2, 4] = fill
     t_dec = t_raw.astype("f8") * scale + offset
@@ -1901,7 +1900,7 @@ def build_geosfp_named_zarr():
             cidx = [int(c) for c in key.split(".")]
             hit = all(ci in w for ci, w in zip(cidx, wanted))
             objects.append((f"{name}/{key}", enc if hit else poison, not hit))
-        full = np.fromfunction(lambda *g: fn(g), shape).astype("f8")
+        full = np.fromfunction(lambda *g, fn=fn: fn(g), shape).astype("f8")
         variables[name] = (full, tuple(dims), "float64", {})
     sizes = {"lev": 3, "lat": 4, "lon": 6}
     return objects, _fields_expected(variables, {}, GEOSFP_ZARR_WINDOW, sizes)
@@ -2340,45 +2339,45 @@ def main() -> None:
 
     nc_data, nc_expected, nc_decode = build_era5_netcdf()
     summary.append(
-        ("era5-grid-sub-tile",)
-        + emit_case(
+        (
             "era5-grid-sub-tile",
-            loader="era5",
-            kind="grid",
-            fmt="netcdf",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
-            ext="nc",
-            data=nc_data,
-            expected=nc_expected,
-            decode=nc_decode,
-            select={"all_records": True},
-            notes=(
-                "ERA5-like 2x3x3 sub-tile. t2m is int16-packed (scale_factor/"
+            *emit_case(
+                "era5-grid-sub-tile",
+                loader="era5",
+                kind="grid",
+                fmt="netcdf",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
+                ext="nc",
+                data=nc_data,
+                expected=nc_expected,
+                decode=nc_decode,
+                select={"all_records": True},
+                notes="ERA5-like 2x3x3 sub-tile. t2m is int16-packed (scale_factor/"
                 "add_offset/_FillValue) -> decoded float64; one masked cell. sp "
-                "is plain float64. Pins CF scale/offset/fill decode parity."
+                "is plain float64. Pins CF scale/offset/fill decode parity.",
             ),
         )
     )
 
     summary.append(
-        ("era5-window-slice",)
-        + emit_case(
+        (
             "era5-window-slice",
-            loader="era5",
-            kind="grid",
-            fmt="netcdf",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
-            ext="nc",
-            data=nc_data,
-            expected=window_era5_expected(nc_expected),
-            decode=dict(nc_decode, decode_time_select=True),
-            select=ERA5_WINDOW,
-            notes=(
-                "The SAME blob and cache key as era5-grid-sub-tile, read through a "
+            *emit_case(
+                "era5-window-slice",
+                loader="era5",
+                kind="grid",
+                fmt="netcdf",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/era5/2018/11/20181108.nc",
+                ext="nc",
+                data=nc_data,
+                expected=window_era5_expected(nc_expected),
+                decode=dict(nc_decode, decode_time_select=True),
+                select=ERA5_WINDOW,
+                notes="The SAME blob and cache key as era5-grid-sub-tile, read through a "
                 "decode-time orthogonal `select`: lat {slice:[1,3]}, lon "
                 '{indices:[0,2]}, time "all". Pins that a whole-file reader '
                 "materialises only the hyperslab and returns arrays identical to "
@@ -2387,29 +2386,29 @@ def main() -> None:
                 "axis is the trap), that the masked cell still decodes to NaN "
                 "inside the window, and that the time axis is untouched and raw. "
                 "One blob, one sha256(url) key: a selection changes the decode, "
-                "never the fetch."
+                "never the fetch.",
             ),
         )
     )
 
     text_data, text_expected, text_decode = build_text_netcdf()
     summary.append(
-        ("station-labels-text",)
-        + emit_case(
+        (
             "station-labels-text",
-            loader="openaq",
-            kind="points",
-            fmt="netcdf",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
-            ext="nc",
-            data=text_data,
-            expected=text_expected,
-            decode=text_decode,
-            select={"all_records": True},
-            notes=(
-                "NetCDF TEXT variables in all three of their readings, in ONE blob "
+            *emit_case(
+                "station-labels-text",
+                loader="openaq",
+                kind="points",
+                fmt="netcdf",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
+                ext="nc",
+                data=text_data,
+                expected=text_expected,
+                decode=text_decode,
+                select={"all_records": True},
+                notes="NetCDF TEXT variables in all three of their readings, in ONE blob "
                 "(spec/conformance.md §3). `char site_id(site, strlen)` on a "
                 "PRIVATE strlen is 4 STRINGS on dims [site] — the length dimension "
                 "is consumed, trailing NULs are stripped, a trailing SPACE is data "
@@ -2419,28 +2418,28 @@ def main() -> None:
                 "EMPTY string. `char title(titlelen)` alone on a private dimension "
                 "is a SCALAR string (dims []). The rule is about the FILE, not the "
                 "variable: the same spelling means different things here depending "
-                "on what else uses the dimension."
+                "on what else uses the dimension.",
             ),
         )
     )
 
     summary.append(
-        ("station-labels-window",)
-        + emit_case(
+        (
             "station-labels-window",
-            loader="openaq",
-            kind="points",
-            fmt="netcdf",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
-            ext="nc",
-            data=text_data,
-            expected=window_text_expected(text_expected),
-            decode=dict(text_decode, decode_time_select=True),
-            select=TEXT_WINDOW,
-            notes=(
-                "The SAME blob and cache key as station-labels-text, read through a "
+            *emit_case(
+                "station-labels-window",
+                loader="openaq",
+                kind="points",
+                fmt="netcdf",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/openaq/stations/monitor-metadata.nc",
+                ext="nc",
+                data=text_data,
+                expected=window_text_expected(text_expected),
+                decode=dict(text_decode, decode_time_select=True),
+                select=TEXT_WINDOW,
+                notes="The SAME blob and cache key as station-labels-text, read through a "
                 "ONE-axis decode-time `select` ({indices:[0,2]}). Pins that a text "
                 "field is windowed like any other — `site_id` and `flag` lose the "
                 "same cells `value` loses — and that the positional axis match is "
@@ -2448,80 +2447,80 @@ def main() -> None:
                 "dimensions, and the scalar `title` is RANK 0 and untouched. A "
                 "track that counted on-disk dimensions would bind this selector to "
                 '`titlelen` as well and hand back "h" for `title` — a wrong '
-                "STRING, invisible to every shape assertion."
+                "STRING, invisible to every shape assertion.",
             ),
         )
     )
 
     csv_data, csv_expected, csv_decode = build_openaq_csv()
     summary.append(
-        ("openaq-points-slice",)
-        + emit_case(
+        (
             "openaq-points-slice",
-            loader="openaq",
-            kind="points",
-            fmt="csv",
-            transport="file",
-            store="local",
-            resolved_url="https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv",
-            ext="csv",
-            data=csv_data,
-            expected=csv_expected,
-            decode=csv_decode,
-            select={"all_rows": True},
-            notes=(
-                "OpenAQ-like points CSV. Numeric columns -> float64 1-D arrays; "
+            *emit_case(
+                "openaq-points-slice",
+                loader="openaq",
+                kind="points",
+                fmt="csv",
+                transport="file",
+                store="local",
+                resolved_url="https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv",
+                ext="csv",
+                data=csv_data,
+                expected=csv_expected,
+                decode=csv_decode,
+                select={"all_rows": True},
+                notes="OpenAQ-like points CSV. Numeric columns -> float64 1-D arrays; "
                 "others -> string arrays. Second reader behind the FORMAT "
-                "registry; proves a non-NetCDF format plugs in unchanged."
+                "registry; proves a non-NetCDF format plugs in unchanged.",
             ),
         )
     )
 
     ff10_data, ff10_expected, ff10_decode = build_ff10_point()
     summary.append(
-        ("ff10-point-slice",)
-        + emit_case(
+        (
             "ff10-point-slice",
-            loader="nei2016",
-            kind="points",
-            fmt="ff10",
-            transport="file",
-            store="local",
-            resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
-            ext="csv",
-            data=ff10_data,
-            expected=ff10_expected,
-            decode=ff10_decode,
-            select={"all_rows": True},
-            notes=(
-                "FF10 point long-format slice (NEI 2016). '#' header skipped; fixed "
+            *emit_case(
+                "ff10-point-slice",
+                loader="nei2016",
+                kind="points",
+                fmt="ff10",
+                transport="file",
+                store="local",
+                resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/ff10_point.csv",
+                ext="csv",
+                data=ff10_data,
+                expected=ff10_expected,
+                decode=ff10_decode,
+                select={"all_rows": True},
+                notes="FF10 point long-format slice (NEI 2016). '#' header skipped; fixed "
                 "77-col FF10_POINT schema applied positionally; 42 numeric cols -> "
                 "float64 (blank->NaN), 35 ids/codes/text -> string; RFC-4180 quoted "
                 "FACILITY_NAME with an embedded comma. 3 rows share one stack, "
                 "differing only in POLID/ANN_VALUE (reader-only: no pivot/convert/"
-                "filter). member=null decodes the bare extracted CSV member."
+                "filter). member=null decodes the bare extracted CSV member.",
             ),
         )
     )
 
     zf_data, zf_expected, zf_decode = build_ff10_zip()
     summary.append(
-        ("ff10-zip-egu-glob",)
-        + emit_case(
+        (
             "ff10-zip-egu-glob",
-            loader="nei2016",
-            kind="points",
-            fmt="ff10",
-            transport="file",
-            store="local",
-            resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip",
-            ext="zip",
-            data=zf_data,
-            expected=zf_expected,
-            decode=zf_decode,
-            select={"all_rows": True},
-            notes=(
-                "EPA-2016fd-shaped zip of FF10 point members: two `*egu*` members "
+            *emit_case(
+                "ff10-zip-egu-glob",
+                loader="nei2016",
+                kind="points",
+                fmt="ff10",
+                transport="file",
+                store="local",
+                resolved_url="https://gaftp.epa.gov/air/emismod/2016/v1/2016fd/point/2016fd_inputs_point_mini.zip",
+                ext="zip",
+                data=zf_data,
+                expected=zf_expected,
+                decode=zf_decode,
+                select={"all_rows": True},
+                notes="EPA-2016fd-shaped zip of FF10 point members: two `*egu*` members "
                 "+ one excluded member + a glob-matching DIRECTORY placeholder "
                 "entry (`point_egu/`, ignored — file members only), each member "
                 "with a `#` comment block AND a non-comment `country_cd,…` "
@@ -2530,86 +2529,86 @@ def main() -> None:
                 "member-name concatenation: alpha rows then beta) and "
                 "skip_header_row (exactly one asserted header line dropped per "
                 "member). The blob is the WHOLE zip; member selection is reader "
-                "config, never part of the cache key."
+                "config, never part of the cache key.",
             ),
         )
     )
 
     zarr_objects, zarr_expected = build_zarr_store()
     summary.append(
-        ("isrm-zarr-tile",)
-        + emit_zarr_case(
+        (
             "isrm-zarr-tile",
-            loader="isrm",
-            base_url=ZARR_BASE_URL,
-            objects=zarr_objects,
-            variables=["field3d", "pop1d"],
-            expected=zarr_expected,
-            decode={
-                "compressor": "blosc-lz4-shuffle",
-                "fill_to_nan": False,
-                "order": "C",
-                "zarr_format": 2,
-            },
-            select=ZARR_SELECT,
-            notes=(
-                "Synthetic Zarr v2 store. field3d [2,5,4] chunked [1,2,4] (partial "
+            *emit_zarr_case(
+                "isrm-zarr-tile",
+                loader="isrm",
+                base_url=ZARR_BASE_URL,
+                objects=zarr_objects,
+                variables=["field3d", "pop1d"],
+                expected=zarr_expected,
+                decode={
+                    "compressor": "blosc-lz4-shuffle",
+                    "fill_to_nan": False,
+                    "order": "C",
+                    "zarr_format": 2,
+                },
+                select=ZARR_SELECT,
+                notes="Synthetic Zarr v2 store. field3d [2,5,4] chunked [1,2,4] (partial "
                 "edge chunk on dim1); pop1d [8] chunked [8]. Orthogonal selection "
                 "layer=[1], y=[1,4], x=all fetches ONLY field3d/1.0.0 + field3d/"
                 "1.2.0 (2 of 6 chunks) — never layer 0, never the middle y-chunk "
                 "field3d/1.1.0; pop1d (rank 1) reads whole. fill_value 0.0 is real "
-                "data, NOT mapped to NaN. No coordinate arrays."
+                "data, NOT mapped to NaN. No coordinate arrays.",
             ),
         )
     )
 
     zp_objects, zp_expected = build_zarr_permuted()
     summary.append(
-        ("permuted-order-tile",)
-        + emit_zarr_case(
+        (
             "permuted-order-tile",
-            loader="isrm",
-            base_url=ZARR_PERMUTED_URL,
-            objects=zp_objects,
-            variables=["sr"],
-            expected=zp_expected,
-            decode={
-                "compressor": "blosc-lz4-shuffle",
-                "fill_to_nan": False,
-                "order": "C",
-                "zarr_format": 2,
-            },
-            select=ZARR_PERMUTED_SELECT,
-            notes=(
-                "Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. "
+            *emit_zarr_case(
+                "permuted-order-tile",
+                loader="isrm",
+                base_url=ZARR_PERMUTED_URL,
+                objects=zp_objects,
+                variables=["sr"],
+                expected=zp_expected,
+                decode={
+                    "compressor": "blosc-lz4-shuffle",
+                    "fill_to_nan": False,
+                    "order": "C",
+                    "zarr_format": 2,
+                },
+                select=ZARR_PERMUTED_SELECT,
+                notes="Synthetic Zarr v2 store pinning ORDERED lazy orthogonal selection. "
                 "sr [3,50,4] chunked [1,10,4]; select layer=[0], source=[24,2,9,6] "
                 "(NON-CONTIGUOUS, PERMUTED — not sorted), receptor=all fetches ONLY "
                 "sr/0.0.0 + sr/0.2.0 (2 of 15 chunks) and returns the source axis in "
                 "[24,2,9,6] order EXACTLY (a reader that sorted the indices would "
                 "return [2,6,9,24] and fail). Proven byte-identical across "
-                "Python/Julia/Rust — the Phase-1 3-way selection conformance gate."
+                "Python/Julia/Rust — the Phase-1 3-way selection conformance gate.",
             ),
         )
     )
 
     shp_data, shp_expected, shp_decode = build_shapefile_zip()
     summary.append(
-        ("shapefile-polygon-zip",)
-        + emit_case(
+        (
             "shapefile-polygon-zip",
-            loader="emis_polygons",
-            kind="points",
-            fmt="shapefile",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/fixtures/emis_polygons.zip",
-            ext="zip",
-            data=shp_data,
-            expected=shp_expected,
-            decode=shp_decode,
-            select={"all_records": True},
-            notes=(
-                "ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. "
+            *emit_case(
+                "shapefile-polygon-zip",
+                loader="emis_polygons",
+                kind="points",
+                fmt="shapefile",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/fixtures/emis_polygons.zip",
+                ext="zip",
+                data=shp_data,
+                expected=shp_expected,
+                decode=shp_decode,
+                select={"all_records": True},
+                notes="ESRI shapefile (Polygon) zipped with its .shx/.dbf/.prj sidecars. "
                 "Pins the whole reader contract in one layer: ONE ROW PER PART "
                 "(record 1 is a mainland + an island, so 4 live records decode to "
                 "5 rows with the .dbf attributes replicated); the esm-spec 8.6.1 "
@@ -2621,30 +2620,30 @@ def main() -> None:
                 "string, N -> float64 with a blank -> NaN, L -> bool, and a C code "
                 "column forced to float64 by numeric_columns. shape_type/crs_wkt "
                 "are one-element `meta` string fields, not field attrs, because "
-                "the Rust NativeField has none and equality compares fields."
+                "the Rust NativeField has none and equality compares fields.",
             ),
         )
     )
 
     pq_data, pq_expected, pq_decode = build_parquet_moves()
     summary.append(
-        ("moves-rate-table-parquet",)
-        + emit_case(
+        (
             "moves-rate-table-parquet",
-            loader="moves",
-            kind="points",
-            fmt="parquet",
-            transport="file",
-            store="local",
-            resolved_url="https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
-            ext="parquet",
-            data=pq_data,
-            expected=pq_expected,
-            decode=pq_decode,
-            select={"all_rows": True},
-            variables=PQ_PROJECTION,
-            notes=(
-                "MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every "
+            *emit_case(
+                "moves-rate-table-parquet",
+                loader="moves",
+                kind="points",
+                fmt="parquet",
+                transport="file",
+                store="local",
+                resolved_url="https://data.earthsci.dev/moves/2024/MOVESExecution/emissionrate.parquet",
+                ext="parquet",
+                data=pq_data,
+                expected=pq_expected,
+                decode=pq_decode,
+                select={"all_rows": True},
+                variables=PQ_PROJECTION,
+                notes="MOVES-shaped Parquet rate table, 6 rows in 2 ROW GROUPS (so every "
                 "track concatenates two batches and the row order across the seam "
                 "is pinned), snappy-compressed. One column per supported Arrow "
                 "family: the narrow/wide integer split (uint8 255 read unsigned, "
@@ -2665,29 +2664,29 @@ def main() -> None:
                 "`internalKey` (binary, no rank-1 reading) are both left out. "
                 "Deliberately carries NO nested column, ms-aligned timestamps "
                 "only, and decimals inside Dec64's exact range — the three "
-                "Parquet2.jl limits spec/conformance.md §3 records."
+                "Parquet2.jl limits spec/conformance.md §3 records.",
             ),
         )
     )
 
     tif_data, tif_expected, tif_decode = build_geotiff()
     summary.append(
-        ("landfire-raster-tile",)
-        + emit_case(
+        (
             "landfire-raster-tile",
-            loader="landfire",
-            kind="grid",
-            fmt="geotiff",
-            transport="file",
-            store="local",
-            resolved_url=TIF_URL,
-            ext="tif",
-            data=tif_data,
-            expected=tif_expected,
-            decode=tif_decode,
-            select={"all_cells": True},
-            notes=(
-                "Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the "
+            *emit_case(
+                "landfire-raster-tile",
+                loader="landfire",
+                kind="grid",
+                fmt="geotiff",
+                transport="file",
+                store="local",
+                resolved_url=TIF_URL,
+                ext="tif",
+                data=tif_data,
+                expected=tif_expected,
+                decode=tif_decode,
+                select={"all_cells": True},
+                notes="Single-band north-up GEOGRAPHIC GeoTIFF, 3(lat) x 4(lon), the "
                 "shape the LANDFIRE / USGS 3DEP ImageServer `exportImage` "
                 "responses have. Pins the georef contract the three readers each "
                 "implement separately and had never been compared on: Band1 "
@@ -2699,7 +2698,7 @@ def main() -> None:
                 "GDAL_NODATA -> NaN on an INTERIOR cell; and int16 storage "
                 "widened to float64. Single-band on purpose — multi-band "
                 "interleaving is not agreed across tifffile/rasterio/the Rust "
-                "tiff crate, so pinning it here would invent a convention."
+                "tiff crate, so pinning it here would invent a convention.",
             ),
         )
     )
@@ -2739,60 +2738,62 @@ def main() -> None:
             "read sliced afterwards."
         ),
     )
-    summary.append(("named-window-mixed-rank",) + mixed)
+    summary.append(("named-window-mixed-rank", *mixed))
 
     summary.append(
-        ("window-wrap",)
-        + emit_case(
+        (
             "window-wrap",
-            loader="geosfp",
-            kind="grid",
-            fmt="netcdf",
-            transport="file",
-            store="local",
-            resolved_url=GEOSFP_MIXED_URL,
-            ext="nc",
-            data=mixed_data,
-            expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_WRAP_WINDOW, mixed_sizes),
-            decode=mixed_decode,
-            select=GEOSFP_WRAP_WINDOW,
-            notes=(
-                "The SAME blob and cache key as named-window-mixed-rank under "
+            *emit_case(
+                "window-wrap",
+                loader="geosfp",
+                kind="grid",
+                fmt="netcdf",
+                transport="file",
+                store="local",
+                resolved_url=GEOSFP_MIXED_URL,
+                ext="nc",
+                data=mixed_data,
+                expected=_fields_expected(
+                    mixed_vars, mixed_coords, GEOSFP_WRAP_WINDOW, mixed_sizes
+                ),
+                decode=mixed_decode,
+                select=GEOSFP_WRAP_WINDOW,
+                notes="The SAME blob and cache key as named-window-mixed-rank under "
                 "{dims: {lon: {indices: [3, 4, 0, 1]}}}: a window ACROSS the periodic "
                 "longitude seam (216, 288, 0, 72), returned in the order given -- the "
                 "spelling a rank whose halo wraps uses. Applied to `lon` and every "
-                "field on it; `lon_edge` is a different dimension and stays whole."
+                "field on it; `lon_edge` is a different dimension and stays whole.",
             ),
         )
     )
 
     gz_objects, gz_expected = build_geosfp_named_zarr()
     summary.append(
-        ("named-window-zarr",)
-        + emit_zarr_case(
+        (
             "named-window-zarr",
-            loader="geosfp",
-            base_url=GEOSFP_ZARR_URL,
-            objects=gz_objects,
-            variables=["T3", "PS2"],
-            expected=gz_expected,
-            decode={
-                "compressor": "blosc-lz4-shuffle",
-                "fill_to_nan": False,
-                "order": "C",
-                "zarr_format": 2,
-                "select_form": "dims",
-            },
-            select=GEOSFP_ZARR_WINDOW,
-            notes=(
-                "Store-backed Zarr v2 store read through a NAMED-dimension select: "
+            *emit_zarr_case(
+                "named-window-zarr",
+                loader="geosfp",
+                base_url=GEOSFP_ZARR_URL,
+                objects=gz_objects,
+                variables=["T3", "PS2"],
+                expected=gz_expected,
+                decode={
+                    "compressor": "blosc-lz4-shuffle",
+                    "fill_to_nan": False,
+                    "order": "C",
+                    "zarr_format": 2,
+                    "select_form": "dims",
+                },
+                select=GEOSFP_ZARR_WINDOW,
+                notes="Store-backed Zarr v2 store read through a NAMED-dimension select: "
                 "T3 [lev,lat,lon] chunked [1,2,3] and PS2 [lat,lon] chunked [2,3] "
                 "under {lev: all, lat: {slice:[2,4]}, lon: {indices:[5,3]}} -- one "
                 "window, two ranks. It intersects T3/0.1.1, T3/1.1.1, T3/2.1.1 and "
                 "PS2/1.1 only; the other 12 chunk objects are POISONED (committed, "
                 "manifest-valid, a well-formed blosc container of the WRONG size), so "
                 "a reader that fetches one fails rather than quietly discarding it. "
-                "fill_value 0.0 is not NaN; no coordinate arrays."
+                "fill_value 0.0 is not NaN; no coordinate arrays.",
             ),
         )
     )

@@ -25,17 +25,17 @@ from .s3 import S3Store, S3Transport
 from .zarr import ZarrReader
 
 __all__ = [
-    # stubs
-    "S3Transport",
-    "S3Store",
-    "ZarrReader",
-    "register_stub_backends",
+    "CdsTransport",
+    "FileTransport",
     # active core backends
     "HttpTransport",
-    "FileTransport",
-    "CdsTransport",
     "LocalStore",
+    "S3Store",
+    # stubs
+    "S3Transport",
+    "ZarrReader",
     "register_active_backends",
+    "register_stub_backends",
 ]
 
 #: Epic that tracks the real implementations of the stubs registered here.

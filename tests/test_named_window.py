@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from earthsciio import Cache, DimWindow, NetCDFReader
-from earthsciio.selection import _WindowUnion, _select_axes, _select_dims
+from earthsciio.selection import _select_axes, _select_dims, _WindowUnion
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = REPO_ROOT / "conformance" / "corpus"
@@ -240,7 +240,7 @@ def test_netcdf_named_window_checks_against_the_projected_fields(offline_cache):
     full = _read(offline_cache, STATIONS_URL)
     got = _read(offline_cache, STATIONS_URL, {"dims": {"site": [2, 0]}}, ["value"])
     assert np.array_equal(got["value"].data, full["value"].data[[2, 0]], equal_nan=True)
-    with pytest.raises(ValueError, match="'site'.*present are \\[\\]"):
+    with pytest.raises(ValueError, match=r"'site'.*present are \[\]"):
         _read(offline_cache, STATIONS_URL, {"dims": {"site": [0]}}, ["title"])
 
 
@@ -333,14 +333,14 @@ def test_zarr_a_window_that_overreaches_hits_the_poison(offline_cache):
 
     case = _case("named-window-zarr")
     reader = ZarrReader()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - the poison's error type is the codec's
         reader.read_store(
             offline_cache,
             case["resolved_url"],
             case["variables"],
             select={"dims": {"lat": {"slice": [0, 4]}}},
         )
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - the poison's error type is the codec's
         reader.read_store(offline_cache, case["resolved_url"], case["variables"])
 
 

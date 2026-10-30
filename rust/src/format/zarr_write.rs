@@ -310,7 +310,8 @@ where
                 schema.time_dim
             )));
         }
-        if let Some(i) = (1..tv.len()).find(|&i| !(tv[i] > tv[i - 1])) {
+        // NaN was rejected above, so `<=` is the exact negation of `>` here.
+        if let Some(i) = (1..tv.len()).find(|&i| tv[i] <= tv[i - 1]) {
             return Err(err(format!(
                 "time coordinate '{}' must be strictly increasing: value {i} = {} is not after value {} = {}",
                 schema.time_dim,

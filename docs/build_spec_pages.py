@@ -61,7 +61,9 @@ def main() -> None:
     )
     for weight, stem in enumerate(names, start=1):
         text = (SPEC / f"{stem}.md").read_text(encoding="utf-8")
-        title = next((l[2:].strip() for l in text.splitlines() if l.startswith("# ")), stem)
+        title = next(
+            (line[2:].strip() for line in text.splitlines() if line.startswith("# ")), stem
+        )
         body = re.sub(r"\A# .*\n", "", text, count=1)
         front = f'---\ntitle: "{title.replace(chr(34), chr(39))}"\nweight: {weight}\n---\n\n'
         note = f"*Source of truth: [`spec/{stem}.md`]({GITHUB}/spec/{stem}.md).*\n\n"

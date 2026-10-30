@@ -130,13 +130,13 @@ def test_a_bare_shp_blob_decodes_geometry_without_attributes(tmp_path):
 def test_the_member_seam_finds_names_and_reports_the_ambiguous_cases(tmp_path):
     two = {**_write_layer(stem="a/one"), **_write_layer(stem="b/two")}
     path = _zip(tmp_path, two, name="two.zip")
-    with pytest.raises(KeyError, match="2 .shp members"):
+    with pytest.raises(KeyError, match=r"2 \.shp members"):
         ShapefileReader().read_native(path)
     ds = ShapefileReader().read_native(path, member="b/two.shp")
     assert list(ds.variables["NAME"].data) == ["one", "two", "two"]
     with pytest.raises(KeyError, match="not in the archive"):
         ShapefileReader().read_native(path, member="b/nope.shp")
-    with pytest.raises(KeyError, match="no .shp member"):
+    with pytest.raises(KeyError, match=r"no \.shp member"):
         ShapefileReader().read_native(_zip(tmp_path, {"readme.txt": b"hi"}, name="empty.zip"))
 
 
@@ -157,7 +157,7 @@ def test_numeric_columns_forces_a_text_code_column_to_float(tmp_path):
     assert list(text.variables["GEOID"].data) == ["01001"]
     numeric = ShapefileReader().read_native(path, numeric_columns=["GEOID"])
     assert numeric.variables["GEOID"].data.tolist() == [1001.0]
-    with pytest.raises(KeyError, match="no such .dbf column"):
+    with pytest.raises(KeyError, match=r"no such \.dbf column"):
         ShapefileReader().read_native(path, numeric_columns=["NOPE"])
 
 

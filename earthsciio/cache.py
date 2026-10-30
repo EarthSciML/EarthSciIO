@@ -39,8 +39,8 @@ from __future__ import annotations
 
 import os
 import pathlib
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
 
 from . import validate
 from .auth import coerce_auth
@@ -77,7 +77,7 @@ class CacheEntry:
 
     key: str
     path: pathlib.Path
-    manifest: Optional[Manifest]
+    manifest: Manifest | None
     status: str
 
 
@@ -118,12 +118,12 @@ class Cache:
         self,
         store=None,
         *,
-        root: Optional[os.PathLike] = None,
+        root: os.PathLike | None = None,
         store_name: str = "local",
-        offline: Optional[bool] = None,
+        offline: bool | None = None,
         auth=None,
         verify: bool = False,
-        revalidate_file: Optional[bool] = None,
+        revalidate_file: bool | None = None,
     ) -> None:
         if store is None:
             store = store_registry.create(store_name, root=root)
@@ -155,10 +155,10 @@ class Cache:
         self,
         resolved_url: str,
         *,
-        source_loader: Optional[str] = None,
-        auth_realm: Optional[str] = None,
-        temporal: Optional[validate.Temporal] = None,
-        expected_checksum: Optional[str] = None,
+        source_loader: str | None = None,
+        auth_realm: str | None = None,
+        temporal: validate.Temporal | None = None,
+        expected_checksum: str | None = None,
         mirrors: Sequence[str] = (),
     ) -> CacheEntry:
         """Return a :class:`CacheEntry` for ``resolved_url``, fetching if needed.
@@ -207,7 +207,7 @@ class Cache:
     # ------------------------------------------------------------- hit check
     def _try_hit(
         self, resolved_url, key, temporal, expected_checksum, mirrors=()
-    ) -> Optional[CacheEntry]:
+    ) -> CacheEntry | None:
         blob = self.store.get_blob(key)
         if blob is None:
             return None
@@ -264,11 +264,11 @@ class Cache:
         resolver = self.auth.resolve(auth_realm)
 
         candidates = [resolved_url, *mirrors]
-        last_err: Optional[BaseException] = None
+        last_err: BaseException | None = None
         # Every candidate's failure, so FetchError can distinguish a definitive
         # absence (every candidate answered 404) from an unknown outcome (any
         # transient failure among them) — see TransportError.not_found.
-        errs: List[BaseException] = []
+        errs: list[BaseException] = []
         for candidate in candidates:
             try:
                 transport = transport_registry.create(scheme_of(candidate))
@@ -405,7 +405,7 @@ class Cache:
             )
 
 
-def local_source_path(resolved_url: str) -> Optional[str]:
+def local_source_path(resolved_url: str) -> str | None:
     """The local path a ``file://`` URL names, or ``None`` for any other scheme.
 
     It goes through the transport's own :func:`~earthsciio.transport.file_url_to_path`

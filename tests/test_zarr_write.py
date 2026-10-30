@@ -24,8 +24,8 @@ from earthsciio.backends.zarr import ZarrReader
 from earthsciio.backends.zarr_write import (
     BLOSC_CHECKPOINT,
     BLOSC_DIAGNOSTIC,
-    ZSTD_WASM,
     OUTPUT_MANIFEST_SCHEMA,
+    ZSTD_WASM,
     OutputSchema,
     OutputVar,
     ZarrWriter,

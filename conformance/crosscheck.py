@@ -47,7 +47,7 @@ import json
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 ATOL = 1e-6
 RTOL = 1e-9
@@ -63,9 +63,9 @@ ALL_LANGS = ("python", "julia", "rust")
 # --------------------------------------------------------------------------- #
 
 
-def _flat(x: Any) -> List[Any]:
+def _flat(x: Any) -> list[Any]:
     """Row-major flatten of a nested list; scalars/None pass through."""
-    out: List[Any] = []
+    out: list[Any] = []
 
     def rec(y: Any) -> None:
         if isinstance(y, list):
@@ -78,7 +78,7 @@ def _flat(x: Any) -> List[Any]:
     return out
 
 
-def _values_equal(got: List[Any], exp: List[Any], dtype: str) -> Optional[str]:
+def _values_equal(got: list[Any], exp: list[Any], dtype: str) -> str | None:
     """Compare two flat value lists by dtype; ``None`` ⇒ equal, else an error str.
 
     ``None`` encodes a fill/NaN cell and matches only ``None``. Strings and
@@ -111,7 +111,7 @@ def _values_equal(got: List[Any], exp: List[Any], dtype: str) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 
 
-def load_oracle() -> Dict[str, Dict[str, Any]]:
+def load_oracle() -> dict[str, dict[str, Any]]:
     """``{case_id: {format, variables{name->field}, coords{name->field}}}`` from
     the committed corpus. A field is ``{dtype, dims?, shape?, data(flat),
     units?, calendar?}`` — coords carry no dims/shape in the corpus."""
@@ -124,7 +124,7 @@ def load_oracle() -> Dict[str, Dict[str, Any]]:
     # real divergence elsewhere invisible. Unset ⇒ every case (what CI runs).
     raw = os.environ.get("ESIO_CONFORMANCE_CASES", "").strip()
     only = {c.strip() for c in raw.split(",") if c.strip()} if raw else None
-    oracle: Dict[str, Dict[str, Any]] = {}
+    oracle: dict[str, dict[str, Any]] = {}
     for entry in index["cases"]:
         case = json.loads((CORPUS / entry["file"]).read_text())
         if only is not None and case["id"] not in only:
@@ -158,7 +158,7 @@ def load_oracle() -> Dict[str, Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def _fill_value(field: Dict[str, Any]) -> Optional[float]:
+def _fill_value(field: dict[str, Any]) -> float | None:
     """A field's surviving fill/missing sentinel as one number, or ``None``.
 
     ``spec/conformance.md`` §3 reports this datum in three spellings — Rust's
@@ -173,7 +173,7 @@ def _fill_value(field: Dict[str, Any]) -> Optional[float]:
     return None if fv is None else float(fv)
 
 
-def _cmp_fill_value(a: Dict[str, Any], b: Dict[str, Any], label: str, bname: str) -> List[str]:
+def _cmp_fill_value(a: dict[str, Any], b: dict[str, Any], label: str, bname: str) -> list[str]:
     """Fill-value agreement. A track that DROPS a declared sentinel while another
     reports it is exactly the failure §3 warns about: invisible until a document
     reads a fill-bearing integer column and gets a real value where a missing one
@@ -184,10 +184,10 @@ def _cmp_fill_value(a: Dict[str, Any], b: Dict[str, Any], label: str, bname: str
     return []
 
 
-def _cmp_against_oracle(got: Dict[str, Any], exp: Dict[str, Any], label: str) -> List[str]:
+def _cmp_against_oracle(got: dict[str, Any], exp: dict[str, Any], label: str) -> list[str]:
     """One decoded dump field vs an oracle field. dims/shape checked only when the
     oracle pins them (corpus variables do; coords don't)."""
-    errs: List[str] = []
+    errs: list[str] = []
     if got["dtype"] != exp["dtype"]:
         errs.append(f"{label}: dtype {got['dtype']} != oracle {exp['dtype']}")
     if exp.get("dims") is not None and got.get("dims") != exp["dims"]:
@@ -204,9 +204,9 @@ def _cmp_against_oracle(got: Dict[str, Any], exp: Dict[str, Any], label: str) ->
     return errs
 
 
-def _cmp_two_fields(a: Dict[str, Any], b: Dict[str, Any], label: str) -> List[str]:
+def _cmp_two_fields(a: dict[str, Any], b: dict[str, Any], label: str) -> list[str]:
     """Two decoded dump fields (full structural equality, both carry dims/shape)."""
-    errs: List[str] = []
+    errs: list[str] = []
     if a["dtype"] != b["dtype"]:
         errs.append(f"{label}: dtype {a['dtype']} != {b['dtype']}")
     if a.get("dims") != b.get("dims"):
@@ -223,10 +223,10 @@ def _cmp_two_fields(a: Dict[str, Any], b: Dict[str, Any], label: str) -> List[st
     return errs
 
 
-def _fields(case_entry: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def _fields(case_entry: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Flatten a decoded dump case to ``{'<kind>:<name>': field}`` so variables and
     coords compare under one namespace."""
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for name, f in case_entry.get("variables", {}).items():
         out[f"var:{name}"] = f
     for name, f in case_entry.get("coords", {}).items():
@@ -239,7 +239,7 @@ def _fields(case_entry: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def _decoders(dumps: Dict[str, Any], case_id: str) -> Tuple[List[str], List[str]]:
+def _decoders(dumps: dict[str, Any], case_id: str) -> tuple[list[str], list[str]]:
     """``(decoded_langs, skipped_langs)`` for a case, in canonical lang order."""
     decoded, skipped = [], []
     for lang in ALL_LANGS:
@@ -256,8 +256,8 @@ def _decoders(dumps: Dict[str, Any], case_id: str) -> Tuple[List[str], List[str]
     return decoded, skipped
 
 
-def crosscheck(dump_paths: List[str]) -> int:
-    dumps: Dict[str, Any] = {}
+def crosscheck(dump_paths: list[str]) -> int:
+    dumps: dict[str, Any] = {}
     for p in dump_paths:
         d = json.loads(pathlib.Path(p).read_text())
         lang = d["language"]
@@ -266,7 +266,7 @@ def crosscheck(dump_paths: List[str]) -> int:
             return 1
         dumps[lang] = d
 
-    present = [l for l in ALL_LANGS if l in dumps]
+    present = [lang for lang in ALL_LANGS if lang in dumps]
     if len(present) < 2:
         print(f"ERROR: need ≥2 language dumps to cross-check, got {present}")
         return 1
@@ -282,7 +282,7 @@ def crosscheck(dump_paths: List[str]) -> int:
     print()
 
     failures = 0
-    all_three_cases: List[str] = []
+    all_three_cases: list[str] = []
 
     for case_id, ocase in oracle.items():
         fmt = ocase["format"]
@@ -317,7 +317,7 @@ def crosscheck(dump_paths: List[str]) -> int:
         oracle_fields.update({f"coord:{n}": v for n, v in ocase["coords"].items()})
         for lang in decoded:
             fields = _fields(dumps[lang]["cases"][case_id])
-            errs: List[str] = []
+            errs: list[str] = []
             for key, exp in oracle_fields.items():
                 if key not in fields:
                     errs.append(f"{key}: missing from {lang} output")
@@ -353,7 +353,7 @@ def crosscheck(dump_paths: List[str]) -> int:
 
         if len(decoded) == 1:
             print(f"  note: only {decoded[0]} decoded this case — no cross-language check possible")
-        if all(l in decoded for l in ALL_LANGS):
+        if all(lang in decoded for lang in ALL_LANGS):
             all_three_cases.append(case_id)
         print()
 
@@ -375,7 +375,7 @@ def crosscheck(dump_paths: List[str]) -> int:
     return 0
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
         print("error: provide ≥2 dump files", file=sys.stderr)

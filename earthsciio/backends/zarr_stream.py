@@ -50,9 +50,10 @@ import json
 import math
 import re
 import struct
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -77,15 +78,15 @@ __all__ = [
     "IndexedTime",
     "OutputSchema",
     "OutputVar",
-    "ZarrWriter",
     "ZarrStreamHandle",
+    "ZarrWriter",
     "open_writer",
-    "resume_writer",
-    "schema_fingerprint",
+    "read_blob",
     "read_output_manifest",
     "read_record",
     "read_static",
-    "read_blob",
+    "resume_writer",
+    "schema_fingerprint",
 ]
 
 COMMIT_TOKEN_SCHEMA = "earthsciio/commit-token/v1"
@@ -96,9 +97,9 @@ MANIFEST_KEY = "output_manifest.json"
 _BLOB_KEY = re.compile(r"[A-Za-z0-9._-]+\Z")
 
 #: A region: ``{dim: (start, stop)}`` over non-time dims, 0-based half-open.
-Region = Dict[str, Tuple[int, int]]
+Region = dict[str, tuple[int, int]]
 #: A blob scope: ``"static"`` or ``("record", i)``.
-BlobScope = Union[str, Tuple[str, int]]
+BlobScope = Union[str, tuple[str, int]]
 
 
 # --- small helpers ----------------------------------------------------------- #
@@ -121,7 +122,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _norm_region(region: Optional[Any]) -> Region:
+def _norm_region(region: Any | None) -> Region:
     """Normalize a region to ``{dim: (start, stop)}`` sorted by dim name."""
     if region is None:
         return {}
@@ -133,7 +134,7 @@ def _norm_region(region: Optional[Any]) -> Region:
     return dict(sorted(out.items()))
 
 
-def _region_wire(region: Region) -> Dict[str, List[int]]:
+def _region_wire(region: Region) -> dict[str, list[int]]:
     """The wire form ``{"lat": [0, 48]}``, canonical order by dim name."""
     return {d: [a, b] for d, (a, b) in sorted(region.items())}
 
@@ -160,7 +161,7 @@ def _check_region(schema: OutputSchema, region: Region) -> None:
             )
 
 
-def _parse_scope(scope: BlobScope) -> Tuple[str, Optional[int]]:
+def _parse_scope(scope: BlobScope) -> tuple[str, int | None]:
     if scope == "static":
         return "static", None
     if (
@@ -173,19 +174,19 @@ def _parse_scope(scope: BlobScope) -> Tuple[str, Optional[int]]:
     raise ValueError(f"blob scope must be 'static' or ('record', i), got {scope!r}")
 
 
-def _blob_key(scope: str, record: Optional[int], writer: int, key: str) -> str:
+def _blob_key(scope: str, record: int | None, writer: int, key: str) -> str:
     if scope == "static":
         return f"blobs/static/{writer}/{key}"
     return f"blobs/record/{record}/{writer}/{key}"
 
 
-def _blob_sort(b: Tuple[str, Optional[int], Any, Any]):
-    return (b[0], -1 if b[1] is None else b[1]) + tuple(b[2:])
+def _blob_sort(b: tuple[str, int | None, Any, Any]):
+    return (b[0], -1 if b[1] is None else b[1], *b[2:])
 
 
-def _ranges(indices: Iterable[int]) -> List[List[int]]:
+def _ranges(indices: Iterable[int]) -> list[list[int]]:
     """Sorted indices -> disjoint half-open ``[[start, stop), ...]`` ranges."""
-    out: List[List[int]] = []
+    out: list[list[int]] = []
     for i in sorted(indices):
         if out and out[-1][1] == i:
             out[-1][1] = i + 1
@@ -194,7 +195,7 @@ def _ranges(indices: Iterable[int]) -> List[List[int]]:
     return out
 
 
-def _codec_dict(profile: str) -> Dict[str, Any]:
+def _codec_dict(profile: str) -> dict[str, Any]:
     c = _profile(profile)
     if isinstance(c, ZstdProfile):
         return {"id": "zstd", "level": c.level, "checksum": c.checksum}
@@ -243,7 +244,7 @@ def _open_read_store(base_url: str):
     return LocalStore(path, read_only=True)
 
 
-def _get_bytes(store, key: str) -> Optional[bytes]:
+def _get_bytes(store, key: str) -> bytes | None:
     from zarr.core.buffer import default_buffer_prototype
     from zarr.core.sync import sync
 
@@ -258,7 +259,7 @@ def _put_bytes(store, key: str, data: bytes) -> None:
     sync(store.set(key, default_buffer_prototype().buffer.from_bytes(data)))
 
 
-def _read_manifest(store) -> Optional[Dict[str, Any]]:
+def _read_manifest(store) -> dict[str, Any] | None:
     raw = _get_bytes(store, MANIFEST_KEY)
     return None if raw is None else json.loads(raw)
 
@@ -310,7 +311,7 @@ def _validate_schema(schema: OutputSchema) -> None:
             raise ValueError(
                 f"shard_shape[{d}]={s} is not a nonzero multiple of chunk_shape[{d}]={c}"
             )
-    names: Set[str] = set()
+    names: set[str] = set()
     for kind, entries in (("streaming var", schema.vars), ("static", schema.statics)):
         for nm, ov in entries:
             if nm in names or nm == schema.time_dim:
@@ -331,7 +332,7 @@ def _validate_schema(schema: OutputSchema) -> None:
         raise ValueError("the time coordinate of an indexed store is float64")
 
 
-def _schema_from_manifest(m: Dict[str, Any]) -> OutputSchema:
+def _schema_from_manifest(m: dict[str, Any]) -> OutputSchema:
     """Rebuild the stream schema from a v1 or v2 manifest (``spec/writer.md``
     §8.2). Coordinates and attrs other than the variables' are not needed by a
     joining / resuming writer and are left empty."""
@@ -382,10 +383,10 @@ class CommitToken:
     writer: int
     region: Region = field(default_factory=dict)
     fingerprint: str = ""
-    records: List[Tuple[int, float]] = field(default_factory=list)
-    statics: List[str] = field(default_factory=list)
-    blobs: List[Tuple[str, Optional[int], str]] = field(default_factory=list)
-    objects: List[str] = field(default_factory=list)
+    records: list[tuple[int, float]] = field(default_factory=list)
+    statics: list[str] = field(default_factory=list)
+    blobs: list[tuple[str, int | None, str]] = field(default_factory=list)
+    objects: list[str] = field(default_factory=list)
     schema: str = COMMIT_TOKEN_SCHEMA
 
     @property
@@ -393,7 +394,7 @@ class CommitToken:
         """No records, statics or blobs (``objects`` are advisory)."""
         return not (self.records or self.statics or self.blobs)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema,
             "writer": int(self.writer),
@@ -411,7 +412,7 @@ class CommitToken:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CommitToken":
+    def from_dict(cls, d: dict[str, Any]) -> CommitToken:
         if d.get("schema") != COMMIT_TOKEN_SCHEMA:
             raise ValueError(f"not a commit token: schema {d.get('schema')!r}")
         return cls(
@@ -432,13 +433,13 @@ class CommitToken:
         )
 
     @classmethod
-    def from_json(cls, text: Union[str, bytes, Dict[str, Any]]) -> "CommitToken":
+    def from_json(cls, text: str | bytes | dict[str, Any]) -> CommitToken:
         return cls.from_dict(text if isinstance(text, dict) else json.loads(text))
 
 
 # --- whole-shard writes ------------------------------------------------------ #
 
-_WHOLE_SHARD_PIPELINES: Dict[type, type] = {}
+_WHOLE_SHARD_PIPELINES: dict[type, type] = {}
 
 
 def _whole_shard_pipeline(p):
@@ -489,8 +490,8 @@ class _Geo:
         #: rounded-up array extent)
         self.hi_pad = [_roundup(h, s) for h, s in zip(self.hi, self.shard)]
         self.full_pad = [_roundup(n, s) for n, s in zip(self.full, self.shard)]
-        self.shape = tuple(h - l for l, h in zip(self.lo, self.hi))
-        self.pad_shape = tuple(h - l for l, h in zip(self.lo, self.hi_pad))
+        self.shape = tuple(hi - lo for lo, hi in zip(self.lo, self.hi))
+        self.pad_shape = tuple(hi - lo for lo, hi in zip(self.lo, self.hi_pad))
         self.partitioned = any(d in region for d in self.sdims)
         #: this writer passes the array (contributors: partitioned ones only)
         self.supplies = role != "contributor" or self.partitioned
@@ -504,14 +505,14 @@ class _Geo:
         else:
             self.writes = all(region[d][0] == 0 for d in region if d not in self.sdims)
 
-    def place(self, buf: np.ndarray, slot: Optional[int], arr: np.ndarray) -> None:
-        idx: List[Any] = [slice(0, n) for n in self.shape]
+    def place(self, buf: np.ndarray, slot: int | None, arr: np.ndarray) -> None:
+        idx: list[Any] = [slice(0, n) for n in self.shape]
         if self.ti is not None:
             idx.insert(self.ti, slot)
         buf[tuple(idx)] = arr
 
-    def selection(self, t0: Optional[int] = None, t1: Optional[int] = None):
-        sel: List[Any] = [slice(l, h) for l, h in zip(self.lo, self.hi_pad)]
+    def selection(self, t0: int | None = None, t1: int | None = None):
+        sel: list[Any] = [slice(lo, hi) for lo, hi in zip(self.lo, self.hi_pad)]
         if self.ti is not None:
             sel.insert(self.ti, slice(t0, t1))
         return tuple(sel)
@@ -522,8 +523,8 @@ class _Geo:
             shape.insert(self.ti, S)
         return np.zeros(shape, dtype=self.dtype)
 
-    def objects(self, ts: Optional[int] = None) -> List[str]:
-        axes = [range(l // s, h // s) for l, h, s in zip(self.lo, self.hi_pad, self.shard)]
+    def objects(self, ts: int | None = None) -> list[str]:
+        axes = [range(lo // s, hi // s) for lo, hi, s in zip(self.lo, self.hi_pad, self.shard)]
         if self.ti is not None:
             axes.insert(self.ti, [ts])
         return [f"{self.name}/c/" + "/".join(str(c) for c in cc) for cc in itertools.product(*axes)]
@@ -535,9 +536,9 @@ class _Shard:
 
     def __init__(self, ts: int) -> None:
         self.ts = ts
-        self.data: Dict[str, np.ndarray] = {}
-        self.times: Optional[np.ndarray] = None
-        self.filled: Optional[np.ndarray] = None
+        self.data: dict[str, np.ndarray] = {}
+        self.times: np.ndarray | None = None
+        self.filled: np.ndarray | None = None
         self.dirty = False
 
 
@@ -584,42 +585,42 @@ class ZarrStreamHandle:
         self._tgeo = _Geo(
             schema, schema.time_dim, OutputVar([schema.time_dim], schema.time_dtype), {}, role
         )
-        self._meta: Dict[str, Any] = {}
+        self._meta: dict[str, Any] = {}
 
         # committed state (authoritative for owner / single; a view otherwise)
         self.commit_seq = 0
         self.n_committed = 0  # append
-        self.committed_t: List[float] = []  # append (owner / single)
-        self.last_committed_t: Optional[float] = None
-        self.entries: List[Dict[str, Any]] = (  # indexed
+        self.committed_t: list[float] = []  # append (owner / single)
+        self.last_committed_t: float | None = None
+        self.entries: list[dict[str, Any]] = (  # indexed
             [{"t": float(t), "committed": False, "generation": 0} for t in self.times]
             if self.indexed
             else []
         )
         self.static_state = {nm: {"committed": False, "generation": 0} for nm, _ in schema.statics}
-        self.blobs: Set[Tuple[str, Optional[int], int, str]] = set()
-        self.writers: List[Dict[str, Any]] = [{"id": 0, "region": _region_wire(region)}]
-        self._base_manifest: Dict[str, Any] = {}
-        self._v1_time_shards: List[Dict[str, Any]] = []
+        self.blobs: set[tuple[str, int | None, int, str]] = set()
+        self.writers: list[dict[str, Any]] = [{"id": 0, "region": _region_wire(region)}]
+        self._base_manifest: dict[str, Any] = {}
+        self._v1_time_shards: list[dict[str, Any]] = []
         #: the store has a time-coordinate array (a Rust store may not)
         self.time_coord = True
         #: append, no time coordinate: the committed records' t cannot be read
         #: back, so a resumed handle keeps the manifest's time shards for the
         #: first ``_t_base`` records and ``committed_t`` holds the rest
         self._t_base = 0
-        self._prior_time_shards: List[Dict[str, Any]] = []
+        self._prior_time_shards: list[dict[str, Any]] = []
 
         # writing state
         self.next_index = 0
-        self.last_t: Optional[float] = None
-        self._touched: Set[int] = set()  # indexed: records written here
-        self._tokened_records: Set[int] = set()  # contributor view
-        self._tokened_statics: Set[str] = set()
-        self._pending_records: Dict[int, float] = {}
-        self._pending_statics: Set[str] = set()
-        self._pending_blobs: Set[Tuple[str, Optional[int], str]] = set()
-        self._pending_objects: Set[str] = set()
-        self._shards: Dict[int, _Shard] = {}
+        self.last_t: float | None = None
+        self._touched: set[int] = set()  # indexed: records written here
+        self._tokened_records: set[int] = set()  # contributor view
+        self._tokened_statics: set[str] = set()
+        self._pending_records: dict[int, float] = {}
+        self._pending_statics: set[str] = set()
+        self._pending_blobs: set[tuple[str, int | None, str]] = set()
+        self._pending_objects: set[str] = set()
+        self._shards: dict[int, _Shard] = {}
         self._closed = False
 
     # -- introspection ---------------------------------------------------- #
@@ -640,7 +641,7 @@ class ZarrStreamHandle:
 
     # -- internals: arrays ------------------------------------------------ #
 
-    def _mem_array(self, name: str, time_len: Optional[int] = None):
+    def _mem_array(self, name: str, time_len: int | None = None):
         """An UNSAVED array over ``name`` whose shape is the persisted one
         rounded up to whole shards (time: ``time_len``), so every shard this
         writer owns is a complete selection. Writing through it never touches
@@ -762,7 +763,7 @@ class ZarrStreamHandle:
             self._pending_objects.update(self._tgeo.objects(sh.ts))
         sh.dirty = False
 
-    def _check_arrays(self, arrays: Dict[str, Any], geos: Sequence[_Geo]) -> Dict[str, np.ndarray]:
+    def _check_arrays(self, arrays: dict[str, Any], geos: Sequence[_Geo]) -> dict[str, np.ndarray]:
         out = {}
         by_name = {g.name: g for g in geos}
         for nm in arrays:
@@ -800,7 +801,7 @@ class ZarrStreamHandle:
                 f"region {_region_wire(self.region)}"
             )
 
-    def _put_record(self, i: int, t: float, arrays: Dict[str, Any]) -> None:
+    def _put_record(self, i: int, t: float, arrays: dict[str, Any]) -> None:
         data = self._check_arrays(arrays, self.vars)
         ts, k = divmod(i, self.S)
         sh = self._shards.get(ts) or self._load_shard(ts)
@@ -819,7 +820,7 @@ class ZarrStreamHandle:
 
     # -- writes ------------------------------------------------------------ #
 
-    def write_record(self, t: float, arrays: Dict[str, Any], region=None) -> int:
+    def write_record(self, t: float, arrays: dict[str, Any], region=None) -> int:
         """Append one record (``append`` mode); returns its index. ``t`` must
         be strictly greater than the previous record's."""
         self._check_open()
@@ -843,7 +844,7 @@ class ZarrStreamHandle:
             self.flush()
         return i
 
-    def write_record_at(self, index: int, t: float, arrays: Dict[str, Any], region=None) -> None:
+    def write_record_at(self, index: int, t: float, arrays: dict[str, Any], region=None) -> None:
         """Write record ``index`` (``indexed`` mode, any order). ``t`` must equal
         ``times[index]`` bitwise; a committed record must be invalidated first."""
         self._check_open()
@@ -934,7 +935,7 @@ class ZarrStreamHandle:
         self._pending_objects.clear()
         return tok
 
-    def _verify(self, tokens: List[CommitToken]):
+    def _verify(self, tokens: list[CommitToken]):
         """``spec/writer.md`` §5.3, before anything is written."""
         ids = sorted(t.writer for t in tokens)
         if ids != list(range(self.n_writers)):
@@ -1053,7 +1054,7 @@ class ZarrStreamHandle:
                 setattr(self, a, v)
             raise
 
-    def commit(self, tokens: Sequence[Union[CommitToken, str, Dict[str, Any]]]) -> Dict[str, Any]:
+    def commit(self, tokens: Sequence[CommitToken | str | dict[str, Any]]) -> dict[str, Any]:
         """Owner: verify ``tokens`` (one per writer, the owner's included) and
         commit: grow ``shape[time]`` (append mode), update the record / static /
         blob state, bump ``commit_seq`` and write the manifest LAST. Raises
@@ -1067,7 +1068,7 @@ class ZarrStreamHandle:
         with self._transaction():
             return self._apply_commit(toks, recs, statics)
 
-    def _apply_commit(self, toks, recs, statics) -> Dict[str, Any]:
+    def _apply_commit(self, toks, recs, statics) -> dict[str, Any]:
         if recs and not self.indexed:
             new = self.n_committed + len(recs)
             self._set_time_shape(new)
@@ -1096,7 +1097,7 @@ class ZarrStreamHandle:
         self.commit_seq += 1
         return self._write_manifest()
 
-    def invalidate(self, indices: Iterable[int]) -> Dict[str, Any]:
+    def invalidate(self, indices: Iterable[int]) -> dict[str, Any]:
         """Owner / single, ``indexed`` mode: mark records uncommitted (and
         their ``record(i)`` blobs) so they may be rewritten; writes the manifest
         and bumps ``commit_seq``."""
@@ -1118,7 +1119,7 @@ class ZarrStreamHandle:
             self.commit_seq += 1
             return self._write_manifest()
 
-    def invalidate_statics(self, names: Iterable[str]) -> Dict[str, Any]:
+    def invalidate_statics(self, names: Iterable[str]) -> dict[str, Any]:
         """Owner / single: mark statics uncommitted so they may be rewritten."""
         self._check_open()
         if not self.is_owner:
@@ -1133,7 +1134,7 @@ class ZarrStreamHandle:
             self.commit_seq += 1
             return self._write_manifest()
 
-    def close(self, tokens: Sequence[Any] = ()) -> Optional[Dict[str, Any]]:
+    def close(self, tokens: Sequence[Any] = ()) -> dict[str, Any] | None:
         """Single: flush, then rewrite the manifest (same ``commit_seq``).
         Owner: flush, then commit its own token plus the OTHER writers'
         ``tokens``. Both return the manifest. Contributor: errors if anything
@@ -1160,13 +1161,13 @@ class ZarrStreamHandle:
             m = self._write_manifest()
         else:
             own = self.flush()
-            m = self.commit([own] + list(tokens))
+            m = self.commit([own, *tokens])
         self._closed = True
         return m
 
     # -- the manifest ------------------------------------------------------ #
 
-    def _time_shards_v2(self) -> List[Dict[str, Any]]:
+    def _time_shards_v2(self) -> list[dict[str, Any]]:
         if self.indexed:
             pairs = [(i, e["t"]) for i, e in enumerate(self.entries) if e["committed"]]
         else:
@@ -1183,7 +1184,7 @@ class ZarrStreamHandle:
                 out.append({"index": ts, "t_start": min(tv), "t_end": max(tv), "n": len(tv)})
         return out
 
-    def _manifest_dict(self) -> Dict[str, Any]:
+    def _manifest_dict(self) -> dict[str, Any]:
         s = self.schema
         if self.version == 1:
             m = dict(self._base_manifest)
@@ -1200,7 +1201,7 @@ class ZarrStreamHandle:
             committed = [i for i, e in enumerate(self.entries) if e["committed"]]
             shape_t = self.N
             last_t = max((self.entries[i]["t"] for i in committed), default=None)
-            records: Dict[str, Any] = {
+            records: dict[str, Any] = {
                 "committed": _ranges(committed),
                 "entries": [
                     {
@@ -1261,7 +1262,7 @@ class ZarrStreamHandle:
         )
         return m
 
-    def _write_manifest(self) -> Dict[str, Any]:
+    def _write_manifest(self) -> dict[str, Any]:
         """Write ``output_manifest.json`` — the commit point — through the same
         store the arrays use. Never called by a contributor."""
         assert self.is_owner
@@ -1277,7 +1278,7 @@ class ZarrStreamHandle:
 # --- committed state from a manifest ----------------------------------------- #
 
 
-def _load_state(h: ZarrStreamHandle, m: Dict[str, Any]) -> None:
+def _load_state(h: ZarrStreamHandle, m: dict[str, Any]) -> None:
     """Load the committed state of manifest ``m`` into handle ``h``."""
     if m["schema"] == OUTPUT_MANIFEST_V1:
         h.n_committed = int(m.get("total_records", m.get("n_records", 0)))
@@ -1303,7 +1304,7 @@ def _load_state(h: ZarrStreamHandle, m: Dict[str, Any]) -> None:
     h.blobs = {(b["scope"], b["record"], int(b["writer"]), b["key"]) for b in m.get("blobs", [])}
 
 
-def _base_manifest(schema: OutputSchema, base: str, version: int) -> Dict[str, Any]:
+def _base_manifest(schema: OutputSchema, base: str, version: int) -> dict[str, Any]:
     """The fields of a manifest fixed at create."""
     common = {
         "base_url": base,
@@ -1339,7 +1340,7 @@ def _base_manifest(schema: OutputSchema, base: str, version: int) -> Dict[str, A
     return common
 
 
-def _norm_role(role: Any, n_writers: int, id: int) -> Tuple[str, int, int]:
+def _norm_role(role: Any, n_writers: int, id: int) -> tuple[str, int, int]:
     role = str(role).lower()
     if role == "single":
         return "single", 1, 0
@@ -1378,7 +1379,7 @@ def open_writer(
     role: str = "single",
     n_writers: int = 1,
     id: int = 0,
-    region: Optional[Any] = None,
+    region: Any | None = None,
 ) -> ZarrStreamHandle:
     """Create (``single`` / ``owner``) or join (``contributor``) a store.
     See :meth:`earthsciio.backends.zarr_write.ZarrWriter.write_open`."""
@@ -1429,7 +1430,7 @@ def open_writer(
         return a
 
     dimlen = schema.dim_lengths
-    time_attrs: Dict[str, Any] = {}
+    time_attrs: dict[str, Any] = {}
     for nm, (vals, attrs) in schema.coords:
         if nm == schema.time_dim:
             time_attrs = attrs
@@ -1471,7 +1472,7 @@ def _open_existing(
     n_writers: int,
     wid: int,
     region: Region,
-    schema: Optional[OutputSchema],
+    schema: OutputSchema | None,
 ) -> ZarrStreamHandle:
     store, base = _open_store(base_url, create=False)
     m = _read_manifest(store)
@@ -1519,7 +1520,7 @@ def _open_existing(
 
 
 def _join(
-    base_url: str, schema: Optional[OutputSchema], n_writers: int, wid: int, region: Region
+    base_url: str, schema: OutputSchema | None, n_writers: int, wid: int, region: Region
 ) -> ZarrStreamHandle:
     h = _open_existing(base_url, "contributor", n_writers, wid, region, schema)
     h.next_index = h.n_committed
@@ -1532,8 +1533,8 @@ def resume_writer(
     role: str = "single",
     n_writers: int = 1,
     id: int = 0,
-    region: Optional[Any] = None,
-    at: Optional[float] = None,
+    region: Any | None = None,
+    at: float | None = None,
 ) -> ZarrStreamHandle:
     """Reopen a store after preemption (``spec/writer.md`` §7). ``append``:
     the committed records are truncated to those with ``t <= at`` (when that
@@ -1550,7 +1551,7 @@ def resume_writer(
     import zarr
 
     n = h.n_committed
-    times: List[float] = []
+    times: list[float] = []
     if not h.time_coord:
         if at is not None:
             raise EarthSciIOError(
@@ -1596,7 +1597,7 @@ def resume_writer(
 # --- read-back (spec/writer.md §7) ------------------------------------------- #
 
 
-def read_output_manifest(base_url: str) -> Dict[str, Any]:
+def read_output_manifest(base_url: str) -> dict[str, Any]:
     """The store's output manifest (v1 or v2), parsed."""
     m = _read_manifest(_open_read_store(base_url))
     if m is None:
@@ -1604,14 +1605,14 @@ def read_output_manifest(base_url: str) -> Dict[str, Any]:
     return m
 
 
-def committed_records(m: Dict[str, Any]) -> List[int]:
+def committed_records(m: dict[str, Any]) -> list[int]:
     """The committed record indices of manifest ``m``, ascending."""
     if m["schema"] == OUTPUT_MANIFEST_V2:
         return [i for a, b in m["records"]["committed"] for i in range(a, b)]
     return list(range(int(m.get("n_records", m.get("total_records", 0)))))
 
 
-def _record_committed(m: Dict[str, Any], i: int) -> bool:
+def _record_committed(m: dict[str, Any], i: int) -> bool:
     """Is record ``i`` committed in manifest ``m``? A range check, without
     expanding the committed ranges."""
     if m["schema"] == OUTPUT_MANIFEST_V2:
@@ -1620,13 +1621,13 @@ def _record_committed(m: Dict[str, Any], i: int) -> bool:
 
 
 def _read_region(
-    base_url: str, name: str, dims: List[str], time_dim: Optional[str], i: Optional[int], region
+    base_url: str, name: str, dims: list[str], time_dim: str | None, i: int | None, region
 ) -> np.ndarray:
     import zarr
 
     arr = zarr.open_array(store=_open_read_store(base_url), path=name, mode="r")
     reg = _norm_region(region)
-    sel: List[Any] = []
+    sel: list[Any] = []
     for d, n in zip(dims, arr.shape):
         if d == time_dim:
             sel.append(i)

@@ -28,7 +28,8 @@ import fnmatch as _fnmatch
 import io as _io
 import threading as _threading
 import zipfile as _zipfile
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -43,12 +44,12 @@ from .selection import (
 )
 
 __all__ = [
-    "NetCDFReader",
     "CSVReader",
-    "GeoTIFFReader",
     "FF10Reader",
-    "ShapefileReader",
+    "GeoTIFFReader",
+    "NetCDFReader",
     "ParquetReader",
+    "ShapefileReader",
     "register_format_readers",
 ]
 
@@ -118,7 +119,7 @@ def _field_from_dataarray(da: Any) -> NativeField:
     return NativeField(data, dims, attrs)
 
 
-def _netcdf_engine() -> Optional[str]:
+def _netcdf_engine() -> str | None:
     """The xarray engine used to decode a NetCDF blob.
 
     The shared cache stores content-addressed blobs *without* a file extension,
@@ -162,8 +163,8 @@ def _netcdf_is_time_dim(ds: Any, dim: str) -> bool:
 
 
 def _netcdf_dim_selection(
-    ds: Any, select: Optional[Any], fields: Sequence[Any] = ()
-) -> Optional[Dict[str, List[int]]]:
+    ds: Any, select: Any | None, fields: Sequence[Any] = ()
+) -> dict[str, list[int]] | None:
     """``select`` → ``{dimension: ordered 0-based index list}``, or ``None``.
 
     The axes are positional over the file-order dims of every array whose rank
@@ -184,9 +185,9 @@ def _netcdf_dim_selection(
     parsed = [_parse_axis(a) for a in axes_spec]
     naxes = len(parsed)
 
-    bydim: Dict[str, Tuple] = {}
+    bydim: dict[str, tuple] = {}
     matched = False
-    for name, da in ds.variables.items():
+    for da in ds.variables.values():
         if len(da.dims) != naxes:
             continue
         matched = True
@@ -207,7 +208,7 @@ def _netcdf_dim_selection(
             "of the arrays it applies to"
         )
 
-    out: Dict[str, List[int]] = {}
+    out: dict[str, list[int]] = {}
     for dim, axis in bydim.items():
         if axis[0] == "all":
             continue
@@ -223,8 +224,8 @@ def _netcdf_dim_selection(
 
 
 def _netcdf_named_selection(
-    ds: Any, named: Dict[str, Tuple], fields: Sequence[Any]
-) -> Optional[Dict[str, List[int]]]:
+    ds: Any, named: dict[str, tuple], fields: Sequence[Any]
+) -> dict[str, list[int]] | None:
     """The named form (``spec/prefetch.md`` §2.1) → the same ``{dim: indices}``
     map the positional form induces, by NAME, with no rank match at all.
 
@@ -256,7 +257,7 @@ def _netcdf_named_selection(
             )
         raise _absent_dims_error(absent, present, hint)
 
-    out: Dict[str, List[int]] = {}
+    out: dict[str, list[int]] = {}
     for dim, axis in named.items():
         if axis[0] == "all":
             continue
@@ -273,9 +274,9 @@ def _netcdf_named_selection(
 
 def _netcdf_merge_records(
     ds: Any,
-    isel: Optional[Dict[str, List[int]]],
-    records: Optional[Any],
-) -> Optional[Dict[str, List[int]]]:
+    isel: dict[str, list[int]] | None,
+    records: Any | None,
+) -> dict[str, list[int]] | None:
     """Fold a ``records`` pushdown into the ``select``-derived dimension map.
 
     The two vocabularies meet here on purpose: a record selection IS a one-axis
@@ -337,7 +338,7 @@ def _netcdf_merge_records(
     return out
 
 
-def _netcdf_window(da: Any, isel: Optional[Dict[str, List[int]]]) -> Any:
+def _netcdf_window(da: Any, isel: dict[str, list[int]] | None) -> Any:
     """Apply the dimension selection to one ``DataArray`` (identity when empty).
 
     ``.isel`` with an index list is xarray's orthogonal indexing: it reads only
@@ -385,10 +386,10 @@ class NetCDFReader:
     #: DECODE time (see :func:`earthsciio.registry.supports_selection`).
     supports_selection = True
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -396,7 +397,7 @@ class NetCDFReader:
         :meth:`read_native` under a ``with`` block so nothing leaks."""
         return blob_path
 
-    def dim_length(self, path: Any, dim: str) -> Optional[int]:
+    def dim_length(self, path: Any, dim: str) -> int | None:
         """The length of dimension ``dim`` in the blob at ``path``, or ``None``.
 
         Read from the file's METADATA — the header, never an array
@@ -420,9 +421,9 @@ class NetCDFReader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
-        records: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
+        records: Any | None = None,
         **_: Any,
     ) -> NativeDataset:
         """Decode ``handle`` into a :class:`NativeDataset`.
@@ -487,8 +488,8 @@ class NetCDFReader:
         import xarray as xr  # lazy: only the netcdf path needs the heavy stack
 
         want = {str(v) for v in variables} if variables else None
-        out_vars: Dict[str, NativeField] = {}
-        out_coords: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
+        out_coords: dict[str, NativeField] = {}
         with (
             _NETCDF_LOCK,
             xr.open_dataset(
@@ -553,10 +554,10 @@ class CSVReader:
     FORMATS = ("csv",)
     EXTENSIONS = ("csv", "txt")
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -565,10 +566,10 @@ class CSVReader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
         *,
-        numeric_columns: Optional[Sequence[str]] = None,
+        numeric_columns: Sequence[str] | None = None,
         delimiter: str = ",",
         header_row: int = 0,
         **_: Any,
@@ -589,7 +590,7 @@ class CSVReader:
                 )
         numset = {str(c) for c in numeric_columns} if numeric_columns is not None else None
 
-        out_vars: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
         for j, col in enumerate(header):
             name = str(col)
             if want is not None and name not in want:
@@ -619,15 +620,15 @@ class CSVReader:
 class _Raster:
     """A decoded raster: band arrays + cell-center axes + georef flags."""
 
-    __slots__ = ("bands", "x_centers", "y_centers", "geographic", "nodata")
+    __slots__ = ("bands", "geographic", "nodata", "x_centers", "y_centers")
 
     def __init__(
         self,
-        bands: List[np.ndarray],
+        bands: list[np.ndarray],
         x_centers: np.ndarray,
         y_centers: np.ndarray,
         geographic: bool,
-        nodata: Optional[float],
+        nodata: float | None,
     ) -> None:
         self.bands = bands
         self.x_centers = x_centers
@@ -636,7 +637,7 @@ class _Raster:
         self.nodata = nodata
 
 
-def _geokey_value(geokeys: Optional[Sequence[int]], key_id: int) -> Optional[int]:
+def _geokey_value(geokeys: Sequence[int] | None, key_id: int) -> int | None:
     """Read an *inline* GeoKey from a flat ``GeoKeyDirectoryTag`` (or ``None``).
 
     The directory is ``[version, keyRev, minorRev, nKeys, (KeyID, loc, count,
@@ -657,7 +658,7 @@ def _geokey_value(geokeys: Optional[Sequence[int]], key_id: int) -> Optional[int
     return None
 
 
-def _parse_nodata(tags: Dict[str, Any]) -> Optional[float]:
+def _parse_nodata(tags: dict[str, Any]) -> float | None:
     """The GDAL_NODATA sentinel (an ASCII tag), parsed to ``float`` or ``None``."""
     raw = tags.get("GDAL_NoData", tags.get("GDAL_NODATA"))
     if raw is None:
@@ -737,7 +738,7 @@ def _read_with_tifffile(path: Any) -> _Raster:
 def _open_raster(path: Any) -> _Raster:
     """Decode a GeoTIFF, preferring GDAL/``rasterio`` then ``tifffile``."""
     try:
-        import rasterio  # noqa: F401
+        import rasterio
     except Exception:
         rasterio = None  # type: ignore[assignment]
     if rasterio is not None:
@@ -775,10 +776,10 @@ class GeoTIFFReader:
     #: rasterio (GDAL) is preferred; tifffile is the pure-Python fallback.
     REQUIRES = (("rasterio", "tifffile"),)
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -787,10 +788,10 @@ class GeoTIFFReader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
         *,
-        band_names: Optional[Sequence[str]] = None,
+        band_names: Sequence[str] | None = None,
         **_: Any,
     ) -> NativeDataset:
         """Decode ``handle`` into a :class:`NativeDataset` of raster bands + grid.
@@ -819,7 +820,7 @@ class GeoTIFFReader:
                     f"requested bands not in GeoTIFF: {sorted(missing)}; present bands: {names}"
                 )
 
-        out_vars: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
         for name, band in zip(names, raster.bands):
             if want is not None and name not in want:
                 continue
@@ -827,7 +828,7 @@ class GeoTIFFReader:
             if raster.nodata is not None and not np.isnan(raster.nodata):
                 data[data == raster.nodata] = np.nan
             out_vars[name] = NativeField(data, (ydim, xdim), {})
-        out_coords: Dict[str, NativeField] = {
+        out_coords: dict[str, NativeField] = {
             xdim: NativeField(np.asarray(raster.x_centers, dtype="float64"), (xdim,), {}),
             ydim: NativeField(np.asarray(raster.y_centers, dtype="float64"), (ydim,), {}),
         }
@@ -978,9 +979,9 @@ FF10_POINT_NUMERIC = frozenset(
 
 def _ff10_select_members(
     names: Sequence[str],
-    members: Optional[Sequence[str]],
-    member_glob: Optional[str],
-) -> List[str]:
+    members: Sequence[str] | None,
+    member_glob: str | None,
+) -> list[str]:
     """Resolve ``members``/``member_glob`` against a zip's member list.
 
     The selection is the union of the explicit ``members`` list and the
@@ -1013,7 +1014,7 @@ def _ff10_select_members(
     return sorted(selected)
 
 
-def _ff10_skip_header(data_lines: List[str], delimiter: str) -> List[str]:
+def _ff10_skip_header(data_lines: list[str], delimiter: str) -> list[str]:
     """Drop the asserted ``country_cd`` header line from one input's data lines.
 
     The first non-comment, non-empty line's first delimiter-separated field must
@@ -1085,10 +1086,10 @@ class FF10Reader:
     FORMATS = ("ff10",)
     EXTENSIONS = ("ff10", "csv")
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -1097,15 +1098,15 @@ class FF10Reader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
         *,
-        member: Optional[str] = None,
-        members: Optional[Sequence[str]] = None,
-        member_glob: Optional[str] = None,
+        member: str | None = None,
+        members: Sequence[str] | None = None,
+        member_glob: str | None = None,
         skip_header_row: bool = False,
         kind: str = "point",
-        numeric_columns: Optional[Sequence[str]] = None,
+        numeric_columns: Sequence[str] | None = None,
         delimiter: str = ",",
         comment: str = "#",
         **_: Any,
@@ -1132,7 +1133,7 @@ class FF10Reader:
         # Per selected input: skip empty + '#' comment lines, drop the asserted
         # `country_cd` header line (if skip_header_row), then RFC-4180 parse.
         ncol = len(FF10_POINT_COLUMNS)
-        rows: List[List[str]] = []
+        rows: list[list[str]] = []
         for text in texts:
             data_lines = [
                 ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith(comment)
@@ -1152,7 +1153,7 @@ class FF10Reader:
             if missing:
                 raise KeyError(f"requested FF10 columns not in schema: {sorted(missing)}")
 
-        out_vars: Dict[str, NativeField] = {}
+        out_vars: dict[str, NativeField] = {}
         for j, name in enumerate(FF10_POINT_COLUMNS):
             if want is not None and name not in want:
                 continue
@@ -1176,7 +1177,7 @@ class FF10Reader:
 #: Shape-type code -> name (ESRI Shapefile Technical Description, page 4). The
 #: name is carried in the geometry field's ``attrs`` so ESS can tell a polygon
 #: layer from a polyline one without re-sniffing the blob.
-SHAPE_TYPE_NAMES: Dict[int, str] = {
+SHAPE_TYPE_NAMES: dict[int, str] = {
     0: "Null",
     1: "Point",
     3: "PolyLine",
@@ -1210,7 +1211,7 @@ SHAPEFILE_RESERVED = (
 )
 
 
-def _shp_sidecar_bytes(handle: Any, member: Optional[str]) -> Dict[str, bytes]:
+def _shp_sidecar_bytes(handle: Any, member: str | None) -> dict[str, bytes]:
     """The `.shp` + sidecar byte blobs of one shapefile, keyed by extension.
 
     A shapefile is a **file set** but the content-addressed cache holds ONE blob,
@@ -1223,7 +1224,7 @@ def _shp_sidecar_bytes(handle: Any, member: Optional[str]) -> Dict[str, bytes]:
     if magic[:2] != b"PK":
         with open(handle, "rb") as fh:
             return {"shp": fh.read()}
-    out: Dict[str, bytes] = {}
+    out: dict[str, bytes] = {}
     with _zipfile.ZipFile(handle) as zf:
         names = [n for n in zf.namelist() if not n.endswith("/")]
         shps = sorted(n for n in names if n.lower().endswith(".shp"))
@@ -1252,7 +1253,7 @@ def _shp_sidecar_bytes(handle: Any, member: Optional[str]) -> Dict[str, bytes]:
     return out
 
 
-def _dbf_deletion_flags(raw: bytes) -> Tuple[bytes, List[bool]]:
+def _dbf_deletion_flags(raw: bytes) -> tuple[bytes, list[bool]]:
     """Normalize the DBF deletion flags and report which rows are deleted.
 
     A dBASE record's first byte marks deletion. GDAL — and the shapefiles the
@@ -1275,7 +1276,7 @@ def _dbf_deletion_flags(raw: bytes) -> Tuple[bytes, List[bool]]:
     if rec < 1 or hdr < 32 or hdr + nrec * rec > len(raw):
         return raw, []
     buf = bytearray(raw)
-    deleted: List[bool] = []
+    deleted: list[bool] = []
     for i in range(nrec):
         off = hdr + i * rec
         deleted.append(buf[off] == 0x2A)
@@ -1284,7 +1285,7 @@ def _dbf_deletion_flags(raw: bytes) -> Tuple[bytes, List[bool]]:
     return bytes(buf), deleted
 
 
-def _shp_parts(shape: Any) -> List[List[Any]]:
+def _shp_parts(shape: Any) -> list[list[Any]]:
     """One shape's vertex rings/parts, in file order, as lists of ``(x, y)``.
 
     A Polygon/PolyLine carries explicit part offsets; a Point or MultiPoint has
@@ -1297,11 +1298,11 @@ def _shp_parts(shape: Any) -> List[List[Any]]:
     offs = [int(p) for p in (getattr(shape, "parts", ()) or ())]
     if not offs:
         return [pts]
-    bounds = offs + [len(pts)]
+    bounds = [*offs, len(pts)]
     return [pts[bounds[k] : bounds[k + 1]] for k in range(len(offs))]
 
 
-def _shp_bbox(shape: Any) -> Tuple[float, float, float, float]:
+def _shp_bbox(shape: Any) -> tuple[float, float, float, float]:
     """A shape's bounding box: the record's own stored ``Box`` where the format
     has one, else (Point) the point itself. ``NaN``s for a Null shape."""
     try:
@@ -1386,10 +1387,10 @@ class ShapefileReader:
     #: pyshp, whose import name is `shapefile`.
     REQUIRES = (("shapefile",),)
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -1398,12 +1399,12 @@ class ShapefileReader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
         *,
-        member: Optional[str] = None,
-        numeric_columns: Optional[Sequence[str]] = None,
-        nvert_max: Optional[int] = None,
+        member: str | None = None,
+        numeric_columns: Sequence[str] | None = None,
+        nvert_max: int | None = None,
         **_: Any,
     ) -> NativeDataset:
         """Decode a shapefile blob into a one-row-per-part feature table."""
@@ -1416,17 +1417,17 @@ class ShapefileReader:
             ) from exc
 
         blobs = _shp_sidecar_bytes(handle, member)
-        kw: Dict[str, Any] = {"shp": _io.BytesIO(blobs["shp"])}
+        kw: dict[str, Any] = {"shp": _io.BytesIO(blobs["shp"])}
         if "shx" in blobs:
             kw["shx"] = _io.BytesIO(blobs["shx"])
-        deleted: List[bool] = []
+        deleted: list[bool] = []
         if "dbf" in blobs:
             normalized, deleted = _dbf_deletion_flags(blobs["dbf"])
             kw["dbf"] = _io.BytesIO(normalized)
 
-        columns: List[str] = []
-        types: Dict[str, Any] = {}
-        records: List[List[Any]] = []
+        columns: list[str] = []
+        types: dict[str, Any] = {}
+        records: list[list[Any]] = []
         with _pyshp.Reader(**kw) as rdr:
             shapes = list(rdr.iterShapes())
             shape_type = int(rdr.shapeType)
@@ -1454,12 +1455,12 @@ class ShapefileReader:
             )
 
         # Explode to one row per part, dropping `*`-deleted rows whole.
-        rings: List[List[Any]] = []
-        shape_ix: List[int] = []
-        part_ix: List[int] = []
-        nparts: List[int] = []
-        boxes: List[Tuple[float, float, float, float]] = []
-        rows: List[Optional[List[Any]]] = []
+        rings: list[list[Any]] = []
+        shape_ix: list[int] = []
+        part_ix: list[int] = []
+        nparts: list[int] = []
+        boxes: list[tuple[float, float, float, float]] = []
+        rows: list[list[Any] | None] = []
         live_ix = 0
         for si, shp in enumerate(shapes):
             if deleted[si]:
@@ -1494,7 +1495,7 @@ class ShapefileReader:
                 geom[i, len(ring) :, 0] = float(ring[-1][0])
                 geom[i, len(ring) :, 1] = float(ring[-1][1])
 
-        out: Dict[str, NativeField] = {
+        out: dict[str, NativeField] = {
             "geometry": NativeField(geom, ("index", "vertex", "xy"), {}),
             "shape_type": NativeField(
                 [SHAPE_TYPE_NAMES.get(shape_type, str(shape_type))], ("meta",), {}
@@ -1579,7 +1580,7 @@ def _shp_text(value: Any) -> str:
 _PQ_DECIMAL_CTX = _decimal.Context(prec=100)
 
 
-def _pq_target_dtype(typ: Any, forced_float: bool) -> Optional[str]:
+def _pq_target_dtype(typ: Any, forced_float: bool) -> str | None:
     """The §3 native dtype an Arrow column maps to, or ``None`` when it has none.
 
     A total function of the Arrow type — which is what makes cross-language
@@ -1630,7 +1631,7 @@ def _pq_target_dtype(typ: Any, forced_float: bool) -> Optional[str]:
     return None
 
 
-def _pq_cells(col: Any) -> Tuple[List[Any], Any]:
+def _pq_cells(col: Any) -> tuple[list[Any], Any]:
     """A column's cells as plain Python values (``None`` for a null) + its type.
 
     The returned type is the DICTIONARY-DECODED one, so the caller sees the
@@ -1703,8 +1704,8 @@ def _pq_field(
     name: str,
     col: Any,
     dtype: str,
-    null_int: Optional[int],
-    null_string: Optional[str],
+    null_int: int | None,
+    null_string: str | None,
 ) -> NativeField:
     """One Parquet column as a rank-1 :class:`NativeField` over ``index``.
 
@@ -1768,7 +1769,7 @@ def _pq_field(
         return NativeField(np.array(values, dtype=dtype), ("index",), attrs)
 
     if dtype == "string":
-        text: List[str] = []
+        text: list[str] = []
         for i, c in enumerate(cells):
             if c is None:
                 if null_string is None:
@@ -1870,10 +1871,10 @@ class ParquetReader:
     FORMATS = ("parquet",)
     EXTENSIONS = ("parquet", "parq", "pq")
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         return list(self.FORMATS)
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         return list(self.EXTENSIONS)
 
     def open(self, blob_path: Any) -> Any:
@@ -1882,12 +1883,12 @@ class ParquetReader:
     def read_native(
         self,
         handle: Any,
-        variables: Optional[Sequence[str]] = None,
-        select: Optional[Any] = None,
+        variables: Sequence[str] | None = None,
+        select: Any | None = None,
         *,
-        float_columns: Optional[Sequence[str]] = None,
-        null_int: Optional[int] = None,
-        null_string: Optional[str] = None,
+        float_columns: Sequence[str] | None = None,
+        null_int: int | None = None,
+        null_string: str | None = None,
         **_: Any,
     ) -> NativeDataset:
         """Decode a Parquet blob into a flat table of rank-1 ``index`` fields.
@@ -1926,8 +1927,8 @@ class ParquetReader:
         # touching it, and an unrequested one is simply never projected. Building
         # the accumulators from the schema is also what makes a zero-row file
         # typed rather than absent.
-        columns: List[str] = []
-        dtypes: List[str] = []
+        columns: list[str] = []
+        dtypes: list[str] = []
         for field in schema:
             if want and field.name not in want:
                 continue
@@ -1945,7 +1946,7 @@ class ParquetReader:
 
         # PROJECTION PUSHDOWN. `columns` reaches pyarrow as the read projection,
         # so only these column chunks come off disk and get decoded.
-        out: Dict[str, NativeField] = {}
+        out: dict[str, NativeField] = {}
         if columns:
             table = pf.read(columns=columns)
             for i, (name, dtype) in enumerate(zip(columns, dtypes)):
@@ -1958,7 +1959,7 @@ class ParquetReader:
 # --------------------------------------------------------------------------- #
 
 
-def register_format_readers(registry: Optional[Registry] = None) -> None:
+def register_format_readers(registry: Registry | None = None) -> None:
     """Register the active ``netcdf``/``csv``/``geotiff``/``ff10``/``shapefile``/``parquet`` readers.
 
     Idempotent: the underlying :meth:`Registry.register` is a no-op when the same

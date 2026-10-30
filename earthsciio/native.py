@@ -16,9 +16,10 @@ name, exactly as the reader produced them: **no** variable-name remap and **no**
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
 
-__all__ = ["NativeField", "NativeDataset"]
+__all__ = ["NativeDataset", "NativeField"]
 
 
 class NativeField:
@@ -44,20 +45,20 @@ class NativeField:
     integer dtype (e.g. a raw time axis); text columns are ``str``.
     """
 
-    __slots__ = ("data", "dims", "attrs")
+    __slots__ = ("attrs", "data", "dims")
 
     def __init__(
         self,
         data: Any,
         dims: Sequence[str],
-        attrs: Optional[Mapping[str, Any]] = None,
+        attrs: Mapping[str, Any] | None = None,
     ) -> None:
         self.data = data
-        self.dims: Tuple[str, ...] = tuple(str(d) for d in dims)
-        self.attrs: Dict[str, Any] = dict(attrs) if attrs else {}
+        self.dims: tuple[str, ...] = tuple(str(d) for d in dims)
+        self.attrs: dict[str, Any] = dict(attrs) if attrs else {}
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         """Length of each dimension, in ``dims`` order."""
         shp = getattr(self.data, "shape", None)
         return tuple(shp) if shp is not None else (len(self.data),)
@@ -82,15 +83,15 @@ class NativeDataset:
     data variables are everything else.
     """
 
-    __slots__ = ("variables", "coords")
+    __slots__ = ("coords", "variables")
 
     def __init__(
         self,
-        variables: Optional[Mapping[str, NativeField]] = None,
-        coords: Optional[Mapping[str, NativeField]] = None,
+        variables: Mapping[str, NativeField] | None = None,
+        coords: Mapping[str, NativeField] | None = None,
     ) -> None:
-        self.variables: Dict[str, NativeField] = dict(variables) if variables else {}
-        self.coords: Dict[str, NativeField] = dict(coords) if coords else {}
+        self.variables: dict[str, NativeField] = dict(variables) if variables else {}
+        self.coords: dict[str, NativeField] = dict(coords) if coords else {}
 
     def __getitem__(self, name: str) -> NativeField:
         if name in self.variables:
@@ -102,11 +103,11 @@ class NativeDataset:
     def __contains__(self, name: object) -> bool:
         return name in self.variables or name in self.coords
 
-    def variable_names(self) -> List[str]:
+    def variable_names(self) -> list[str]:
         """Names of the data variables (not coordinates), sorted."""
         return sorted(self.variables)
 
-    def coord_names(self) -> List[str]:
+    def coord_names(self) -> list[str]:
         """Names of the coordinate fields, sorted."""
         return sorted(self.coords)
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -37,7 +37,7 @@ from earthsciio.backends.zarr_stream import (  # noqa: E402
 )
 
 
-def encode(a: np.ndarray) -> Dict[str, Any]:
+def encode(a: np.ndarray) -> dict[str, Any]:
     a = np.asarray(a)
     if np.issubdtype(a.dtype, np.floating):
         values = [float(x) for x in a.reshape(-1).tolist()]
@@ -46,7 +46,7 @@ def encode(a: np.ndarray) -> Dict[str, Any]:
     return {"dtype": a.dtype.name, "shape": list(a.shape), "values": values}
 
 
-def dump_store(base: str) -> Dict[str, Any]:
+def dump_store(base: str) -> dict[str, Any]:
     m = read_output_manifest(base)
     v2 = m["schema"] == OUTPUT_MANIFEST_V2
     committed = committed_records(m)
@@ -86,7 +86,7 @@ def dump_store(base: str) -> Dict[str, Any]:
     }
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) != 5:
         print(
             "usage: read_v2_python.py SPEC.json STORES_ROOT WRITER_LABEL OUT_DUMP.json",
@@ -95,12 +95,12 @@ def main(argv: List[str]) -> int:
         return 2
     spec = json.loads(pathlib.Path(argv[1]).read_text())
     root = pathlib.Path(argv[2]).resolve()
-    cases: Dict[str, Any] = {}
+    cases: dict[str, Any] = {}
     for case in spec["cases"]:
         store = root / case["name"] / "store"
         try:
             cases[case["name"]] = dump_store(str(store))
-        except Exception as e:  # noqa: BLE001 — a missing case fails the crosscheck
+        except Exception as e:
             print(f"[python-reader] {case['name']}: {type(e).__name__}: {e}", file=sys.stderr)
     out = {
         "schema": "earthsciio/write-v2-dump/v1",
