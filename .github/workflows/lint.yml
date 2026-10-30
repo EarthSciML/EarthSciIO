@@ -1,0 +1,32 @@
+name: Lint
+
+# Format and lint gate from the shared workflow in EarthSciML/.github, which
+# pins the tool versions. This repository's rules live in ruff.toml and
+# rust/Cargo.toml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    uses: EarthSciML/.github/.github/workflows/lint.yml@main
+    with:
+      rust-dirs: '["rust"]'
+      # Host with every native feature, and the browser build (wasm32 + OPFS,
+      # which is wasm32-only; see the target split in rust/Cargo.toml).
+      rust-clippy: >-
+        [{"dir": "rust", "args": "--features object-store"},
+         {"dir": "rust", "target": "wasm32-unknown-unknown",
+          "args": "--no-default-features --features opfs"}]
+      python-dir: "."
+      julia-paths: "."
