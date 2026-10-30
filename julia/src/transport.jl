@@ -53,7 +53,14 @@ resolve_auth(m::AbstractDict, realm) =
 # All knobs are env-overridable; defaults suit large chunked reads over flaky S3.
 _http_env_int(name, default) = parse(Int, get(ENV, name, string(default)))
 const _HTTP_DOWNLOADER = Ref{Any}(nothing)
-function _http_downloader()
+# The shared Downloader is built, used and dropped from several threads once
+# fetches run on `Threads.@spawn` workers (`sample_at`, `PrefetchGroup`'s decode
+# and fetch-ahead). A Downloader is itself safe to share; this lock only keeps two
+# threads that both find the slot empty from building two and leaking one, and a
+# reset from racing a build.
+const _HTTP_DOWNLOADER_LOCK = ReentrantLock()
+_http_downloader() = lock(_build_http_downloader, _HTTP_DOWNLOADER_LOCK)
+function _build_http_downloader()
     d = _HTTP_DOWNLOADER[]
     d === nothing || return d
     d = Downloads.Downloader()
@@ -70,7 +77,7 @@ function _http_downloader()
 end
 # Drop the cached Downloader so the next fetch builds a fresh multi-handle (called
 # after a failed/aborted transfer, whose handle may be wedged).
-_reset_http_downloader!() = (_HTTP_DOWNLOADER[] = nothing)
+_reset_http_downloader!() = lock(() -> (_HTTP_DOWNLOADER[] = nothing), _HTTP_DOWNLOADER_LOCK)
 
 # The ceiling on one fetch (both on any single extended attempt and, with the
 # retry floor below, on the whole call). It depends on WHAT is being fetched, and

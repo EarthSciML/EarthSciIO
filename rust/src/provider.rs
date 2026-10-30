@@ -27,7 +27,7 @@
 //! `time` crate (see `validate.rs`, the manifest's RFC 3339 stamps); the Provider
 //! uses [`time::OffsetDateTime`] for one consistent time type across the core.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use time::{Duration, OffsetDateTime};
@@ -35,7 +35,8 @@ use time::{Duration, OffsetDateTime};
 use crate::cache::{Cache, FetchRequest};
 use crate::error::{Error, Result};
 use crate::format::{
-    ArrayData, Coord, DType, FormatRegistry, NativeDataset, NativeField, Reader, Selection,
+    ArrayData, AxisSelect, Coord, DType, FormatRegistry, NativeDataset, NativeField, Reader,
+    Selection,
 };
 
 /// A run window `(start, end)` — half-open `[start, end)`.
@@ -355,17 +356,16 @@ pub struct Provider {
     buffers: HashMap<String, NativeField>,
     /// Native coordinates of the current file.
     coords: HashMap<String, Coord>,
-    /// The full decode of the currently-open file (re-sliced as the record moves).
-    current_dataset: Option<NativeDataset>,
     /// The cadence anchor currently in the buffer (DISCRETE).
     current_anchor: Option<OffsetDateTime>,
-    /// The file anchor currently open (avoids re-reading within a file).
-    current_file_anchor: Option<OffsetDateTime>,
-    /// Tiny LRU of decoded files keyed by file anchor (cap 2), used only by
-    /// `records_per_sample = 2`: the successor of the last record in a file
-    /// lives in the next file, so the bracket may hold two adjacent files at a
-    /// file-period seam. Most-recently-used at the tail.
-    files: Vec<(OffsetDateTime, NativeDataset)>,
+    /// Tiny LRU of whole decoded files keyed by file anchor, most-recently-used
+    /// at the tail: the buffer [`refresh`](Self::refresh) re-slices as the record
+    /// moves, so one whole-file decode is amortised over every tick in the file.
+    /// Capacity 1 for a single-record cadence (the open file) and 2 for
+    /// `records_per_sample = 2`, whose successor of a file's last record lives in
+    /// the next file, so the bracket may hold two adjacent files at a seam.
+    /// [`sample_at`](Self::sample_at) never touches it.
+    files: Vec<(OffsetDateTime, Arc<NativeDataset>)>,
     /// The store-access decision, resolved ONCE at construction (loader → env →
     /// [`StoreAccess::Cached`]) so it cannot change mid-run and so the
     /// environment is read once rather than per object.
@@ -426,9 +426,7 @@ impl Provider {
             store_access,
             buffers: HashMap::new(),
             coords: HashMap::new(),
-            current_dataset: None,
             current_anchor: None,
-            current_file_anchor: None,
             files: Vec::new(),
         })
     }
@@ -584,70 +582,123 @@ impl Provider {
                 ),
             });
         }
-        let Some(temporal) = self.loader.temporal.clone() else {
+        let Some(cadence) = self.cadence()? else {
             return Ok(None); // CONST: refresh is a no-op
         };
-        let freq_s = temporal.frequency.whole_seconds();
-        let file_s = temporal.file_period.whole_seconds();
-        if freq_s <= 0 || file_s <= 0 {
-            return Err(Error::Format {
-                format: self.loader.format.clone(),
-                detail: "loader cadence frequency/file_period must be positive".to_string(),
-            });
-        }
-        if !matches!(temporal.records_per_sample, None | Some(1) | Some(2)) {
-            return Err(Error::Format {
-                format: self.loader.format.clone(),
-                detail: format!(
-                    "records_per_sample must be 1 or 2, got {}",
-                    temporal.records_per_sample.unwrap()
-                ),
-            });
-        }
-
-        let anchor = snap_down(temporal.start, t, freq_s);
+        let anchor = cadence.anchor(t);
 
         // PER-CALL override: a fresh, cache-bypassing projection peek. It returns
         // the selected arrays for `anchor` WITHOUT touching the buffer / caches, so
         // it never short-circuits on `current_anchor` and never evicts a cached file.
         if let Some(select) = sel {
-            if temporal.records_per_sample == Some(2) {
-                return Ok(Some(self.bracket_peek(&temporal, anchor, freq_s, file_s, select)?));
-            }
-            let file_anchor = snap_down(temporal.start, anchor, file_s);
-            let url = self.resolve_url(file_anchor)?;
-            let ds = self.read_file(url, select)?;
-            let rec = ((anchor - file_anchor).whole_seconds() / freq_s) as usize;
-            return Ok(Some(slice_record_buffers(&ds, temporal.time_dim.as_str(), rec)?));
+            let ds = self.sample_anchor(&cadence, anchor, select, &mut FreshFiles)?;
+            return Ok(Some(ds.variables));
         }
 
-        // No override: the existing cached path (behavior unchanged).
         if self.current_anchor == Some(anchor) {
             return Ok(None); // same cadence interval — unchanged (bracket too)
         }
-        if temporal.records_per_sample == Some(2) {
-            return self.refresh_bracket(&temporal, anchor, freq_s, file_s);
-        }
-        let file_anchor = snap_down(temporal.start, anchor, file_s);
-
-        // Re-read the file only when the anchor crossed a file boundary.
-        if self.current_file_anchor != Some(file_anchor) {
-            let url = self.resolve_url(file_anchor)?;
-            let ds = self.read_file(url, &self.loader.select)?;
-            self.coords = ds.coords.clone();
-            self.current_dataset = Some(ds);
-            self.current_file_anchor = Some(file_anchor);
-        }
-
-        let rec = ((anchor - file_anchor).whole_seconds() / freq_s) as usize;
-        let ds = self
-            .current_dataset
-            .as_ref()
-            .expect("dataset loaded above for this file anchor");
-        let buffers = slice_record_buffers(ds, temporal.time_dim.as_str(), rec)?;
-        self.buffers = buffers;
+        // `sample_at` and the buffer update, sharing the one sampling path
+        // (`spec/prefetch.md` §1) — fed from this provider's own decoded-file LRU
+        // rather than a fresh decode. The LRU is lent out for the call so the
+        // sampler can stay `&self`, which is what lets `sample_at` run on a worker.
+        let mut files = std::mem::take(&mut self.files);
+        let lru = &mut LruFiles {
+            files: &mut files,
+            cap: if cadence.bracket() { 2 } else { 1 },
+        };
+        let sampled = self.sample_anchor(&cadence, anchor, &self.loader.select, lru);
+        self.files = files;
+        let ds = sampled?;
+        self.coords = ds.coords;
+        self.buffers = ds.variables;
         self.current_anchor = Some(anchor);
         Ok(Some(self.buffers.clone()))
+    }
+
+    /// The dataset [`refresh`](Self::refresh) would produce at `t`, computed
+    /// without touching any provider buffer (`spec/prefetch.md` §1).
+    ///
+    /// `variables` are what `refresh(t)` returns when it returns `Some`, and
+    /// `coords` are what [`coords`](Self::coords) holds after that `refresh(t)`:
+    /// the covering file's whole coordinates for a single-record cadence (its
+    /// time coordinate included), and for `records_per_sample = 2` the floor
+    /// file's with `time_dim` replaced by the 2-element epoch-seconds bracket. The
+    /// same snap-down, record resolution, bracket and end-of-data clamp apply,
+    /// and it fails with what `refresh(t)` would. A CONST provider's sample is its
+    /// [`materialize`](Self::materialize) result, coordinates included.
+    ///
+    /// It reads and writes no buffer — no current record, no current anchor, no
+    /// decoded-file LRU — so it takes `&self`, may run concurrently on several
+    /// threads (`Provider` is `Send + Sync`), and depends on `t` only through the
+    /// cadence anchor `t` snaps to. The price is a fresh decode of the covering
+    /// file(s) per call; a caller sampling many ticks of one file wants
+    /// [`refresh`](Self::refresh) or a [`PrefetchGroup`](crate::PrefetchGroup),
+    /// which share decoded files.
+    pub fn sample_at(&self, t: OffsetDateTime) -> Result<NativeDataset> {
+        self.sample_from(t, &self.loader.select, &mut FreshFiles)
+    }
+
+    /// A NEW provider sharing this one's cache and reader, with `w` baked in as
+    /// its [`DataSource::select`] (`spec/prefetch.md` §2.3). This provider is
+    /// unchanged.
+    ///
+    /// A window is bound at construction, never per call: the windowed provider
+    /// keeps the decoded-file reuse of [`refresh`](Self::refresh) — each windowed
+    /// file decoded once, not once per tick — where a per-call `select`
+    /// ([`refresh_with_select`](Self::refresh_with_select)) stays a peek that
+    /// reads fresh.
+    ///
+    /// Refused at once, before any I/O, when this provider already bakes a
+    /// `select` (two windows do not compose), when its reader does not answer
+    /// [`supports_selection`](Self::supports_selection), when `w` is not a
+    /// [`Selection::Named`] window (a positional one cannot be applied by name),
+    /// or when it names the loader's `time_dim` at all (records are the
+    /// Provider's). `w` is a [`DimWindow`](crate::DimWindow) or the
+    /// [`Selection::Named`] it converts to.
+    pub fn with_window(&self, w: impl Into<Selection>) -> Result<Provider> {
+        let w = w.into();
+        self.check_window(&w)?;
+        let mut loader = self.loader.clone();
+        loader.select = w;
+        Ok(Provider {
+            loader,
+            cache: self.cache.clone(),
+            window: self.window,
+            reader: self.reader.clone(),
+            store_access: self.store_access,
+            buffers: HashMap::new(),
+            coords: HashMap::new(),
+            current_anchor: None,
+            files: Vec::new(),
+        })
+    }
+
+    /// `K` windows at `t` from ONE fetch and decode (`spec/prefetch.md` §2.4):
+    /// dataset `i` is bitwise identical — coordinates, dims, dtypes and NaN cells
+    /// included — to `self.with_window(windows[i])?.sample_at(t)`.
+    ///
+    /// The read is the windows' bounding union by name: per dimension the sorted
+    /// distinct union of their indices, or the whole dimension when any window
+    /// leaves it unnamed or names it [`AxisSelect::All`]. Each window is then
+    /// gathered back out of that one decode by dimension name, in its own order
+    /// with its own repeats. This is for chunk layouts a window cannot shrink —
+    /// GEOS-FP 0.25° A3dyn is one global level per chunk — where one rank per node
+    /// decodes its neighbours' windows in a single pass.
+    ///
+    /// [`with_window`](Self::with_window)'s preconditions apply to every window,
+    /// raised before any I/O; an empty list returns an empty list without
+    /// fetching anything.
+    pub fn sample_windows_at(
+        &self,
+        t: OffsetDateTime,
+        windows: &[Selection],
+    ) -> Result<Vec<NativeDataset>> {
+        if windows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plan = self.plan_windows(windows)?;
+        self.sample_windows_from(t, &plan, &mut FreshFiles)
     }
 
     /// The cadence schedule over the window: the solver tstops the refresh
@@ -804,124 +855,162 @@ impl Provider {
             .read_native(&blob.path, &self.loader.variables, select)
     }
 
-    /// Ensure the file covering `file_anchor` is decoded into the 2-entry LRU
-    /// (`self.files`), so a file-period seam decodes each adjacent file at most
-    /// once. On a hit the entry is moved to the tail (most-recently-used).
-    ///
-    /// **Why this Provider does not push its records into the decode.** The
-    /// netcdf reader honours a [`Records`](crate::Records) pushdown in every
-    /// track (`spec/registries.md` §2.1) and the Julia Provider uses it, because
-    /// that one computes its record from the cadence and keeps no decoded-file
-    /// buffer: there a whole-file decode per sample is pure waste. Here this LRU
-    /// IS the optimisation — one whole-file decode amortised over every tick in
-    /// the file — so pushing down would replace one decode per FILE with one per
-    /// TICK. Measured on this reader (release build, warm page cache): an
-    /// A1-shaped file (24 records, 47 2-D variables) decodes whole in 37.7 ms,
-    /// i.e. 1.57 ms per tick, against 8.3 ms for a narrowed 2-record decode —
-    /// 5.3x worse per tick; an A3dyn-shaped file (8 records, 6 3-D variables)
-    /// 104.0 ms whole = 13.0 ms per tick against 29.5 ms narrowed, 2.3x worse.
-    /// The narrowed decode is genuinely 3.5–4.6x cheaper *per decode*, which is
-    /// exactly why it is worth having on the reader and not worth wiring in
-    /// front of a buffer that already avoids most of them. A caller that wants it
-    /// calls [`Reader::read_native_records`](crate::Reader::read_native_records)
-    /// directly; a track is not made slower for symmetry.
-    fn ensure_file(&mut self, file_anchor: OffsetDateTime) -> Result<()> {
-        if let Some(pos) = self.files.iter().position(|(a, _)| *a == file_anchor) {
-            let entry = self.files.remove(pos);
-            self.files.push(entry);
-            return Ok(());
-        }
-        let url = self.resolve_url(file_anchor)?;
-        let ds = self.read_file(url, &self.loader.select)?;
-        self.files.push((file_anchor, ds));
-        while self.files.len() > 2 {
-            self.files.remove(0); // evict the least-recently-used
-        }
-        Ok(())
+    /// Fetch + decode the file covering `file_anchor` under `select`: the one
+    /// read every [`FileSource`] bottoms out in.
+    pub(crate) fn read_file_at(
+        &self,
+        file_anchor: OffsetDateTime,
+        select: &Selection,
+    ) -> Result<NativeDataset> {
+        self.read_file(self.resolve_url(file_anchor)?, select)
     }
 
-    /// The decoded file for `file_anchor` (must have been [`ensure_file`]d).
-    fn file_ref(&self, file_anchor: OffsetDateTime) -> &NativeDataset {
-        &self
-            .files
-            .iter()
-            .find(|(a, _)| *a == file_anchor)
-            .expect("file ensured before file_ref")
-            .1
+    /// The validated cadence of a DISCRETE loader, or `None` for a CONST one.
+    /// The checks [`refresh`](Self::refresh) has always made before touching a
+    /// file, so [`sample_at`](Self::sample_at) fails exactly where it does.
+    fn cadence(&self) -> Result<Option<Cadence>> {
+        let Some(temporal) = self.loader.temporal.clone() else {
+            return Ok(None);
+        };
+        let freq_s = temporal.frequency.whole_seconds();
+        let file_s = temporal.file_period.whole_seconds();
+        if freq_s <= 0 || file_s <= 0 {
+            return Err(Error::Format {
+                format: self.loader.format.clone(),
+                detail: "loader cadence frequency/file_period must be positive".to_string(),
+            });
+        }
+        if !matches!(temporal.records_per_sample, None | Some(1) | Some(2)) {
+            return Err(Error::Format {
+                format: self.loader.format.clone(),
+                detail: format!(
+                    "records_per_sample must be 1 or 2, got {}",
+                    temporal.records_per_sample.unwrap()
+                ),
+            });
+        }
+        Ok(Some(Cadence {
+            temporal,
+            freq_s,
+            file_s,
+        }))
     }
 
-    /// The `records_per_sample = 2` path of [`refresh`](Self::refresh): produce
-    /// the two records bracketing `anchor` (floor + successor), retaining
-    /// `time_dim` at length 2, plus a canonical 2-element epoch-seconds `time`
-    /// coordinate. Handles the cross-file successor (record 0 of the next file
-    /// when the floor is the last record) and the end-of-data clamp (a degenerate
-    /// `[last, last]` bracket with equal timestamps — never an error).
-    fn refresh_bracket(
-        &mut self,
-        temporal: &SourceTemporal,
+    /// The sample at `t` under `select`, its files drawn from `files`: the ONE
+    /// sampling path behind [`sample_at`](Self::sample_at) (fresh files),
+    /// [`refresh`](Self::refresh) (this provider's LRU) and a
+    /// [`PrefetchGroup`](crate::PrefetchGroup) worker (a decoded-file cache shared
+    /// across workers). Decoding a file is deterministic, so which source fed it
+    /// cannot change the result.
+    pub(crate) fn sample_from(
+        &self,
+        t: OffsetDateTime,
+        select: &Selection,
+        files: &mut dyn FileSource,
+    ) -> Result<NativeDataset> {
+        match self.cadence()? {
+            None => {
+                let ds = files.file(self, OffsetDateTime::UNIX_EPOCH, select)?;
+                Ok(Arc::try_unwrap(ds).unwrap_or_else(|shared| (*shared).clone()))
+            }
+            Some(cadence) => self.sample_anchor(&cadence, cadence.anchor(t), select, files),
+        }
+    }
+
+    /// The DISCRETE sample at cadence anchor `anchor`: the at-or-before record
+    /// with `time_dim` dropped and the covering file's coordinates, or for
+    /// `records_per_sample = 2` the bracket ([`sample_bracket`](Self::sample_bracket)).
+    fn sample_anchor(
+        &self,
+        cadence: &Cadence,
         anchor: OffsetDateTime,
-        freq_s: i64,
-        file_s: i64,
-    ) -> Result<Option<HashMap<String, NativeField>>> {
-        let time_dim = temporal.time_dim.clone();
+        select: &Selection,
+        files: &mut dyn FileSource,
+    ) -> Result<NativeDataset> {
+        if cadence.bracket() {
+            return self.sample_bracket(cadence, anchor, select, files);
+        }
+        let temporal = &cadence.temporal;
+        let file_anchor = snap_down(temporal.start, anchor, cadence.file_s);
+        let file = files.file(self, file_anchor, select)?;
+        let rec = ((anchor - file_anchor).whole_seconds() / cadence.freq_s) as usize;
+        Ok(NativeDataset {
+            variables: slice_record_buffers(&file, temporal.time_dim.as_str(), rec)?,
+            coords: file.coords.clone(),
+        })
+    }
+
+    /// The `records_per_sample = 2` sample: the two records bracketing `anchor`
+    /// (floor + successor), retaining `time_dim` at length 2, plus a canonical
+    /// 2-element epoch-seconds `time` coordinate. Handles the cross-file
+    /// successor (record 0 of the next file when the floor is the last record)
+    /// and the end-of-data clamp (a degenerate `[last, last]` bracket with equal
+    /// timestamps — never an error).
+    fn sample_bracket(
+        &self,
+        cadence: &Cadence,
+        anchor: OffsetDateTime,
+        select: &Selection,
+        files: &mut dyn FileSource,
+    ) -> Result<NativeDataset> {
+        let temporal = &cadence.temporal;
+        let time_dim = temporal.time_dim.as_str();
+        let (freq_s, file_s) = (cadence.freq_s, cadence.file_s);
 
         // rec0 = the floor (at-or-before) record in file0, as the single path does.
         let file0_anchor = snap_down(temporal.start, anchor, file_s);
-        self.ensure_file(file0_anchor)?;
+        let file0 = files.file(self, file0_anchor, select)?;
         let rec0 = ((anchor - file0_anchor).whole_seconds() / freq_s) as usize;
-        let file0_len = time_len(self.file_ref(file0_anchor), &time_dim);
+        let file0_len = time_len(&file0, time_dim);
 
         // Successor rec1: rec0+1 in the same file, else record 0 of the next file.
         // None => no reachable successor (end clamp): degenerate [rec0, rec0].
         let next_anchor = anchor + Duration::seconds(freq_s);
-        let has_succ = temporal.end.map_or(true, |end| next_anchor < end);
-        let mut succ: Option<(OffsetDateTime, usize)> = None;
+        let has_succ = temporal.end.is_none_or(|end| next_anchor < end);
+        let mut succ: Option<(Arc<NativeDataset>, usize)> = None;
         if has_succ {
             if rec0 + 1 < file0_len {
-                succ = Some((file0_anchor, rec0 + 1)); // successor in the same file
+                succ = Some((file0.clone(), rec0 + 1)); // successor in the same file
             } else {
                 // Successor is record 0 of the next file; read/decode it (a read
                 // failure at the seam is treated as end-of-data, not an error).
                 let next_file_anchor = snap_down(temporal.start, next_anchor, file_s);
-                if self.ensure_file(next_file_anchor).is_ok() {
+                if let Ok(file1) = files.file(self, next_file_anchor, select) {
                     let r1 = ((next_anchor - next_file_anchor).whole_seconds() / freq_s) as usize;
-                    if r1 < time_len(self.file_ref(next_file_anchor), &time_dim) {
-                        succ = Some((next_file_anchor, r1));
+                    if r1 < time_len(&file1, time_dim) {
+                        succ = Some((file1, r1));
                     }
                 }
             }
         }
-        let (succ_anchor, rec1, t1_epoch) = match succ {
-            Some((a, r)) => (a, r, next_anchor.unix_timestamp() as f64),
+        let (file1, rec1, t1_epoch) = match succ {
+            Some((f, r)) => (f, r, next_anchor.unix_timestamp() as f64),
             // Degenerate bracket: hold the last record, equal timestamps.
-            None => (file0_anchor, rec0, anchor.unix_timestamp() as f64),
+            None => (file0.clone(), rec0, anchor.unix_timestamp() as f64),
         };
         let t0_epoch = anchor.unix_timestamp() as f64;
 
         // Stack rec0 (file0) and rec1 (successor file) along the leading time axis.
-        let file0 = self.file_ref(file0_anchor);
-        let file1 = self.file_ref(succ_anchor);
-        let mut buffers = HashMap::with_capacity(file0.variables.len());
+        let mut variables = HashMap::with_capacity(file0.variables.len());
         for (name, field) in &file0.variables {
-            let is_temporal =
-                field.dims.first().map(String::as_str) == Some(time_dim.as_str());
+            let is_temporal = field.dims.first().map(String::as_str) == Some(time_dim);
             let stacked = if is_temporal {
                 let f1 = file1.variables.get(name).unwrap_or(field);
                 stack_two_records(field, rec0, f1, rec1)?
             } else {
                 field.clone() // non-temporal variables pass through whole
             };
-            buffers.insert(name.clone(), stacked);
+            variables.insert(name.clone(), stacked);
         }
         // Carry file0's coords, but replace the time coord with the 2-element
         // epoch-seconds bracket timestamps (the seam the ESS adapter reads).
         let mut coords = file0.coords.clone();
         coords.insert(
-            time_dim.clone(),
+            time_dim.to_string(),
             Coord {
                 field: NativeField {
                     dtype: DType::Float64,
-                    dims: vec![time_dim.clone()],
+                    dims: vec![time_dim.to_string()],
                     shape: vec![2],
                     data: ArrayData::F64(vec![t0_epoch, t1_epoch]),
                     fill_value: None,
@@ -930,71 +1019,346 @@ impl Provider {
                 calendar: Some("standard".to_string()),
             },
         );
-
-        self.coords = coords;
-        self.buffers = buffers;
-        self.current_anchor = Some(anchor);
-        Ok(Some(self.buffers.clone()))
+        Ok(NativeDataset { variables, coords })
     }
 
-    /// The `records_per_sample = 2` path of a PER-CALL `select` peek: read the
-    /// covering file(s) FRESH under `select` (bypassing the LRU) and stack the two
-    /// bracketing records, WITHOUT mutating any cache/buffer state. Handles the
-    /// cross-file successor and the end-of-data clamp exactly as
-    /// [`refresh_bracket`](Self::refresh_bracket), but returns owned buffers.
-    fn bracket_peek(
-        &self,
-        temporal: &SourceTemporal,
-        anchor: OffsetDateTime,
-        freq_s: i64,
-        file_s: i64,
-        select: &Selection,
-    ) -> Result<HashMap<String, NativeField>> {
-        let time_dim = temporal.time_dim.as_str();
-        let file0_anchor = snap_down(temporal.start, anchor, file_s);
-        let file0 = self.read_file(self.resolve_url(file0_anchor)?, select)?;
-        let rec0 = ((anchor - file0_anchor).whole_seconds() / freq_s) as usize;
-        let file0_len = time_len(&file0, time_dim);
-
-        let next_anchor = anchor + Duration::seconds(freq_s);
-        let has_succ = temporal.end.map_or(true, |end| next_anchor < end);
-
-        // (successor_file_or_none_meaning_file0, rec1). A `None` successor file with
-        // rec1 == rec0 is the degenerate end-of-data clamp `[rec0, rec0]`.
-        let (succ_file, rec1) = if has_succ && rec0 + 1 < file0_len {
-            (None, rec0 + 1) // successor in file0
-        } else if has_succ {
-            let nfa = snap_down(temporal.start, next_anchor, file_s);
-            match self.resolve_url(nfa).and_then(|u| self.read_file(u, select)) {
-                Ok(f1) => {
-                    let r1 = ((next_anchor - nfa).whole_seconds() / freq_s) as usize;
-                    if r1 < time_len(&f1, time_dim) {
-                        (Some(f1), r1)
-                    } else {
-                        (None, rec0) // no valid successor record — clamp
-                    }
-                }
-                Err(_) => (None, rec0), // seam read failed — clamp
-            }
-        } else {
-            (None, rec0) // end-of-data — clamp
+    /// [`with_window`](Self::with_window)'s preconditions for one window, all
+    /// decidable before any I/O.
+    fn check_window(&self, w: &Selection) -> Result<()> {
+        let refuse = |detail: String| Error::Format {
+            format: self.loader.format.clone(),
+            detail,
         };
-
-        let file1_ref: &NativeDataset = succ_file.as_ref().unwrap_or(&file0);
-        let mut buffers = HashMap::with_capacity(file0.variables.len());
-        for (name, field) in &file0.variables {
-            let is_temporal = field.dims.first().map(String::as_str) == Some(time_dim);
-            let stacked = if is_temporal {
-                let f1 = file1_ref.variables.get(name).unwrap_or(field);
-                stack_two_records(field, rec0, f1, rec1)?
-            } else {
-                field.clone()
-            };
-            buffers.insert(name.clone(), stacked);
+        if !matches!(self.loader.select, Selection::All) {
+            return Err(refuse(format!(
+                "loader '{}' already bakes a select, and two windows do not compose; \
+                 window the provider that has none",
+                self.loader.name
+            )));
         }
-        Ok(buffers)
+        if !self.reader.supports_selection() {
+            return Err(refuse(format!(
+                "reader for format '{}' does not support select/pushdown, so a \
+                 window cannot be bound to loader '{}'",
+                self.loader.format, self.loader.name
+            )));
+        }
+        let Selection::Named(named) = w else {
+            return Err(refuse(format!(
+                "a window is a NAMED-dimension select (a DimWindow / \"dims\"), got \
+                 {w:?}: a positional select cannot be applied by name, nor checked \
+                 against loader '{}''s time_dim without opening the file",
+                self.loader.name
+            )));
+        };
+        if let Some(temporal) = &self.loader.temporal {
+            if named.contains_key(&temporal.time_dim) {
+                return Err(refuse(format!(
+                    "the window names '{}', loader '{}''s time_dim: records are the \
+                     Provider's (it owns the cadence), so a window never names the \
+                     record axis",
+                    temporal.time_dim, self.loader.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Check every window and compute their bounding union by name — what
+    /// [`sample_windows_at`](Self::sample_windows_at) reads once and slices back.
+    ///
+    /// Every dimension any window names appears in the union, as the sorted
+    /// distinct union of the windows' indices when ALL of them narrow it and as
+    /// [`AxisSelect::All`] otherwise. Keeping the `All` entries (rather than
+    /// leaving the dimension unnamed) is what makes the union read refuse a
+    /// dimension no field carries even when only one window named it — exactly
+    /// the error that window's own read would raise.
+    pub(crate) fn plan_windows(&self, windows: &[Selection]) -> Result<WindowPlan> {
+        for w in windows {
+            self.check_window(w)?;
+        }
+        let named: Vec<&BTreeMap<String, AxisSelect>> = windows
+            .iter()
+            .map(|w| match w {
+                Selection::Named(m) => m,
+                _ => unreachable!("check_window refuses every non-named window"),
+            })
+            .collect();
+        let dims: BTreeSet<&String> = named.iter().flat_map(|m| m.keys()).collect();
+        let mut union = BTreeMap::new();
+        for dim in dims {
+            let mut acc: Option<BTreeSet<usize>> = Some(BTreeSet::new());
+            for m in &named {
+                let narrowed = match m.get(dim) {
+                    Some(axis) => axis.unbounded_indices(&self.loader.format)?,
+                    None => None,
+                };
+                match (narrowed, acc.as_mut()) {
+                    (Some(idx), Some(set)) => set.extend(idx),
+                    _ => acc = None,
+                }
+            }
+            union.insert(
+                dim.clone(),
+                match acc {
+                    Some(set) => AxisSelect::Indices(set.into_iter().collect()),
+                    None => AxisSelect::All,
+                },
+            );
+        }
+        Ok(WindowPlan {
+            windows: windows.to_vec(),
+            union: Selection::Named(union),
+        })
+    }
+
+    /// The windows of `plan` at `t`, the union's files drawn from `files`.
+    pub(crate) fn sample_windows_from(
+        &self,
+        t: OffsetDateTime,
+        plan: &WindowPlan,
+        files: &mut dyn FileSource,
+    ) -> Result<Vec<NativeDataset>> {
+        if plan.windows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let union = &plan.union;
+        let ds = self.sample_from(t, union, files)?;
+        plan.windows
+            .iter()
+            .map(|w| slice_window(&ds, w, union, &self.loader.format))
+            .collect()
+    }
+
+    /// Whether the loader is DISCRETE (has a cadence).
+    pub(crate) fn is_discrete(&self) -> bool {
+        self.loader.temporal.is_some()
+    }
+
+    /// The baked [`DataSource::select`].
+    pub(crate) fn baked_select(&self) -> &Selection {
+        &self.loader.select
+    }
+
+    /// The cadence anchor `t` snaps to, or `None` for a CONST loader or a
+    /// non-positive frequency (which [`refresh_times`](Self::refresh_times)
+    /// already turns into an empty schedule).
+    pub(crate) fn cadence_anchor(&self, t: OffsetDateTime) -> Option<OffsetDateTime> {
+        let temporal = self.loader.temporal.as_ref()?;
+        let freq_s = temporal.frequency.whole_seconds();
+        (freq_s > 0).then(|| snap_down(temporal.start, t, freq_s))
+    }
+
+    /// The URLs a sample at `t` reads — the covering file and, for a bracket
+    /// whose successor may sit across a seam, the next one — for a disk-cache
+    /// warm-up that decodes nothing. Empty for a store-backed loader, whose
+    /// objects are known only once a decode resolves the chunk keys. Best-effort:
+    /// an unresolvable URL is simply left out (the decode raises the real error).
+    pub(crate) fn warm_urls(&self, t: OffsetDateTime) -> Vec<String> {
+        if self.reader.store_backed() {
+            return Vec::new();
+        }
+        let Ok(Some(cadence)) = self.cadence() else {
+            return self.resolve_url(OffsetDateTime::UNIX_EPOCH).into_iter().collect();
+        };
+        let temporal = &cadence.temporal;
+        let anchor = cadence.anchor(t);
+        let mut anchors = vec![snap_down(temporal.start, anchor, cadence.file_s)];
+        if cadence.bracket() {
+            let next = anchor + Duration::seconds(cadence.freq_s);
+            let next_file = snap_down(temporal.start, next, cadence.file_s);
+            if temporal.end.is_none_or(|end| next < end) && next_file != anchors[0] {
+                anchors.push(next_file);
+            }
+        }
+        anchors.into_iter().filter_map(|a| self.resolve_url(a).ok()).collect()
+    }
+
+    /// Fetch (or reuse) `url` into the disk cache, decoding nothing.
+    pub(crate) fn warm(&self, url: &str) -> Result<()> {
+        self.fetch_blob(url).map(|_| ())
     }
 }
+
+/// The validated cadence of a DISCRETE loader (see [`Provider::cadence`]).
+struct Cadence {
+    temporal: SourceTemporal,
+    freq_s: i64,
+    file_s: i64,
+}
+
+impl Cadence {
+    /// The cadence anchor `t` snaps down to.
+    fn anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
+        snap_down(self.temporal.start, t, self.freq_s)
+    }
+
+    /// `records_per_sample = 2`: a sample is a two-record bracket.
+    fn bracket(&self) -> bool {
+        self.temporal.records_per_sample == Some(2)
+    }
+}
+
+/// Where the sampler ([`Provider::sample_from`]) gets the decoded file covering a
+/// file anchor. The sampler is one function; what varies between
+/// [`Provider::sample_at`], [`Provider::refresh`] and a prefetch worker is only
+/// whether a decoded file is reused and with whom it is shared.
+pub(crate) trait FileSource {
+    /// The whole decoded file covering `file_anchor`, read under `select`.
+    fn file(
+        &mut self,
+        provider: &Provider,
+        file_anchor: OffsetDateTime,
+        select: &Selection,
+    ) -> Result<Arc<NativeDataset>>;
+}
+
+/// No reuse: every request is a fresh fetch + decode. What
+/// [`Provider::sample_at`] uses, so it holds no state at all.
+pub(crate) struct FreshFiles;
+
+impl FileSource for FreshFiles {
+    fn file(
+        &mut self,
+        provider: &Provider,
+        file_anchor: OffsetDateTime,
+        select: &Selection,
+    ) -> Result<Arc<NativeDataset>> {
+        provider.read_file_at(file_anchor, select).map(Arc::new)
+    }
+}
+
+/// The Provider's own decoded-file LRU, lent to the sampler by
+/// [`Provider::refresh`]; on a hit the entry moves to the tail (most recently
+/// used), so a file-period seam decodes each adjacent file at most once.
+///
+/// **Why this Provider does not push its records into the decode.** The
+/// netcdf reader honours a [`Records`](crate::Records) pushdown in every
+/// track (`spec/registries.md` §2.1) and the Julia Provider uses it, because
+/// that one computes its record from the cadence and keeps no decoded-file
+/// buffer: there a whole-file decode per sample is pure waste. Here this LRU
+/// IS the optimisation — one whole-file decode amortised over every tick in
+/// the file — so pushing down would replace one decode per FILE with one per
+/// TICK. Measured on this reader (release build, warm page cache): an
+/// A1-shaped file (24 records, 47 2-D variables) decodes whole in 37.7 ms,
+/// i.e. 1.57 ms per tick, against 8.3 ms for a narrowed 2-record decode —
+/// 5.3x worse per tick; an A3dyn-shaped file (8 records, 6 3-D variables)
+/// 104.0 ms whole = 13.0 ms per tick against 29.5 ms narrowed, 2.3x worse.
+/// The narrowed decode is genuinely 3.5–4.6x cheaper *per decode*, which is
+/// exactly why it is worth having on the reader and not worth wiring in
+/// front of a buffer that already avoids most of them. A caller that wants it
+/// calls [`Reader::read_native_records`](crate::Reader::read_native_records)
+/// directly; a track is not made slower for symmetry.
+struct LruFiles<'a> {
+    files: &'a mut Vec<(OffsetDateTime, Arc<NativeDataset>)>,
+    cap: usize,
+}
+
+impl FileSource for LruFiles<'_> {
+    fn file(
+        &mut self,
+        provider: &Provider,
+        file_anchor: OffsetDateTime,
+        select: &Selection,
+    ) -> Result<Arc<NativeDataset>> {
+        if let Some(pos) = self.files.iter().position(|(a, _)| *a == file_anchor) {
+            let entry = self.files.remove(pos);
+            let ds = entry.1.clone();
+            self.files.push(entry);
+            return Ok(ds);
+        }
+        let ds = Arc::new(provider.read_file_at(file_anchor, select)?);
+        self.files.push((file_anchor, ds.clone()));
+        while self.files.len() > self.cap {
+            self.files.remove(0); // evict the least-recently-used
+        }
+        Ok(ds)
+    }
+}
+
+/// [`Provider::plan_windows`]'s result: the windows, and the by-name union they
+/// are read through.
+pub(crate) struct WindowPlan {
+    windows: Vec<Selection>,
+    union: Selection,
+}
+
+/// Window `w` gathered back out of `ds`, a decode under the by-name `union`.
+///
+/// Along a dimension the union narrowed, the window's indices are a subset of the
+/// union's sorted list, so each is found by position. Along a dimension the
+/// union left whole, the decoded axis IS the file axis and the window's indices
+/// are its positions — bounds-checked here against that length, since the union
+/// read never saw them (it is exactly the check the window's own read makes, in
+/// its words).
+fn slice_window(
+    ds: &NativeDataset,
+    w: &Selection,
+    union: &Selection,
+    format: &str,
+) -> Result<NativeDataset> {
+    let (Selection::Named(window), Selection::Named(union)) = (w, union) else {
+        return Ok(ds.clone()); // `Selection::All`: the whole union, which is everything
+    };
+    let mut picks: HashMap<String, Vec<usize>> = HashMap::new();
+    for (dim, axis) in window {
+        let Some(wanted) = axis.unbounded_indices(format)? else {
+            continue;
+        };
+        let positions = match union.get(dim) {
+            Some(AxisSelect::Indices(held)) => wanted
+                .iter()
+                .map(|g| held.binary_search(g).expect("the union holds every window index"))
+                .collect(),
+            _ => match axis_len(ds, dim) {
+                // The union read this dimension whole for some OTHER window, so
+                // the reader never refused this window's subset of a time axis:
+                // refuse it here, as the window's own read would.
+                Some(_) if is_time_dim(ds, dim) => {
+                    return Err(Error::Format {
+                        format: format.to_string(),
+                        detail: format!(
+                            "select asks for a subset of the time dimension '{dim}'; record \
+                             selection is the Provider's, not the reader's — a time \
+                             dimension may only be \"all\""
+                        ),
+                    })
+                }
+                Some(len) => axis.resolve_in(len, format)?,
+                None => continue, // carried by no field: the union read refused it
+            },
+        };
+        picks.insert(dim.clone(), positions);
+    }
+    Ok(ds.take_by_name(&picks))
+}
+
+/// Is `dim` the decoded dataset's time axis? A same-named coordinate with CF
+/// `"<step> since <ref>"` units, or a dimension literally named `time` — the
+/// union of the readers' rules, since only a refusal rests on it.
+fn is_time_dim(ds: &NativeDataset, dim: &str) -> bool {
+    let cf = ds.coords.get(dim).and_then(|c| c.units.as_deref()).is_some_and(|u| {
+        u.split_whitespace().any(|w| w.eq_ignore_ascii_case("since"))
+    });
+    cf || dim.eq_ignore_ascii_case("time")
+}
+
+/// The length of `dim` in the first field (variable or coordinate) carrying it.
+fn axis_len(ds: &NativeDataset, dim: &str) -> Option<usize> {
+    ds.variables
+        .values()
+        .chain(ds.coords.values().map(|c| &c.field))
+        .find_map(|f| f.dims.iter().position(|d| d == dim).map(|i| f.shape[i]))
+}
+
+// `sample_at` takes `&self` so a `PrefetchGroup` can call it from worker threads;
+// that is only sound if every piece of a Provider — the cache, the reader, the
+// loader — may be shared across threads. Asserted here, at compile time, so a
+// field that is not `Sync` breaks the build rather than the prefetcher.
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<Provider>;
+};
 
 /// Slice cadence record `rec` from every variable carrying `time_dim` as its
 /// leading axis; non-temporal variables pass through whole. Shared by the plain

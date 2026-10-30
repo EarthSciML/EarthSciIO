@@ -10,7 +10,12 @@ This package exposes:
   URL→content-addressed-blob fetcher behind the ESS opener/fetcher seam, with its
   runtime errors (:class:`CacheMiss`, :class:`IntegrityError`, …), the
   :class:`Manifest`, the :func:`cache_key`, the :class:`~earthsciio.validate.Temporal`
-  freshness policy, and the pluggable auth resolvers.
+  freshness policy, and the pluggable auth resolvers;
+* the **epoch prefetch** surface (``spec/prefetch.md``) — :class:`DimWindow`
+  (a window that names its dimensions), :class:`PrefetchGroup` and the
+  :class:`Sample`/:class:`EpochSample` its ``take`` returns, beside
+  :meth:`Provider.sample_at`, :meth:`Provider.with_window` and
+  :meth:`Provider.sample_windows_at`.
 
 On import it registers the cloud **stubs** (S3 transport+store, Zarr reader) and
 the **active** core backends (``http``/``file`` transports, ``local`` store) into
@@ -82,6 +87,8 @@ from .provider import (
     Window,
     reader_option_names,
 )
+from .selection import DimWindow
+from .prefetch import EpochSample, PrefetchGroup, Sample
 from .backends.cds import (
     CdsTransport,
     cds_api_key,
@@ -156,6 +163,11 @@ __all__ = [
     "SourceTemporal",
     "Window",
     "reader_option_names",
+    # named-dimension windows + epoch prefetch (spec/prefetch.md)
+    "DimWindow",
+    "PrefetchGroup",
+    "Sample",
+    "EpochSample",
     # 0.1.1 spellings, kept source-compatible; dropped in 0.2.0
     "DataLoader",
     "LoaderTemporal",

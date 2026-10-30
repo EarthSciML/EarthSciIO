@@ -133,11 +133,12 @@ end
                     (; kw...)
                 elseif fmt == "netcdf"
                     # A netcdf case may pin a DECODE-TIME window: same blob, same
-                    # cache key, only the requested hyperslab materialised. A case
-                    # without `axes` (the `{all_records: true}` form) reads whole.
+                    # cache key, only the requested hyperslab materialised — in
+                    # either form, positional `axes` or named `dims`. A case with
+                    # neither (the `{all_records: true}` form) reads whole.
                     sel = get(case, "select", nothing)
-                    axes = sel === nothing ? nothing : get(sel, "axes", nothing)
-                    axes === nothing ? NamedTuple() : (; select = sel)
+                    windowed = sel !== nothing && (haskey(sel, "axes") || haskey(sel, "dims"))
+                    windowed ? (; select = sel) : NamedTuple()
                 else
                     NamedTuple()
                 end

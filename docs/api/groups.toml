@@ -16,6 +16,14 @@ ops = ["provider", "data_source", "source_temporal", "window", "const_provider",
        "materialize", "refresh", "refresh_times", "prefetch"]
 
 [[group]]
+id = "prefetch"
+title = "Prefetch and windows"
+description = "Decoding upcoming forcing epochs on background workers, bitwise identical to refresh, and windowing a provider by named dimension so each rank reads only its block."
+ops = ["dim_window", "select_form", "prefetch_group", "prefetch_sample", "epoch_sample",
+       "prefetch_order", "sample_at", "with_window", "sample_windows_at",
+       "boundaries", "start", "take", "cancel"]
+
+[[group]]
 id = "native-arrays"
 title = "Native arrays and readers"
 description = "The raw native-grid arrays a provider returns, and the format readers that decode cached files into them."

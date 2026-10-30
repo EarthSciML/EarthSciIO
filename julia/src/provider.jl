@@ -574,6 +574,13 @@ function materialize(p::Provider, t::Real; select = nothing)
         nds, pos = _load_ticks(p, Int[tick]; select = select)
         return _slice_dim(nds, p.time_dim, pos[1])
     end
+    # A DISCRETE source with one file per tick resolves its URL at the TICK too,
+    # not at the query time: the value at `t` is the value of the tick in effect,
+    # so it depends on `t` only through that anchor (spec/prefetch.md §1 — the
+    # property `PrefetchGroup` relies on to decode a coarse member once per
+    # anchor) and a `t` before the first tick raises as it does with a
+    # `time_dim`. A CONST source has no ticks and reads its one URL.
+    p.cadence == DISCRETE && return _load(p, p.times[_tick_index(p, t)]; select = select)
     return _load(p, t; select = select)
 end
 
@@ -591,6 +598,28 @@ its `PresetTimeCallback` at each of [`refresh_times`]`(p)`. Identical to
 [`materialize`]`(p, t)`; named for the solver-side update site. `select` is the
 per-call projection pushdown override (see [`materialize`])."""
 refresh(p::Provider, t::Real; select = nothing) = materialize(p, t; select = select)
+
+"""
+    sample_at(p::Provider, t::Real) -> NativeDataset
+    sample_at(p::Provider) -> NativeDataset
+
+The dataset `refresh(p, t)` returns — data variables AND coordinates, with the same
+snap-down to the cadence anchor, the same file-local record, the same
+`records_per_sample = 2` bracket and the same end-of-data rules — and it raises
+what `refresh(p, t)` raises (spec/prefetch.md §1). It depends on `t` only through
+the anchor `t` snaps to, so two times in one cadence interval give equal samples.
+The no-argument form is a [`CONST`] provider's [`materialize`]`(p)`.
+
+It is safe to call from several threads at once on one provider, which is what
+[`PrefetchGroup`] does. In the Python and Rust tracks `sample_at` is new because
+their `refresh` updates a decoded-file buffer; the Julia [`Provider`] holds no
+buffer at all (immutable, decoding per sample with its `records` pushdown), so
+here it is the same function as [`materialize`], under the name the cross-track
+contract gives it. The shared state it does touch is thread-safe: the cache takes
+a per-blob lock to fill a miss, and every NetCDF-C access is serialised by one
+process-wide lock."""
+sample_at(p::Provider, t::Real) = materialize(p, t)
+sample_at(p::Provider) = materialize(p)
 
 """
     prefetch(p::Provider) -> Vector{CacheEntry}

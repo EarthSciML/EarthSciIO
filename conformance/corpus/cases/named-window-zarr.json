@@ -1,0 +1,271 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "named-window-zarr",
+  "loader": "geosfp",
+  "kind": "grid",
+  "format": "zarr",
+  "transport": "s3",
+  "store": "local",
+  "resolved_url": "s3://earthsci-fixtures/geosfp-mini.zarr",
+  "cache_key": "2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93",
+  "blob_path": "cache/v1/blobs/2b/2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93",
+  "manifest_path": "cache/v1/meta/2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93.json",
+  "content_sha256": "ac403c6b7a747c0edcbf542744869a0f0c2af7e7b9d119696fdcb80d6518932d",
+  "bytes": 244,
+  "variables": [
+    "T3",
+    "PS2"
+  ],
+  "objects": [
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/.zarray",
+      "cache_key": "2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93",
+      "blob_path": "cache/v1/blobs/2b/2b6a978da646dc65746d157483961389cf9d55d5daa03e6b1b66d457bf901c93",
+      "content_sha256": "ac403c6b7a747c0edcbf542744869a0f0c2af7e7b9d119696fdcb80d6518932d",
+      "bytes": 244
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/.zattrs",
+      "cache_key": "0534f80d7fdc5a32d689b5336e21aaa288ab6572d156bb5cbfbb5d956322cfac",
+      "blob_path": "cache/v1/blobs/05/0534f80d7fdc5a32d689b5336e21aaa288ab6572d156bb5cbfbb5d956322cfac",
+      "content_sha256": "0dac24fc0b5c586da9f2ea88ad0aabe802cfb2a39237e46262133e0a5e48bed4",
+      "bytes": 44
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/0.0.0",
+      "cache_key": "ce4d742d5948c22608a67b71e15580e9a88984294a527910c8bb28fe58096a03",
+      "blob_path": "cache/v1/blobs/ce/ce4d742d5948c22608a67b71e15580e9a88984294a527910c8bb28fe58096a03",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/0.0.1",
+      "cache_key": "a09ddfe5b4c1229a269659de78d4103924f8c7b4c6fb4377ebb4095c062fedec",
+      "blob_path": "cache/v1/blobs/a0/a09ddfe5b4c1229a269659de78d4103924f8c7b4c6fb4377ebb4095c062fedec",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/0.1.0",
+      "cache_key": "fa9db30d793768f1b629e9c9f725acfade1e5be7e1cc47d0beb9b44a0c3ddfae",
+      "blob_path": "cache/v1/blobs/fa/fa9db30d793768f1b629e9c9f725acfade1e5be7e1cc47d0beb9b44a0c3ddfae",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/0.1.1",
+      "cache_key": "df64728cdd85e5d1a27becad122f7e3f03bc2fe5f18bda1a34ee557269aee62b",
+      "blob_path": "cache/v1/blobs/df/df64728cdd85e5d1a27becad122f7e3f03bc2fe5f18bda1a34ee557269aee62b",
+      "content_sha256": "e118ac0fdebaf3ec0a32fade49e21312f1673ffa6e1dbbfc99217612f5375e8f",
+      "bytes": 40
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/1.0.0",
+      "cache_key": "ed18eccef61dab73c4a9e6ce3381c1141931c7974c3ea2f5bb8d31511cbd6f39",
+      "blob_path": "cache/v1/blobs/ed/ed18eccef61dab73c4a9e6ce3381c1141931c7974c3ea2f5bb8d31511cbd6f39",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/1.0.1",
+      "cache_key": "281dfb5364c3c95cfaed0afa3be5e02681d9ddba3268ad9c46808a010fecd8fb",
+      "blob_path": "cache/v1/blobs/28/281dfb5364c3c95cfaed0afa3be5e02681d9ddba3268ad9c46808a010fecd8fb",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/1.1.0",
+      "cache_key": "87f9b91e0ae7650fdf37dd7d6515273c9dfc026148bc54a449cdfd50bfddde69",
+      "blob_path": "cache/v1/blobs/87/87f9b91e0ae7650fdf37dd7d6515273c9dfc026148bc54a449cdfd50bfddde69",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/1.1.1",
+      "cache_key": "4c6c296a28b75d610ef11ee66b1b08562ba99aecd68fd44fe1414c2c54b50dec",
+      "blob_path": "cache/v1/blobs/4c/4c6c296a28b75d610ef11ee66b1b08562ba99aecd68fd44fe1414c2c54b50dec",
+      "content_sha256": "97a384e2379693d08703949614d186f072c9d954dedb8e0594a337b00d80b983",
+      "bytes": 40
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/2.0.0",
+      "cache_key": "afac1c803ab5e4d5facfefa5312ed77922322e5da385e31ec685de0e2c954cbf",
+      "blob_path": "cache/v1/blobs/af/afac1c803ab5e4d5facfefa5312ed77922322e5da385e31ec685de0e2c954cbf",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/2.0.1",
+      "cache_key": "33575f738016fabd5cf584034bc3c74c4a8d5a917bc8840ebdbb6ecd9c73c495",
+      "blob_path": "cache/v1/blobs/33/33575f738016fabd5cf584034bc3c74c4a8d5a917bc8840ebdbb6ecd9c73c495",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/2.1.0",
+      "cache_key": "4a92c0c69a524e0f947e127e0f76da45c9cb691864fc3db7fdfc629a913a9d15",
+      "blob_path": "cache/v1/blobs/4a/4a92c0c69a524e0f947e127e0f76da45c9cb691864fc3db7fdfc629a913a9d15",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/T3/2.1.1",
+      "cache_key": "a437c45378fc8f2b003a3d9ead6f5e72d48f09fd8abd75ef83f75f3379b91e43",
+      "blob_path": "cache/v1/blobs/a4/a437c45378fc8f2b003a3d9ead6f5e72d48f09fd8abd75ef83f75f3379b91e43",
+      "content_sha256": "07916fa3f77f2dfd21a173ab3b756e4f3b03e50922873a5e304fccfd1059e9cd",
+      "bytes": 40
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/.zarray",
+      "cache_key": "378d8e07a2c8a1711b869970052fe5b91f7914d1b64cc3578e69971b9de74bce",
+      "blob_path": "cache/v1/blobs/37/378d8e07a2c8a1711b869970052fe5b91f7914d1b64cc3578e69971b9de74bce",
+      "content_sha256": "6e10c7a5342e90924a7ca3ad0767435c2de54c416cb41a82187c524fcf1d2f6b",
+      "bytes": 238
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/.zattrs",
+      "cache_key": "ce5aa76970553c94a3d1d2db071ec24b35930295894aa350d9d5d8b6bce34a59",
+      "blob_path": "cache/v1/blobs/ce/ce5aa76970553c94a3d1d2db071ec24b35930295894aa350d9d5d8b6bce34a59",
+      "content_sha256": "55da8810f2e6614c7c04913441ec1e55d310b408ab0ca89ef7873d1cc68d5c0c",
+      "bytes": 37
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/0.0",
+      "cache_key": "301bbfb142432f704d11da10aac36b92cf61bea0c77ced512059dbb5a1fad264",
+      "blob_path": "cache/v1/blobs/30/301bbfb142432f704d11da10aac36b92cf61bea0c77ced512059dbb5a1fad264",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/0.1",
+      "cache_key": "44062bf0c2f8d6346ec23df133df53c9cf7284e72a4e211ad74eb1cab8b0d9ce",
+      "blob_path": "cache/v1/blobs/44/44062bf0c2f8d6346ec23df133df53c9cf7284e72a4e211ad74eb1cab8b0d9ce",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/1.0",
+      "cache_key": "114b9df3db4d14edae6bee6e03d4bfdb4955a1c3190d57914f66ee390ae893cf",
+      "blob_path": "cache/v1/blobs/11/114b9df3db4d14edae6bee6e03d4bfdb4955a1c3190d57914f66ee390ae893cf",
+      "content_sha256": "b0d6997e97c38dd477527b01d54fd08cda108edc6e1388a1c6a719c5c3935f8f",
+      "bytes": 20,
+      "poisoned": true
+    },
+    {
+      "url": "s3://earthsci-fixtures/geosfp-mini.zarr/PS2/1.1",
+      "cache_key": "c502464bef29e7aec1bca47305a2afccb08ff330f3d7a6fc3cc1c5f5e4c704b0",
+      "blob_path": "cache/v1/blobs/c5/c502464bef29e7aec1bca47305a2afccb08ff330f3d7a6fc3cc1c5f5e4c704b0",
+      "content_sha256": "c62bdaa294583c8734a7ed325215c8836c48d684d9cc8f70bdb6945be87df9ef",
+      "bytes": 64
+    }
+  ],
+  "select": {
+    "dims": {
+      "lev": "all",
+      "lat": {
+        "slice": [
+          2,
+          4
+        ]
+      },
+      "lon": {
+        "indices": [
+          5,
+          3
+        ]
+      }
+    }
+  },
+  "decode": {
+    "compressor": "blosc-lz4-shuffle",
+    "fill_to_nan": false,
+    "order": "C",
+    "zarr_format": 2,
+    "select_form": "dims"
+  },
+  "expected": {
+    "variables": {
+      "T3": {
+        "dtype": "float64",
+        "dims": [
+          "lev",
+          "lat",
+          "lon"
+        ],
+        "shape": [
+          3,
+          2,
+          2
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            [
+              25.0,
+              23.0
+            ],
+            [
+              35.0,
+              33.0
+            ]
+          ],
+          [
+            [
+              125.0,
+              123.0
+            ],
+            [
+              135.0,
+              133.0
+            ]
+          ],
+          [
+            [
+              225.0,
+              223.0
+            ],
+            [
+              235.0,
+              233.0
+            ]
+          ]
+        ]
+      },
+      "PS2": {
+        "dtype": "float64",
+        "dims": [
+          "lat",
+          "lon"
+        ],
+        "shape": [
+          2,
+          2
+        ],
+        "fill_value": null,
+        "data": [
+          [
+            1025.0,
+            1023.0
+          ],
+          [
+            1035.0,
+            1033.0
+          ]
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "Store-backed Zarr v2 store read through a NAMED-dimension select: T3 [lev,lat,lon] chunked [1,2,3] and PS2 [lat,lon] chunked [2,3] under {lev: all, lat: {slice:[2,4]}, lon: {indices:[5,3]}} -- one window, two ranks. It intersects T3/0.1.1, T3/1.1.1, T3/2.1.1 and PS2/1.1 only; the other 12 chunk objects are POISONED (committed, manifest-valid, a well-formed blosc container of the WRONG size), so a reader that fetches one fails rather than quietly discarding it. fill_value 0.0 is not NaN; no coordinate arrays."
+}

@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, AxisSelect, Cache, Coord, DType, DataSource, Ff10Reader, FormatRegistry,
-    NativeField, Provider, Selection,
+    ArrayData, Cache, Coord, DType, DataSource, Ff10Reader, FormatRegistry, NativeField,
+    Provider, Selection,
 };
 use serde_json::{json, Map, Value};
 
@@ -56,27 +56,14 @@ fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
     configured.then_some(reader)
 }
 
-/// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
-/// zarr cases); absent ⇒ `Selection::All`.
+/// Parse a case's `select` into a [`Selection`] through the crate's own wire
+/// parser: `{axes: [...]}` is `Orthogonal` (positional), `{dims: {...}}` is
+/// `Named` (`spec/prefetch.md` §2.1), and a case pinning neither
+/// (`all_records`, …) is `Selection::All`.
 fn parse_selection(case: &Value) -> Selection {
-    match case.get("select").and_then(|s| s.get("axes")).and_then(Value::as_array) {
-        Some(arr) => Selection::Orthogonal(arr.iter().map(parse_axis).collect()),
-        None => Selection::All,
-    }
-}
-
-fn parse_axis(v: &Value) -> AxisSelect {
-    if v.as_str() == Some("all") {
-        return AxisSelect::All;
-    }
-    if let Some(idx) = v.get("indices").and_then(Value::as_array) {
-        return AxisSelect::Indices(idx.iter().map(|x| x.as_u64().unwrap() as usize).collect());
-    }
-    if let Some(s) = v.get("slice").and_then(Value::as_array) {
-        let g = |i: usize, d: u64| s.get(i).and_then(Value::as_u64).unwrap_or(d) as usize;
-        return AxisSelect::Range { start: g(0, 0), stop: g(1, 0), step: g(2, 1) };
-    }
-    panic!("unrecognized axis selector: {v}")
+    case.get("select")
+        .map(|s| Selection::from_json(s).expect("a well-formed corpus select"))
+        .unwrap_or_default()
 }
 
 fn corpus_dir() -> PathBuf {
@@ -207,15 +194,15 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
         }
         loader = loader.reader_options(options);
     }
-    // Whole-file, but selection-capable (netcdf): a case carrying an orthogonal
-    // `select` is a DECODE-TIME window — the same blob under the same cache key,
-    // with only the requested hyperslab materialised. `parse_selection` yields
-    // `Selection::All` for a case with no `axes`.
+    // Whole-file, but selection-capable (netcdf): a case carrying a `select` —
+    // positional `axes` or named `dims` — is a DECODE-TIME window: the same blob
+    // under the same cache key, with only the requested hyperslab materialised.
+    // `parse_selection` yields `Selection::All` for a case with neither.
     if fmt == "netcdf" {
         loader = loader.select(parse_selection(case));
     }
     // Store-backed (zarr): name the arrays (no .zmetadata to enumerate) + carry
-    // the orthogonal selection that drives lazy chunk fetch.
+    // the selection (either spelling) that drives lazy chunk fetch.
     if formats.get(fmt).map(|r| r.store_backed()).unwrap_or(false) {
         let vars: Vec<String> = case["variables"]
             .as_array()

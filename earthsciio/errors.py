@@ -40,8 +40,28 @@ __all__ = [
 ]
 
 
+def _rebuild_error(cls: type, args: tuple, state: dict) -> "EarthSciIOError":
+    """Unpickle an :class:`EarthSciIOError` without re-running its ``__init__``."""
+    err = cls.__new__(cls)
+    Exception.__init__(err, *args)
+    err.__dict__.update(state)
+    return err
+
+
 class EarthSciIOError(Exception):
-    """Base class for every EarthSciIO error."""
+    """Base class for every EarthSciIO error.
+
+    Every subclass pickles: the default exception pickle re-calls ``cls(*args)``
+    with the formatted MESSAGE as the only argument, which breaks every
+    subclass whose ``__init__`` takes structured fields instead (``CacheMiss(url,
+    key)`` cannot be rebuilt from its message). A process-pool prefetch worker
+    (``earthsciio.prefetch``) must hand the consumer the error ``refresh`` would
+    have raised — a ``CacheMiss``, not a wrapper — so the error is rebuilt from
+    its message and attributes directly.
+    """
+
+    def __reduce__(self):
+        return (_rebuild_error, (type(self), self.args, dict(self.__dict__)))
 
 
 class BackendNotRegistered(EarthSciIOError, LookupError):

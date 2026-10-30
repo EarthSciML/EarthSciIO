@@ -103,13 +103,78 @@ end
 #     `dims`. Selecting a single index likewise keeps the axis, at length 1: this
 #     vocabulary never drops a dimension.
 
-# `select` (from reader_kwargs) -> the per-axis selector vector, or `nothing`.
-function _select_axes(select)
+# `select` (from reader_kwargs) -> its FORM, or `nothing` when nothing is selected:
+#
+#   * `(:axes, [selector, ...])` — POSITIONAL over the file-order dims of the
+#     arrays whose rank equals the axis count (a bare vector is this form too);
+#   * `(:dims, Dict(dim => parsed selector))` — by dimension NAME, applied to every
+#     field carrying that dimension whatever its rank (spec/prefetch.md §2.1).
+#
+# The two spell ONE vocabulary, so the selectors themselves are parsed by the same
+# `_parse_axis`, and a `select` carrying both keys is an error rather than one
+# silently winning: they would disagree about which axis a selector means the
+# moment two fields differ in rank, which is the very case `dims` exists for.
+function _select_form(select)
     select === nothing && return nothing
-    if select isa AbstractDict && haskey(select, "axes")
-        return collect(select["axes"])
+    if select isa AbstractDict
+        has_axes, has_dims = haskey(select, "axes"), haskey(select, "dims")
+        has_axes && has_dims && throw(ArgumentError(
+            "select carries both \"axes\" and \"dims\"; it takes exactly one — " *
+            "positional `axes` or named `dims` (spec/prefetch.md §2.1)"))
+        has_axes && return (:axes, collect(select["axes"]))
+        if has_dims
+            named = select["dims"]
+            named isa AbstractDict || throw(ArgumentError(
+                "select[\"dims\"] must map dimension names to selectors, got " *
+                "$(typeof(named))"))
+            return (:dims, Dict{String,Any}(String(d) => _parse_axis(ax) for (d, ax) in named))
+        end
+        return nothing
     elseif select isa AbstractVector
-        return collect(select)
+        return (:axes, collect(select))
+    end
+    return nothing
+end
+
+# Is `d` a TIME dimension, by the rule both `select` forms share (spec/conformance.md
+# §3)? `units` is the `units` of a same-named coordinate, or `nothing` where there is
+# none — the zarr reader returns no coordinates, so there only the name speaks.
+_is_time_dim_named(d::AbstractString, units) =
+    (units !== nothing && occursin(r"\bsince\b"i, strip(String(units)))) ||
+    lowercase(String(d)) == "time"
+
+# The checks a NAMED selection must pass against the fields of the read before
+# anything is read, shared by every reader that takes the `dims` form:
+#
+#   * every named dimension is carried by some field of the read — `present` is the
+#     union of the dims of the decoded (projected) data variables and the
+#     coordinates returned with them. A window that names nothing the read has
+#     would otherwise mean nothing, silently; `consumed(d)` names the char
+#     variable whose string LENGTH `d` is, if any, so that case says what it is;
+#   * a selector other than `"all"` on a time dimension is refused, exactly as for
+#     `axes`: choosing records is the Provider's job, not the reader's.
+function _check_named_selection(named::AbstractDict{String,<:Any},
+                                present::AbstractSet{String}, is_time::Function;
+                                consumed::Function = _ -> nothing)
+    have = sort!(collect(present))
+    for d in sort!(collect(keys(named)))
+        d in present && continue
+        owner = consumed(d)
+        owner === nothing || throw(ArgumentError(
+            "select names dimension '$d', which is the string LENGTH of the char " *
+            "variable '$owner' and not an axis of any decoded field (a window on it " *
+            "would truncate every string); the fields of this read carry $have"))
+        throw(ArgumentError(
+            "select names dimension '$d', which no field of this read carries; the " *
+            "decoded fields and coordinates carry $have (a named window must name " *
+            "a dimension the read has — it never silently means nothing)"))
+    end
+    for d in sort!(collect(keys(named)))
+        named[d][1] === :all && continue
+        is_time(d) && throw(ArgumentError(
+            "select asks for a subset of the time dimension '$d'; record selection " *
+            "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
+            "reader's — a time dimension may only be \"all\""))
     end
     return nothing
 end
@@ -357,9 +422,21 @@ Read `variables` (array names) from the Zarr store at `base_url` under an
 orthogonal `select`. Reads BOTH Zarr **v2** (`.zarray`/`.zattrs`, plain chunk
 objects) and Zarr **v3** (`zarr.json`, the sharding codec) — the layout is
 detected per array by probing for `zarr.json` first, then `.zarray`. `variables`
-is REQUIRED (the store cannot be enumerated). `select` (`Dict("axes"=>[...])`) is
-applied to each array whose rank matches the axis count; other-rank arrays read
-whole.
+is REQUIRED (the store cannot be enumerated). `select` takes either form of the
+one selector vocabulary (spec/registries.md §2.2):
+
+  * `Dict("axes"=>[...])` — positional, applied to each array whose rank matches
+    the axis count; other-rank arrays read whole;
+  * `Dict("dims"=>Dict("lat"=>..., ...))` — by dimension NAME (v2
+    `_ARRAY_DIMENSIONS`, v3 `dimension_names`, or the synthesized `dim_0…`),
+    applied to every array carrying the dimension whatever its rank; unnamed
+    dimensions are whole. A named dimension no requested array carries is an
+    error naming the ones present, and a non-`"all"` selector on a dimension named
+    `time` is refused (spec/prefetch.md §2.1).
+
+Either way only the chunk objects the selection intersects are fetched, and every
+array's metadata is read and every selector bounds-checked BEFORE the first chunk
+is: a window that is wrong for the second array costs no chunk of the first.
 
 These two ARE the reader's decode options: it takes no others, and it names them
 explicitly (rather than slurping the rest) so a loader's unrecognised
@@ -371,51 +448,22 @@ function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
         "the zarr reader requires an explicit list of variables (arrays); the " *
         "store cannot be enumerated without consolidated metadata")
     base = rstrip(String(base_url), '/')
-    axes_spec = _select_axes(select)
+    form = _select_form(select)
 
+    # Pass 1 — metadata only. A named selection is checked against the dims of
+    # EVERY requested array, and each selector resolved against each array's own
+    # length, before a single chunk object is fetched.
+    arrays = [_zarr_array_meta(cache, base, String(a)) for a in variables]
+    sels = _zarr_selections(form, arrays)
+
+    # Pass 2 — the intersecting chunk objects, one array at a time.
     vars = Dict{String,NativeField}()
-    for array in variables
-        arr = String(array)
-        # Probe v2 `.zarray` FIRST: the existing corpus is all-v2, so a v2 array
-        # costs exactly one metadata fetch (no extra probe) — preserving the
-        # laziness fetch-count contract. Only a v2-miss falls back to v3 `zarr.json`.
-        z2 = _probe_bytes(cache, "$base/$arr/.zarray")
-        vars[arr] = z2 !== nothing ?
-            _read_v2_array(cache, base, arr, z2, axes_spec) :
-            _read_v3_array(cache, base, arr,
-                           _fetch_bytes(cache, "$base/$arr/zarr.json"), axes_spec)
+    for (a, sel_indices) in zip(arrays, sels)
+        vars[a.name] = a.meta isa ZArrayMeta ?
+            _read_v2_chunks(cache, base, a, sel_indices) :
+            _read_v3_chunks(cache, base, a, sel_indices)
     end
     return NativeDataset(vars, Dict{String,NativeField}())
-end
-
-# --- v2 array read (the original path; `zbytes` = already-fetched .zarray) ---
-
-function _read_v2_array(cache::Cache, base::AbstractString, arr::AbstractString,
-                        zbytes, axes_spec)
-    meta = _parse_zarray(zbytes)
-    ndim = _ndim(meta)
-    zattrs = _fetch_bytes_optional(cache, "$base/$arr/.zattrs")
-    dims = _parse_zattrs(zattrs, ndim)
-
-    axes = (axes_spec !== nothing && length(axes_spec) == ndim) ?
-           [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
-    sel_indices = [_resolve_axis(axes[d], meta.shape[d]) for d in 1:ndim]
-
-    # Chunk-driven scatter: decode ONE chunk, write its cells, drop it. See the
-    # assembly section — buffering every chunk first held ~8.7 GB for a 0.59 GB
-    # ISRM read; peak here is (output + one chunk).
-    OT = _out_type(meta)
-    posmap = _pos_map(sel_indices, meta.chunks)
-    data = _alloc_out(sel_indices, meta)
-    for ck in _needed_chunks(sel_indices, meta.chunks)
-        url = "$base/$arr/" * _chunk_key(ck, meta.dim_sep)
-        raw = _fetch_bytes_optional(cache, url)
-        raw === nothing && continue       # absent chunk object -> keep fill_value
-        carr = _chunk_array(meta, _decompress(meta, raw))
-        _scatter_chunk!(data, carr, posmap, ck, OT)
-        # `raw`/`carr` are dead here: this chunk is reclaimable before the next fetch.
-    end
-    return NativeField(data, dims, Dict{String,Any}())
 end
 
 # --- v3 array read (the sharding codec) -------------------------------------
@@ -561,15 +609,84 @@ function _c_linear(coord, dims)
     return lin
 end
 
-function _read_v3_array(cache::Cache, base::AbstractString, arr::AbstractString,
-                        zjson, axes_spec)
-    m = _parse_zarr_json(zjson)
+# --- read_store pass 1: per-array metadata + resolved selections -----------
+
+# One requested array's metadata, as pass 1 of `read_store` learns it: the parsed
+# v2 `.zarray` (`ZArrayMeta`) or v3 `zarr.json` (`ZV3Meta`), its dimension names
+# and its full shape.
+struct _ZarrArray
+    name::String
+    meta::Union{ZArrayMeta,ZV3Meta}
+    dims::Vector{String}
+    shape::Vector{Int}
+end
+
+function _zarr_array_meta(cache::Cache, base::AbstractString, arr::String)
+    # Probe v2 `.zarray` FIRST: the existing corpus is all-v2, so a v2 array
+    # costs exactly one metadata fetch (no extra probe) — preserving the
+    # laziness fetch-count contract. Only a v2-miss falls back to v3 `zarr.json`.
+    z2 = _probe_bytes(cache, "$base/$arr/.zarray")
+    if z2 !== nothing
+        meta = _parse_zarray(z2)
+        dims = _parse_zattrs(_fetch_bytes_optional(cache, "$base/$arr/.zattrs"), _ndim(meta))
+        return _ZarrArray(arr, meta, dims, meta.shape)
+    end
+    m3 = _parse_zarr_json(_fetch_bytes(cache, "$base/$arr/zarr.json"))
+    return _ZarrArray(arr, m3, m3.dims, m3.shape)
+end
+
+# Every array's ordered per-dimension 0-based index lists under `form`, resolved
+# (and so bounds-checked against that array's own length) for ALL arrays before
+# the caller fetches a chunk.
+function _zarr_selections(form, arrays::Vector{_ZarrArray})
+    whole(a) = [collect(0:(n - 1)) for n in a.shape]
+    form === nothing && return [whole(a) for a in arrays]
+    if form[1] === :axes
+        spec = form[2]
+        return [length(spec) == length(a.shape) ?
+                [_resolve_axis(_parse_axis(spec[d]), a.shape[d]) for d in eachindex(a.shape)] :
+                whole(a) for a in arrays]
+    end
+    named = form[2]
+    present = Set{String}(d for a in arrays for d in a.dims)
+    # A Zarr store returns no coordinates, so a time dimension is known by its
+    # name alone (`_is_time_dim_named` with no units).
+    _check_named_selection(named, present, d -> _is_time_dim_named(d, nothing))
+    return [[haskey(named, d) ? _resolve_axis(named[d], a.shape[k]) : collect(0:(a.shape[k] - 1))
+             for (k, d) in enumerate(a.dims)] for a in arrays]
+end
+
+# --- v2 array read (the original path; metadata already fetched in pass 1) ----
+
+function _read_v2_chunks(cache::Cache, base::AbstractString, a::_ZarrArray, sel_indices)
+    meta = a.meta::ZArrayMeta
+    arr = a.name
+    dims = a.dims
+
+    # Chunk-driven scatter: decode ONE chunk, write its cells, drop it. See the
+    # assembly section — buffering every chunk first held ~8.7 GB for a 0.59 GB
+    # ISRM read; peak here is (output + one chunk).
+    OT = _out_type(meta)
+    posmap = _pos_map(sel_indices, meta.chunks)
+    data = _alloc_out(sel_indices, meta)
+    for ck in _needed_chunks(sel_indices, meta.chunks)
+        url = "$base/$arr/" * _chunk_key(ck, meta.dim_sep)
+        raw = _fetch_bytes_optional(cache, url)
+        raw === nothing && continue       # absent chunk object -> keep fill_value
+        carr = _chunk_array(meta, _decompress(meta, raw))
+        _scatter_chunk!(data, carr, posmap, ck, OT)
+        # `raw`/`carr` are dead here: this chunk is reclaimable before the next fetch.
+    end
+    return NativeField(data, dims, Dict{String,Any}())
+end
+
+# --- v3 array read (pass 2; the shard layout is described above) ------------
+
+function _read_v3_chunks(cache::Cache, base::AbstractString, a::_ZarrArray, sel_indices)
+    m = a.meta::ZV3Meta
+    arr = a.name
     ndim = length(m.shape)
     im = _inner_zarray(m)
-
-    axes = (axes_spec !== nothing && length(axes_spec) == ndim) ?
-           [_parse_axis(a) for a in axes_spec] : [(:all,) for _ in 1:ndim]
-    sel_indices = [_resolve_axis(axes[d], m.shape[d]) for d in 1:ndim]
 
     # needed INNER chunks, grouped by the shard that contains them
     needed = _needed_chunks(sel_indices, m.inner)          # inner-chunk id tuples

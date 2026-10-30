@@ -14,8 +14,8 @@ SPEC = ROOT / "spec"
 OUT = ROOT / "docs" / "content" / "generated" / "spec"
 GITHUB = "https://github.com/EarthSciML/EarthSciIO/blob/main"
 
-ORDER = ["README", "cache-format", "registries", "offline-mode", "conformance", "cloud-future",
-         "parquet-bindings-handoff"]
+ORDER = ["README", "cache-format", "registries", "offline-mode", "conformance", "prefetch",
+         "cloud-future", "parquet-bindings-handoff"]
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 

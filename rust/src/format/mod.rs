@@ -74,7 +74,7 @@ pub use zarr_object_store::{
 #[cfg(all(target_arch = "wasm32", feature = "opfs"))]
 pub use zarr_opfs::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
@@ -160,6 +160,68 @@ impl ArrayData {
             ArrayData::Bool(v) => ArrayData::Bool(v[start..start + len].to_vec()),
         }
     }
+
+    /// [`gather`] over whichever element type this array holds.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn gathered(&self, shape: &[usize], take: &[Vec<usize>]) -> ArrayData {
+        match self {
+            ArrayData::F64(v) => ArrayData::F64(gather(v, shape, take)),
+            ArrayData::I64(v) => ArrayData::I64(gather(v, shape, take)),
+            ArrayData::I32(v) => ArrayData::I32(gather(v, shape, take)),
+            ArrayData::Str(v) => ArrayData::Str(gather(v, shape, take)),
+            ArrayData::Bool(v) => ArrayData::Bool(gather(v, shape, take)),
+        }
+    }
+
+    /// The array's bytes as `spec/prefetch.md` §3.6 counts them for a memory
+    /// budget: the element width for numbers and booleans, a string's UTF-8
+    /// length for text.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn budget_bytes(&self) -> u64 {
+        match self {
+            ArrayData::F64(v) => 8 * v.len() as u64,
+            ArrayData::I64(v) => 8 * v.len() as u64,
+            ArrayData::I32(v) => 4 * v.len() as u64,
+            ArrayData::Str(v) => v.iter().map(|s| s.len() as u64).sum(),
+            ArrayData::Bool(v) => v.len() as u64,
+        }
+    }
+}
+
+/// Gather `take` out of a row-major array of `shape`, preserving the requested
+/// index ORDER and repetition on every axis (a reader that sorted them fails the
+/// permuted corpus case).
+///
+/// One gather serves the `netcdf` reader's bounding-slab reads and text fields
+/// and the Provider's slicing of a union decode back into its windows
+/// (`spec/prefetch.md` §2.4) — two gathers would be two chances to get the
+/// row-major arithmetic subtly different in one of them, and the second one is
+/// held to a BITWISE equality with the first.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn gather<T: Clone>(flat: &[T], shape: &[usize], take: &[Vec<usize>]) -> Vec<T> {
+    let out_shape: Vec<usize> = take.iter().map(Vec::len).collect();
+    let n: usize = out_shape.iter().product();
+    let mut src_strides = vec![1usize; shape.len()];
+    for i in (0..shape.len().saturating_sub(1)).rev() {
+        src_strides[i] = src_strides[i + 1] * shape[i + 1];
+    }
+    let mut out = Vec::with_capacity(n);
+    let mut idx = vec![0usize; out_shape.len()];
+    for _ in 0..n {
+        let mut off = 0;
+        for (ax, &k) in idx.iter().enumerate() {
+            off += take[ax][k] * src_strides[ax];
+        }
+        out.push(flat[off].clone());
+        for ax in (0..idx.len()).rev() {
+            idx[ax] += 1;
+            if idx[ax] < out_shape[ax] {
+                break;
+            }
+            idx[ax] = 0;
+        }
+    }
+    out
 }
 
 /// One native-grid array, keyed by its on-disk `file_variable` name and validated
@@ -208,6 +270,32 @@ impl NativeField {
             fill_value: self.fill_value,
         })
     }
+
+    /// This field with every axis named in `picks` narrowed to the given
+    /// POSITIONS along it (in order, repeats kept); other axes whole. A field
+    /// carrying none of the named dimensions is returned unchanged.
+    ///
+    /// The positions are trusted to be in range — the caller resolved them
+    /// against this field's own lengths.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn take_by_name(&self, picks: &HashMap<String, Vec<usize>>) -> NativeField {
+        if !self.dims.iter().any(|d| picks.contains_key(d)) {
+            return self.clone();
+        }
+        let take: Vec<Vec<usize>> = self
+            .dims
+            .iter()
+            .zip(&self.shape)
+            .map(|(d, &len)| picks.get(d).cloned().unwrap_or_else(|| (0..len).collect()))
+            .collect();
+        NativeField {
+            dtype: self.dtype,
+            dims: self.dims.clone(),
+            shape: take.iter().map(Vec::len).collect(),
+            data: self.data.gathered(&self.shape, &take),
+            fill_value: self.fill_value,
+        }
+    }
 }
 
 /// A native coordinate: its array plus the CF metadata that travels with a time
@@ -234,21 +322,202 @@ pub struct NativeDataset {
     pub coords: HashMap<String, Coord>,
 }
 
-/// Which records/rows of a blob to read. `All` reads the whole blob — the
-/// conformance corpus default (`select.all_records` / `select.all_rows`).
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeDataset {
+    /// The dataset's array bytes, variables and coordinates together, as
+    /// `spec/prefetch.md` §3.6 counts a slot against `max_bytes`.
+    pub(crate) fn budget_bytes(&self) -> u64 {
+        self.variables
+            .values()
+            .map(|f| f.data.budget_bytes())
+            .chain(self.coords.values().map(|c| c.field.data.budget_bytes()))
+            .sum()
+    }
+
+    /// Every variable and coordinate narrowed by [`NativeField::take_by_name`].
+    pub(crate) fn take_by_name(&self, picks: &HashMap<String, Vec<usize>>) -> NativeDataset {
+        NativeDataset {
+            variables: self
+                .variables
+                .iter()
+                .map(|(k, f)| (k.clone(), f.take_by_name(picks)))
+                .collect(),
+            coords: self
+                .coords
+                .iter()
+                .map(|(k, c)| {
+                    let field = c.field.take_by_name(picks);
+                    (k.clone(), Coord { field, units: c.units.clone(), calendar: c.calendar.clone() })
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Which records/rows/cells of a blob to read: the decode-time `select` of
+/// `spec/registries.md` §2.2. `All` reads the whole blob — the conformance
+/// corpus default (`select.all_records` / `select.all_rows`).
 ///
-/// `Orthogonal` carries one selector per array dimension (in `dims`/positional
-/// order) — a lazy orthogonal selection for the store-backed [`ZarrReader`],
-/// where each axis independently picks indices/a range/all.
-#[derive(Debug, Clone, Default)]
+/// A window has **two spellings over one selector vocabulary** ([`AxisSelect`]:
+/// 0-based, half-open, bounds-checked, order and repetition kept, a dimension
+/// never dropped, empty legal, a non-`All` time axis refused):
+///
+/// - [`Orthogonal`](Selection::Orthogonal) — the wire `{"axes": [...]}`: one
+///   selector per POSITION, over the file-order dims of every array whose rank
+///   equals the axis count;
+/// - [`Named`](Selection::Named) — the wire `{"dims": {...}}`
+///   (`spec/prefetch.md` §2.1): one selector per dimension NAME, applied to every
+///   decoded field and coordinate carrying that dimension whatever its rank, an
+///   unnamed dimension `All`. It exists because no positional window can cover a
+///   provider whose fields differ in rank or carry a staggered dimension — three
+///   axes bind position 2 to `lon` for `ps(time, lat, lon)` and to `lon_edge` for
+///   `u(time, lat, lon_edge)`. [`DimWindow`] builds one.
+///
+/// "Exactly one of `axes` and `dims`" is a property of the TYPE here: a value is
+/// one variant. [`Selection::from_json`] is where the wire form carrying both is
+/// refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Selection {
     /// Read every record/row in the blob.
     #[default]
     All,
-    /// A per-axis orthogonal selection (store-backed readers). One [`AxisSelect`]
-    /// per array dimension; applied to arrays whose rank matches the axis count.
+    /// A per-axis orthogonal selection. One [`AxisSelect`] per array dimension;
+    /// applied to arrays whose rank matches the axis count.
     Orthogonal(Vec<AxisSelect>),
+    /// A named-dimension selection (`spec/prefetch.md` §2.1): each entry applies
+    /// to every field and coordinate of the read that carries the dimension.
+    /// Naming a dimension no field of the read carries is an error, never a
+    /// window that silently means nothing.
+    Named(BTreeMap<String, AxisSelect>),
+}
+
+impl Selection {
+    /// Parse the wire form of a `select` (`spec/registries.json`, the `select`
+    /// reader option): `{"axes": [<axis>, ...]}` or `{"dims": {"<dim>": <axis>,
+    /// ...}}`, where `<axis>` is `"all"`, `{"indices": [i, ...]}` or
+    /// `{"slice": [start, stop, step?]}`.
+    ///
+    /// A `select` carrying BOTH `axes` and `dims` is an error (`spec/prefetch.md`
+    /// §2.1) — this is the one place that rule can be broken, since a
+    /// [`Selection`] value is one variant. So is a negative or non-integer index:
+    /// the vocabulary is 0-based and never wraps, and a `usize` cannot carry the
+    /// mistake past here. The corpus's "everything" markers (`all_records`,
+    /// `all_rows`, `all_cells`) and an empty object read as [`Selection::All`];
+    /// any other key is an error rather than a window quietly dropped.
+    pub fn from_json(v: &serde_json::Value) -> Result<Selection> {
+        let err = |detail: String| crate::Error::Format { format: "select".to_string(), detail };
+        let obj = v
+            .as_object()
+            .ok_or_else(|| err(format!("a select must be a JSON object, got {v}")))?;
+        for k in obj.keys() {
+            if !matches!(k.as_str(), "axes" | "dims" | "all_records" | "all_rows" | "all_cells") {
+                return Err(err(format!(
+                    "unknown select key {k:?}; a select is {{\"axes\": [...]}} or \
+                     {{\"dims\": {{...}}}}"
+                )));
+            }
+        }
+        match (obj.get("axes"), obj.get("dims")) {
+            (Some(_), Some(_)) => Err(err(
+                "a select carries both `axes` and `dims`; it must name its axes one way, \
+                 positionally or by dimension name, not both"
+                    .to_string(),
+            )),
+            (Some(axes), None) => {
+                let axes = axes
+                    .as_array()
+                    .ok_or_else(|| err(format!("select.axes must be an array, got {axes}")))?;
+                Ok(Selection::Orthogonal(
+                    axes.iter().map(AxisSelect::from_json).collect::<Result<_>>()?,
+                ))
+            }
+            (None, Some(dims)) => {
+                let dims = dims
+                    .as_object()
+                    .ok_or_else(|| err(format!("select.dims must be an object, got {dims}")))?;
+                let mut out = BTreeMap::new();
+                for (name, axis) in dims {
+                    out.insert(name.clone(), AxisSelect::from_json(axis)?);
+                }
+                Ok(Selection::Named(out))
+            }
+            (None, None) => Ok(Selection::All),
+        }
+    }
+}
+
+/// A named-dimension window, built one dimension at a time — the Rust spelling
+/// of `spec/prefetch.md` §2.2's `DimWindow` (the run window `(start, end)`
+/// already owns the name `Window`).
+///
+/// ```
+/// # #[cfg(not(target_arch = "wasm32"))]
+/// # {
+/// use earthsciio::{DimWindow, Selection};
+/// // A halo across the periodic longitude seam, the first level only, every
+/// // latitude in [120, 218): one window for 2-D and 3-D fields alike.
+/// let w = DimWindow::new()
+///     .range("lat", 120, 218)
+///     .indices("lon", vec![1151, 0, 1])
+///     .step_range("lev", 0, 1, 1);
+/// let sel: Selection = w.into();
+/// assert!(matches!(sel, Selection::Named(_)));
+/// # }
+/// ```
+///
+/// Indices are 0-based, ranges half-open — the wire vocabulary in every binding,
+/// Julia's included. Naming a dimension twice keeps the last selector.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DimWindow {
+    dims: BTreeMap<String, AxisSelect>,
+}
+
+impl DimWindow {
+    /// An empty window: selects nothing away (`{"dims": {}}`).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `[start, stop)` along `dim` (the wire `{"slice": [start, stop]}`).
+    pub fn range(self, dim: impl Into<String>, start: usize, stop: usize) -> Self {
+        self.step_range(dim, start, stop, 1)
+    }
+
+    /// `[start, stop)` by `step` along `dim` (`{"slice": [start, stop, step]}`).
+    /// A `step` of 0 is carried as given and refused by the read, as on the wire.
+    pub fn step_range(self, dim: impl Into<String>, start: usize, stop: usize, step: usize) -> Self {
+        self.axis(dim, AxisSelect::Range { start, stop, step })
+    }
+
+    /// Exactly `indices` along `dim`, in that order, repeats kept — the spelling
+    /// of a window across a periodic seam (`[1150, 1151, 0, 1]`).
+    pub fn indices(self, dim: impl Into<String>, indices: impl IntoIterator<Item = usize>) -> Self {
+        self.axis(dim, AxisSelect::Indices(indices.into_iter().collect()))
+    }
+
+    /// The whole of `dim`, stated explicitly. Equivalent to leaving it unnamed,
+    /// except that a dimension no field carries is then an error.
+    pub fn all(self, dim: impl Into<String>) -> Self {
+        self.axis(dim, AxisSelect::All)
+    }
+
+    /// Any [`AxisSelect`] along `dim`.
+    pub fn axis(mut self, dim: impl Into<String>, select: AxisSelect) -> Self {
+        self.dims.insert(dim.into(), select);
+        self
+    }
+
+    /// The selectors by dimension name.
+    pub fn dims(&self) -> &BTreeMap<String, AxisSelect> {
+        &self.dims
+    }
+}
+
+impl From<DimWindow> for Selection {
+    fn from(w: DimWindow) -> Self {
+        Selection::Named(w.dims)
+    }
 }
 
 /// A **record pushdown**: the records of one dimension the cadence owner has
@@ -315,6 +584,66 @@ pub enum AxisSelect {
 }
 
 impl AxisSelect {
+    /// Parse one wire selector: `"all"`, `{"indices": [i, ...]}` or
+    /// `{"slice": [start, stop, step?]}` (`step` default 1). A negative or
+    /// non-integer index is an error, never a wrap.
+    pub fn from_json(v: &serde_json::Value) -> Result<AxisSelect> {
+        let err = |detail: String| crate::Error::Format { format: "select".to_string(), detail };
+        let index = |x: &serde_json::Value| -> Result<usize> {
+            x.as_u64().map(|i| i as usize).ok_or_else(|| {
+                err(format!(
+                    "selector index {x} is not a non-negative integer; the vocabulary is \
+                     0-based and an out-of-range or negative index is an error, never a wrap"
+                ))
+            })
+        };
+        if v.as_str() == Some("all") {
+            return Ok(AxisSelect::All);
+        }
+        if let Some(obj) = v.as_object() {
+            if obj.len() == 1 {
+                if let Some(idx) = obj.get("indices").and_then(serde_json::Value::as_array) {
+                    return Ok(AxisSelect::Indices(idx.iter().map(index).collect::<Result<_>>()?));
+                }
+                if let Some(s) = obj.get("slice").and_then(serde_json::Value::as_array) {
+                    if !(2..=3).contains(&s.len()) {
+                        return Err(err(format!("slice must be [start, stop, step?], got {v}")));
+                    }
+                    let step = match s.get(2) {
+                        Some(x) => index(x)?,
+                        None => 1,
+                    };
+                    return Ok(AxisSelect::Range { start: index(&s[0])?, stop: index(&s[1])?, step });
+                }
+            }
+        }
+        Err(err(format!(
+            "unrecognised selector {v}; expected \"all\", {{\"indices\": [...]}} or \
+             {{\"slice\": [start, stop, step?]}}"
+        )))
+    }
+
+    /// The ordered indices this selector names, WITHOUT a dimension length:
+    /// `None` for [`All`](AxisSelect::All). What a union of windows is computed
+    /// from before the read that bounds-checks it (`spec/prefetch.md` §2.4); the
+    /// step rule is [`resolve_in`](AxisSelect::resolve_in)'s.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn unbounded_indices(&self, format: &str) -> Result<Option<Vec<usize>>> {
+        match self {
+            AxisSelect::All => Ok(None),
+            AxisSelect::Indices(v) => Ok(Some(v.clone())),
+            AxisSelect::Range { start, stop, step } => {
+                if *step < 1 {
+                    return Err(crate::Error::Format {
+                        format: format.to_string(),
+                        detail: format!("slice step must be >= 1, got {step}"),
+                    });
+                }
+                Ok(Some((*start..*stop).step_by(*step).collect()))
+            }
+        }
+    }
+
     /// Resolve this selector to its ordered list of global indices over a
     /// dimension of length `dim_len`, reporting errors as the `zarr` format's.
     pub fn resolve(&self, dim_len: usize) -> Result<Vec<usize>> {

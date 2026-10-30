@@ -142,6 +142,19 @@ differently here. Applied thus:
     half-open `Dict("slice"=>[1, 1])`), giving a **zero-length axis** kept in
     `dims` rather than an error.
 
+`select=Dict("dims"=>Dict("lat"=>..., "lon"=>...))` is the same vocabulary spelled
+by dimension NAME instead of position (spec/prefetch.md §2.1; [`DimWindow`] builds
+it): each selector applies to every decoded field and coordinate carrying that
+dimension, whatever its rank, and unnamed dimensions are whole. A `select` carrying
+both `axes` and `dims` is an error, as is a named dimension that no field of the
+read carries — the projected data variables and the coordinates — which includes a
+consumed string length. Every rule above except the positional rank match binds
+this form too: time refused, bounds, never dropping a dimension, empty legal, order
+and repetition kept, and the windowed read equal to the full read sliced by name.
+
+Every NCDatasets access runs under one process-wide lock (`_NETCDF_LOCK`): NetCDF-C
+is not assumed thread-safe, and [`sample_at`] may be called from several threads.
+
 `records=Dict("dim"=>"time", "indices"=>[3,4])` is RECORD PUSHDOWN, the other
 half of the refused-time-axis rule above. `select` refuses a time axis because
 record selection belongs to whoever owns the cadence; `records` is how that owner — the
@@ -179,10 +192,27 @@ supports_selection(::NetCDFReader) = true
 # the same job inside the decode's own open (see `records` above).
 function dim_length(::NetCDFReader, path::AbstractString, dim::AbstractString)
     d = String(dim)
-    return NCDatasets.NCDataset(String(path), "r") do ds
+    return _with_netcdf(String(path)) do ds
         haskey(ds.dim, d) ? Int(ds.dim[d]) : nothing
     end
 end
+
+# ONE process-wide lock around every NCDatasets / NetCDF-C access (spec/prefetch.md
+# §3.10). NetCDF-C and the HDF5 build under it are not assumed thread-safe — a
+# default HDF5 build is not, and nothing guarantees a thread-safe one is what
+# NCDatasets_jll ships — while `Provider` is now meant to be decoded from several
+# `Threads.@spawn` workers at once (`sample_at`, [`PrefetchGroup`]). So every open,
+# read and close runs under this lock and NetCDF decodes are serialised; decodes of
+# other formats (zarr above all) stay concurrent. Reentrant, so a reader that
+# nests a metadata query inside its own open cannot deadlock itself. Whether the
+# lock can go is an open question (spec/prefetch.md §5, item 3), to be settled by
+# measurement rather than assumed.
+const _NETCDF_LOCK = ReentrantLock()
+
+_with_netcdf(f, path::String) =
+    lock(_NETCDF_LOCK) do
+        NCDatasets.NCDataset(f, path, "r")
+    end
 
 # A CF time axis is one whose `units` is "<step> since <reference>" (hours since
 # …, days since …). Matching xarray `decode_times=false`, such variables are
@@ -383,6 +413,9 @@ end
 # array whose rank matches the axis count (the zarr rule); the induced map is what
 # the read applies BY NAME, which is what keeps the coordinates in step with the
 # data. netCDF dimension lengths are file-global, so each axis resolves once.
+# The named `dims` form skips the positional step and states that map outright
+# (`_netcdf_named_selection`); `want` is the `variables` projection it is checked
+# against.
 #
 # "The arrays" means the FIELDS this blob decodes to, so the rank a variable
 # offers is `_netcdf_field_dims`'s, not `dimnames`'s. The two differ for exactly
@@ -392,10 +425,11 @@ end
 # axis 1 to a string LENGTH, and then apply those selectors BY NAME to every other
 # array in the file — silently moving which dimension a selector means for the
 # numeric variables the caller was actually windowing.
-function _netcdf_dim_selection(ds, select)
-    axes_spec = _select_axes(select)
-    axes_spec === nothing && return nothing
-    parsed = [_parse_axis(a) for a in axes_spec]
+function _netcdf_dim_selection(ds, select, want = nothing)
+    form = _select_form(select)
+    form === nothing && return nothing
+    form[1] === :dims && return _netcdf_named_selection(ds, form[2], want)
+    parsed = [_parse_axis(a) for a in form[2]]
     naxes = length(parsed)
 
     bydim = Dict{String,Any}()
@@ -426,6 +460,42 @@ function _netcdf_dim_selection(ds, select)
             "select asks for a subset of the time dimension '$d'; record selection " *
             "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
             "reader's — the time axis of a netcdf `select` must be \"all\""))
+        out[d] = _resolve_axis(ax, Int(ds.dim[d]))
+    end
+    return isempty(out) ? nothing : out
+end
+
+# The NAMED form, `select = {"dims": {dim => selector}}` (spec/prefetch.md §2.1):
+# the dimension -> selector map is given outright, so there is no rank match and
+# no positional ambiguity — one window covers `ps(time, lat, lon)`, `t(time, lev,
+# lat, lon)` and a staggered `u(time, lat, lon_edge)` alike, which no `axes` list
+# can say (rank 3 is both `[time, lat, lon]` and `[time, lat, lon_edge]`).
+#
+# What it IS checked against is "the fields of the read": the decoded dims of the
+# data variables the projection keeps, plus the coordinates, which this reader
+# always returns. A consumed string length is not among them (that is what
+# `_netcdf_field_dims` is for), so naming one is refused like any dimension the
+# read lacks — never applied, since it would cut characters off every string —
+# and the error says which char variable's length it is.
+function _netcdf_named_selection(ds, named::Dict{String,Any}, want)
+    dimset = Set(String.(collect(keys(ds.dim))))
+    present = Set{String}()
+    for vn in keys(ds)
+        name = String(vn)
+        (want === nothing || name in dimset || name in want) || continue
+        union!(present, _netcdf_field_dims(ds, ds[vn]))
+    end
+    consumed = function (d)
+        for vn in keys(ds)
+            _netcdf_consumed_dim(ds, ds[vn]) == d && return String(vn)
+        end
+        return nothing
+    end
+    _check_named_selection(named, present, d -> _netcdf_is_time_dim(ds, d);
+                           consumed = consumed)
+    out = Dict{String,Vector{Int}}()
+    for (d, ax) in named
+        ax[1] === :all && continue
         out[d] = _resolve_axis(ax, Int(ds.dim[d]))
     end
     return isempty(out) ? nothing : out
@@ -537,7 +607,7 @@ end
 function read_native(::NetCDFReader, path::AbstractString; variables = nothing,
                      select = nothing, records = nothing)
     nds = NativeDataset()
-    NCDatasets.NCDataset(String(path), "r") do ds
+    _with_netcdf(String(path)) do ds
         dimset = Set(String.(collect(keys(ds.dim))))
         # PROJECTION PUSHDOWN (spec/conformance.md §3): the loader's `variables`
         # reach the READER, so an unrequested variable is never decoded — a
@@ -550,7 +620,7 @@ function read_native(::NetCDFReader, path::AbstractString; variables = nothing,
         # hyperslab is materialised (NCDatasets reads just the intersecting HDF5
         # chunks). Resolved ONCE, per dimension name, so the coordinate fields are
         # sliced with the data they index rather than left at full length.
-        sel = _netcdf_dim_selection(ds, select)
+        sel = _netcdf_dim_selection(ds, select, want)
         # RECORD PUSHDOWN: the cadence owner's chosen records of its own axis,
         # folded into the same map. Without it the record axis comes back whole
         # and the caller slices it afterwards — every record decoded to keep one

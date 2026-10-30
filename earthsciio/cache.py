@@ -136,6 +136,20 @@ class Cache:
         # unchanged source once per process rather than once per call.
         self._revalidator = validate.SourceRevalidator()
 
+    def __getstate__(self) -> dict:
+        # The rung-0 memo holds a lock and is a per-PROCESS optimisation by
+        # design ("a fresh process always pays one real read per file"), so a
+        # pickled cache — a `PrefetchGroup(executor="process")` member's —
+        # arrives with a fresh one. Everything else (the store, the auth map,
+        # the flags) is plain configuration and travels as is.
+        state = self.__dict__.copy()
+        state.pop("_revalidator", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._revalidator = validate.SourceRevalidator()
+
     # ----------------------------------------------------------------- fetch
     def fetch(
         self,

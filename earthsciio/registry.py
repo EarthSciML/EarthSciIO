@@ -94,6 +94,11 @@ def supports_selection(reader: Any) -> bool:
     of the Julia ``supports_selection`` trait and the Rust ``Reader::supports_selection``
     — the seam a caller (EarthSciAST) uses to decide whether to push a projection
     down (``Provider.materialize(..., select=...)``) or read whole and slice itself.
+
+    A reader answering it takes BOTH spellings of ``select`` — positional
+    ``{"axes": [...]}`` and named ``{"dims": {...}}`` (``spec/registries.md``
+    §2.2) — so it is also what :meth:`Provider.with_window` checks before
+    binding a :class:`~earthsciio.selection.DimWindow`.
     """
     return bool(getattr(reader, "supports_selection", False))
 

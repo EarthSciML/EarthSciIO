@@ -29,6 +29,10 @@ Decode contract (``spec/conformance.md`` §3, zarr notes) — preserved:
   this deviation is the library default, not extra code.
 * orthogonal ``select`` (per-axis index lists / slices, ordering preserved) is
   pushed down through zarr's ``oindex`` — fetching only the intersecting chunks.
+  Both spellings (``spec/registries.md`` §2.2): positional ``axes`` over the
+  arrays of matching rank, or named ``dims`` over every array carrying the
+  dimension (``spec/prefetch.md`` §2.1). Either way a selection shrinks the
+  DOWNLOAD, not only the decode.
 
 **Memory profile — measured, not assumed.** The Julia and Rust zarr readers
 decode *every* chunk a selection intersects into a map and only then assemble the
@@ -96,7 +100,13 @@ __all__ = ["ZarrReader"]
 # The per-axis selector vocabulary is SHARED with every other reader that can
 # honour a `select` (the whole-file netcdf reader honours the same spelling at
 # decode time), so it lives in one module rather than in this backend.
-from ..selection import _parse_axis, _resolve_axis_indices, _select_axes
+from ..selection import (
+    _absent_dims_error,
+    _parse_axis,
+    _resolve_axis_indices,
+    _select_axes,
+    _select_dims,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -336,6 +346,24 @@ class ZarrReader:
         array whose rank matches its axis count (arrays of other rank read whole)
         — so one ``select`` sub-slices a 3-D SR array while a 1-D geometry array
         reads fully.
+
+        The NAMED form ``{"dims": {...}}`` (``spec/prefetch.md`` §2.1) instead
+        applies each selector to every requested array carrying that dimension,
+        whatever its rank, unnamed dimensions ``"all"``. The names are the
+        arrays' own (v3 ``dimension_names``, v2 ``_ARRAY_DIMENSIONS``, else the
+        synthesized ``dim_0…``, which are nameable too), and they are resolved
+        against EVERY array's metadata before any chunk is fetched: a name no
+        requested array carries, or an index past an array's length, fails
+        having read only ``.zarray``/``.zattrs``. There are no coordinate arrays
+        here, so "the fields of the read" are the requested arrays.
+
+        A named selector other than ``"all"`` on a dimension named ``time``
+        (case-insensitively) is REFUSED, as the netcdf reader refuses one:
+        choosing records is the Provider's. A store carries no coordinate
+        variables, so the name is the whole of the rule. The positional form
+        keeps its historical behaviour and does not refuse — the named form is
+        new, so it starts from the rule every reader shares
+        (``spec/prefetch.md`` §2.1).
         """
         if not variables:
             raise ValueError(
@@ -345,7 +373,11 @@ class ZarrReader:
         import zarr  # lazy: optional ``zarr`` extra
 
         store = _make_cache_store(cache, base_url)
+        named = _select_dims(select)
         axes_spec = _select_axes(select)
+
+        if named is not None:
+            return self._read_named(zarr, store, variables, named)
 
         out_vars: Dict[str, NativeField] = {}
         for array in variables:
@@ -371,6 +403,58 @@ class ZarrReader:
             data = data.astype(_finalize_dtype(data.dtype), copy=False)
             out_vars[str(array)] = NativeField(data, dims, {})
 
+        return NativeDataset(out_vars, {})
+
+    def _read_named(
+        self,
+        zarr: Any,
+        store: Any,
+        variables: Sequence[str],
+        named: Dict[str, Tuple],
+    ) -> NativeDataset:
+        """The named-dimension read: plan every array, THEN fetch chunks.
+
+        Planning opens metadata only, so every error the window can raise —
+        an absent name, an out-of-range index — is raised before the first
+        chunk object is requested. The fetch is then one ``oindex`` per array,
+        which asks zarr-python for exactly the chunks the per-axis index arrays
+        intersect (``named-window-zarr`` poisons every other chunk object).
+        """
+        arrays = [(str(a), zarr.open_array(store=store, path=str(a), mode="r"))
+                  for a in variables]
+        dims_of = {name: _dims_of(arr) for name, arr in arrays}
+        present = {d for dims in dims_of.values() for d in dims}
+        absent = [d for d in named if d not in present]
+        if absent:
+            raise _absent_dims_error(absent, present)
+        for dim, axis in named.items():
+            if axis[0] != "all" and dim.lower() == "time":
+                raise ValueError(
+                    f"select asks for a subset of the time dimension {dim!r}; record "
+                    "selection is the Provider's, not the reader's — a time dimension "
+                    'in a named `select` may only be "all"'
+                )
+
+        plans = []
+        for name, arr in arrays:
+            key = tuple(
+                slice(None)
+                if dim not in named or named[dim][0] == "all"
+                else np.asarray(_resolve_axis_indices(named[dim], arr.shape[d]),
+                                dtype=np.intp)
+                for d, dim in enumerate(dims_of[name])
+            )
+            plans.append((name, arr, key))
+
+        out_vars: Dict[str, NativeField] = {}
+        for name, arr, key in plans:
+            if all(isinstance(k, slice) for k in key):
+                data = arr[...]
+            else:
+                data = arr.oindex[key]
+            data = np.asarray(data)
+            data = data.astype(_finalize_dtype(data.dtype), copy=False)
+            out_vars[name] = NativeField(data, dims_of[name], {})
         return NativeDataset(out_vars, {})
 
     # -- shape probe -------------------------------------------------------- #

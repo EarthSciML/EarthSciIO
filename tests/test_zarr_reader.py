@@ -175,6 +175,49 @@ def test_synthesized_dims_without_zattrs(tmp_path):
     cache = Cache(root=tmp_path, offline=True, verify=True)
     f = ZarrReader().read_store(cache, BASE, ["n"]).variables["n"]
     assert f.dims == ("dim_0",)
+    # ...and a synthesized name is nameable in a `dims` select (spec/prefetch.md
+    # §2.1): it is the array's dimension name for every purpose
+    g = ZarrReader().read_store(cache, BASE, ["n"],
+                                select={"dims": {"dim_0": {"indices": [2, 0, 2]}}})
+    np.testing.assert_array_equal(g.variables["n"].data, [3.0, 1.0, 3.0])
+
+
+def test_named_select_matches_the_positional_one(tmp_path):
+    """The two spellings of one window decode identically (`registries.md`
+    §2.2): the named form only finds its axes by name instead of position."""
+    _mini_store(tmp_path)
+    cache = Cache(root=tmp_path, offline=True, verify=True)
+    axes = ZarrReader().read_store(
+        cache, BASE, ["field3d"],
+        select={"axes": [{"indices": [1]}, {"slice": [1, 5, 3]}, {"indices": [3, 0]}]})
+    dims = ZarrReader().read_store(
+        cache, BASE, ["field3d"],
+        select={"dims": {"x": {"indices": [3, 0]}, "layer": {"indices": [1]},
+                         "y": {"slice": [1, 5, 3]}}})
+    assert dims["field3d"].dims == axes["field3d"].dims
+    np.testing.assert_array_equal(dims["field3d"].data, axes["field3d"].data)
+
+
+def test_named_select_refuses_a_time_subset(tmp_path):
+    """The named form refuses a non-"all" selector on a dimension NAMED `time`,
+    as the netcdf reader does and the Julia and Rust zarr readers do: records
+    are the Provider's (spec/prefetch.md §2.1). "all" stays legal, and the
+    positional form keeps its historical behaviour."""
+    import json
+
+    _mini_store(tmp_path)
+    _populate(tmp_path, {f"{BASE}/field3d/.zattrs":
+                         json.dumps({"_ARRAY_DIMENSIONS": ["Time", "y", "x"]}).encode()})
+    cache = Cache(root=tmp_path, offline=True, verify=True)
+    with pytest.raises(ValueError, match="time dimension 'Time'"):
+        ZarrReader().read_store(cache, BASE, ["field3d"],
+                                select={"dims": {"Time": {"indices": [1]}}})
+    whole = ZarrReader().read_store(cache, BASE, ["field3d"],
+                                    select={"dims": {"Time": "all", "x": [0]}})
+    assert whole["field3d"].data.shape == (2, 5, 1)
+    positional = ZarrReader().read_store(
+        cache, BASE, ["field3d"], select={"axes": [{"indices": [1]}, "all", "all"]})
+    assert positional["field3d"].data.shape == (1, 5, 4)
 
 
 # --------------------------------------------------------------------------- #

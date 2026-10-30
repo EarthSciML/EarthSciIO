@@ -4,6 +4,72 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
+## Unreleased
+
+RFC U11 from EarthSciIntegrator (#8): asynchronous epoch prefetch and per-rank
+index-range windows. Additive; the cache format stays `v1` and no cache key
+changes. The contract is the new [`spec/prefetch.md`](spec/prefetch.md).
+
+### All tracks
+
+- **feat:** `sample_at(t)` returns what `refresh(t)` would, coordinates
+  included, without touching any provider buffer, and is safe to call from
+  several threads. `refresh` is now `sample_at` followed by the buffer update.
+- **feat:** named-dimension windows. A `select` may name its dimensions,
+  `{"dims": {"lat": {"slice": [a, b]}, "lon": {"indices": [...]}}}`, instead of
+  listing positional `axes`, so one window covers 2-D, 3-D and staggered fields
+  alike. The `netcdf` and `zarr` readers take it in every track; the zarr
+  reader still fetches only the chunk objects the window intersects. `DimWindow`
+  builds one.
+- **feat:** `with_window(w)` binds a window to a new provider at construction,
+  keeping the decoded-file reuse path, and `sample_windows_at(t, [w...])`
+  decodes the bounding union of K windows once.
+- **feat:** `PrefetchGroup` decodes upcoming forcing epochs on background
+  workers while the caller computes, in forward, reverse or an explicit (revolve)
+  order, bounded by an epoch depth and a byte budget, with cancellation and
+  stored-until-`take` errors. Every `take(k)` is bitwise identical to
+  `sample_at(boundaries()[k])`.
+- **feat(conformance):** decode cases `named-window-mixed-rank`,
+  `named-window-zarr` (unselected chunk objects poisoned) and `window-wrap`, and
+  the `multi-window`, `prefetch-equivalence` and `prefetch-errors` scenarios,
+  which each track's own suite runs against the committed corpus. `verify.py`
+  checks scenario blobs and skips poisoned objects.
+
+### Python
+
+- **feat:** `earthsciio.prefetch` (`PrefetchGroup`, `Sample`, `EpochSample`),
+  thread executor by default and `executor="process"` for GIL-bound decodes.
+  Sample arrays are marked read-only. `Cache`, `Provider` and every
+  `EarthSciIOError` now pickle, so a `CacheMiss` crosses a process boundary as
+  itself. `bench/prefetch_overlap.py` measures the hidden refresh fraction.
+- **fix:** NetCDF decodes take one process-wide lock: netCDF4/HDF5 is not
+  assumed thread-safe.
+
+### Julia
+
+- **feat:** `sample_at`, `DimWindow`/`select_form`, `with_window`,
+  `sample_windows_at`, and `PrefetchGroup` on `Threads.@spawn` workers
+  (`start!`, `take!`, `isready`, `cancel!`, `close`, `stats`). With one thread
+  the group decodes inside `take!` and reports `overlap = false`.
+- **fix:** NetCDF decodes take one process-wide lock, and the shared HTTP
+  downloader handle is locked for fetches from worker threads.
+- **change:** a DISCRETE provider *without* a `time_dim` now resolves its URL
+  at the tick in effect rather than at the raw query time, so `t` before the
+  first tick raises `ArgumentError` (as it already did with a `time_dim`)
+  instead of reading `url_for(t)`. `sample_at` must depend on `t` only through
+  its anchor.
+
+### Rust
+
+- **feat:** `Selection::Named` (and `Selection::from_json`, the wire parser the
+  dumper and tests share), `DimWindow`, `Provider::sample_at(&self)`,
+  `with_window`, `sample_windows_at`, a compile-time `Provider: Send + Sync`
+  assertion, and `earthsciio::prefetch` (`PrefetchGroup<T>`, `Order`, `Sample`,
+  `EpochSample`, `PrefetchStats`) on `std::thread`, no async runtime.
+- **change:** a failed `refresh` no longer leaves `coords()` half-updated, and
+  the zarr reader resolves every array's metadata before fetching any chunk,
+  so a bad second array fails before the first array's chunks are fetched.
+
 ## v0.1.4
 
 Changes since v0.1.3. The headline fix is the `file://` cache revalidation

@@ -69,27 +69,13 @@ fn declared_options(case: &Value, keys: &[&str]) -> serde_json::Map<String, Valu
     options
 }
 
-/// Parse a case's `select.axes` into a `Selection::Orthogonal` (store-backed
-/// zarr cases); absent ⇒ `Selection::All`.
+/// Parse a case's `select` — positional `axes` or named `dims` — through the
+/// crate's own wire parser; a case with neither (`all_records`, …) is
+/// `Selection::All`.
 fn parse_selection(case: &Value) -> Selection {
-    match case.get("select").and_then(|s| s.get("axes")).and_then(Value::as_array) {
-        Some(arr) => Selection::Orthogonal(arr.iter().map(parse_axis).collect()),
-        None => Selection::All,
-    }
-}
-
-fn parse_axis(v: &Value) -> AxisSelect {
-    if v.as_str() == Some("all") {
-        return AxisSelect::All;
-    }
-    if let Some(idx) = v.get("indices").and_then(Value::as_array) {
-        return AxisSelect::Indices(idx.iter().map(|x| x.as_u64().unwrap() as usize).collect());
-    }
-    if let Some(s) = v.get("slice").and_then(Value::as_array) {
-        let g = |i: usize, d: u64| s.get(i).and_then(Value::as_u64).unwrap_or(d) as usize;
-        return AxisSelect::Range { start: g(0, 0), stop: g(1, 0), step: g(2, 1) };
-    }
-    panic!("unrecognized axis selector: {v}")
+    case.get("select")
+        .map(|s| Selection::from_json(s).expect("a well-formed corpus select"))
+        .unwrap_or_default()
 }
 
 fn corpus_dir() -> PathBuf {

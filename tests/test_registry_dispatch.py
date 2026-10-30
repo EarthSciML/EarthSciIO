@@ -294,6 +294,77 @@ def test_the_records_pushdown_is_declared_for_every_track():
     assert records["used_by_provider"] == {"julia": True, "python": False, "rust": False}
 
 
+def test_selection_capability_declared_for_python_is_the_readers_own():
+    """`selection` on a format entry is what a `select` can do there and which
+    tracks take which spelling (`spec/registries.md` §2.2). For the python
+    track the flags must be the reader's own, a format with no `selection`
+    entry must not answer `supports_selection`, and a form listed for python
+    must be one of the two spellings."""
+    from earthsciio.registry import supports_selection
+
+    declared = set()
+    for entry in _spec_entries()["format"]["entries"]:
+        name = entry["name"]
+        if name not in format_registry:
+            continue
+        reader = format_registry.create(name)
+        sel = entry.get("selection")
+        if sel is None:
+            assert not supports_selection(reader), (
+                f"{name}: the python reader answers supports_selection but "
+                "registries.json declares no `selection` for it"
+            )
+            continue
+        assert supports_selection(reader) is sel["supports_selection"], name
+        assert bool(getattr(reader, "store_backed", False)) is sel["store_backed"], name
+        for form in sel["forms"]:
+            assert form["form"] in {"axes", "dims"}, (name, form)
+            assert set(form["tracks"]) <= {"python", "julia", "rust"}, (name, form)
+            if "python" in form["tracks"]:
+                declared.add((name, form["form"]))
+    assert declared == {(f, form) for f, form in _SELECTION_PROBES}, (
+        "a selection form registries.json lists for python has no decode probe "
+        "here (or a probe outlived its claim)"
+    )
+
+
+# One real decode per (format, form) the python track is listed under, against
+# the committed corpus: a claim in registries.json is only as good as a read that
+# honours it. The netcdf probes window a rank-3 field both ways; the zarr ones run
+# on the poisoned `named-window-zarr` store, so an over-fetch fails too.
+_MIXED = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc"
+_ZSTORE = "s3://earthsci-fixtures/geosfp-mini.zarr"
+_SELECTION_PROBES = {
+    ("netcdf", "axes"): (_MIXED, None,
+                         {"axes": ["all", {"slice": [1, 3]}, {"indices": [4, 0, 2]}]},
+                         "PS", (2, 2, 3)),
+    ("netcdf", "dims"): (_MIXED, None,
+                         {"dims": {"lat": {"slice": [1, 3]}, "lon": {"indices": [4, 0, 2]}}},
+                         "T", (2, 3, 2, 3)),
+    ("zarr", "axes"): (_ZSTORE, ["T3"],
+                       {"axes": ["all", {"slice": [2, 4]}, {"indices": [5, 3]}]},
+                       "T3", (3, 2, 2)),
+    ("zarr", "dims"): (_ZSTORE, ["T3", "PS2"],
+                       {"dims": {"lat": {"slice": [2, 4]}, "lon": {"indices": [5, 3]}}},
+                       "PS2", (2, 2)),
+}
+
+
+@pytest.mark.parametrize("fmt,form", sorted(_SELECTION_PROBES))
+def test_each_selection_form_declared_for_python_decodes(fmt, form):
+    missing = format_registry.missing_requirements(fmt)
+    if missing:
+        pytest.skip(f"the {fmt!r} reader needs {', '.join(missing)}")
+    from earthsciio import Cache, DataSource, Provider
+
+    url, variables, select, var, shape = _SELECTION_PROBES[(fmt, form)]
+    cache = Cache(root=REPO_ROOT / "conformance" / "corpus" / "cache", offline=True)
+    p = Provider(DataSource("probe", fmt, url, variables=variables or (),
+                            reader_kwargs={"select": select}), cache)
+    assert p.supports_selection
+    assert p.materialize()[var].shape == shape
+
+
 def test_stub_lookup_keys_match_spec():
     """Transport/format stub lookup keys (schemes/extensions) match the spec."""
     spec = _spec_entries()

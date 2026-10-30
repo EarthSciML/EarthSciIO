@@ -33,6 +33,7 @@ Extensibility is by construction via the **three registries** below.
 | (b) | The 3 extensibility registries (transport / format / store) | [registries.md](registries.md) · [registries.json](registries.json) |
 | (c) | Offline-mode contract (cache-only, hermetic CI) | [offline-mode.md](offline-mode.md) |
 | (d) | Conformance corpus (offline golden fixtures + expected arrays) | [conformance.md](conformance.md) · [../conformance/](../conformance) |
+| (e) | Epoch prefetch + named-dimension windows (`sample_at`, `select.dims`, `with_window`, `sample_windows_at`, `PrefetchGroup`) | [prefetch.md](prefetch.md) |
 
 JSON Schemas: [schemas/manifest.schema.json](schemas/manifest.schema.json),
 [schemas/cache-case.schema.json](schemas/cache-case.schema.json),
@@ -55,6 +56,12 @@ Provider(loader, *, window, offline=false, auth=None)   # bound to one loader
     refresh(t)         -> { file_variable: NativeField } | None # DISCRETE: at a cadence tstop; None if unchanged
     refresh_times()    -> [float]                              # the data_ingest schedule (solver tstops)
     prefetch(window)   -> None                                 # warm the cache offline-ready
+    sample_at(t)       -> { file_variable: NativeField }       # refresh(t)'s data, no buffer touched; thread-safe
+    with_window(w)     -> Provider                             # a provider with a named-dimension window baked in
+    sample_windows_at(t, [w...]) -> [ { file_variable: NativeField } ]  # K windows, one decode of their union
+
+PrefetchGroup({key: Provider}, *, depth, max_bytes, fetch_ahead, workers, windows, transform)
+    boundaries() / start(order, from) / take(k) / ready(k) / cancel(wait) / close() / stats()
 
 # component (a) seam drop-in (Phase-1 complement of ESS load_data):
 cached_opener(loader, *, cache=None, offline=false, auth=None)  -> (url -> Dataset)
@@ -64,6 +71,11 @@ cached_fetcher(loader, *, cache=None, offline=false, auth=None) -> (url -> bytes
 `NativeField = { array, coords }` on the loader's **native** grid (see
 [native-field.schema.json](schemas/native-field.schema.json)). `CONST` vs
 `DISCRETE` follows the loader's `temporal` presence. Regrid is ESD/C4's job.
+
+`refresh(t)` is `sample_at(t)` followed by the buffer update, and a
+`PrefetchGroup`'s `take(k)` is bitwise equal to `sample_at(boundaries()[k])` for
+every member: decoding ahead on background workers changes when a result is
+ready, never what it is. See [prefetch.md](prefetch.md).
 
 ---
 

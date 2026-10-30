@@ -103,6 +103,7 @@ def read_netcdf(path, expected, select=None):
     import xarray as xr
 
     axes_spec = (select or {}).get("axes")
+    dims_spec = (select or {}).get("dims")
     out = {}
     with xr.open_dataset(path, decode_times=False, mask_and_scale=True) as ds:
         take = {}
@@ -112,6 +113,11 @@ def read_netcdf(path, expected, select=None):
                     continue
                 for spec, dim in zip(axes_spec, da.dims):
                     take[str(dim)] = _zarr_resolve_axis(spec, int(ds.sizes[dim]))
+        if dims_spec is not None:
+            # The NAMED form (spec/prefetch.md §2.1): no rank match at all — each
+            # selector is applied by name to whatever carries its dimension.
+            for dim, spec in dims_spec.items():
+                take[str(dim)] = _zarr_resolve_axis(spec, int(ds.sizes[dim]))
 
         def gather(da):
             idx = {d: take[d] for d in map(str, da.dims) if d in take}
@@ -304,10 +310,18 @@ def read_zarr(corpus, case):
     objmap = {o["url"]: o for o in case.get("objects", [])}
     base = case["resolved_url"]
     axes_spec = (case.get("select") or {}).get("axes")
+    dims_spec = (case.get("select") or {}).get("dims")
 
     def obj_bytes(url):
+        # A POISONED object lies outside the case's selection and is undecodable
+        # on purpose (a reader that fetches one fails). The oracle rebuilds the
+        # whole array, so it must skip them — as a lazy reader does by never
+        # asking — and keeps fill there; `_check_poison_outside` proves that fill
+        # can never reach a selected cell.
         o = objmap.get(url)
-        return None if o is None else (corpus / o["blob_path"]).read_bytes()
+        if o is None or o.get("poisoned"):
+            return None
+        return (corpus / o["blob_path"]).read_bytes()
 
     out = {}
     for array in case["variables"]:
@@ -322,8 +336,17 @@ def read_zarr(corpus, case):
 
         if axes_spec is not None and len(axes_spec) == ndim:
             sel = [_zarr_resolve_axis(axes_spec[d], shape[d]) for d in range(ndim)]
+        elif dims_spec is not None:
+            zattrs = obj_bytes(f"{base}/{array}/.zattrs")
+            names = (json.loads(zattrs.decode("utf-8")).get("_ARRAY_DIMENSIONS")
+                     if zattrs is not None else None) or [f"dim_{d}" for d in range(ndim)]
+            sel = [_zarr_resolve_axis(dims_spec.get(names[d], "all"), shape[d])
+                   for d in range(ndim)]
         else:
             sel = [list(range(shape[d])) for d in range(ndim)]
+        _check_poison_outside(objmap, base, array, sel, chunks,
+                              "." if zmeta.get("dimension_separator") in (None, "")
+                              else zmeta["dimension_separator"])
 
         fill = zmeta.get("fill_value", 0.0) or 0.0
         full = np.full(shape, fill, dtype=out_dt)
@@ -341,6 +364,17 @@ def read_zarr(corpus, case):
             full[reg] = carr[loc].astype(out_dt, copy=False)
         out[array] = full[np.ix_(*sel)]
     return out, {}
+
+
+def _check_poison_outside(objmap, base, array, sel, chunks, sep):
+    """A poisoned chunk object must not intersect the selection — otherwise the
+    case would demand a cell no reader can produce. A generator self-check."""
+    for url, o in objmap.items():
+        if not o.get("poisoned") or not url.startswith(f"{base}/{array}/"):
+            continue
+        cidx = [int(c) for c in url.rsplit("/", 1)[1].split(sep)]
+        if all(any(g // chunks[d] == cidx[d] for g in sel[d]) for d in range(len(cidx))):
+            raise ValueError(f"poisoned object {url} intersects the case's selection")
 
 
 def read_shapefile(path, expected, decode=None):
@@ -655,6 +689,59 @@ def verify_case(case_path: pathlib.Path) -> list:
     return errs
 
 
+def _verify_blob_records(records, label) -> list:
+    """Checks 1 + 2 for a list of ``{url, cache_key, blob_path, content_sha256,
+    bytes}`` records — a zarr case's ``objects``, or a scenario's ``blobs``."""
+    errs: list = []
+    for o in records:
+        key = hashlib.sha256(o["url"].encode("utf-8")).hexdigest()
+        if key != o["cache_key"]:
+            errs.append(f"{label} cache-key: sha256({o['url']})={key} != {o['cache_key']}")
+        blob = (CORPUS / o["blob_path"]).read_bytes()
+        if hashlib.sha256(blob).hexdigest() != o["content_sha256"]:
+            errs.append(f"{label} integrity: {o['url']} blob sha256 != content_sha256")
+        if len(blob) != o["bytes"]:
+            errs.append(f"{label} integrity: {o['url']} blob bytes {len(blob)} != {o['bytes']}")
+        manifest = json.loads((CORPUS / "cache" / "v1" / "meta" / f"{o['cache_key']}.json").read_text())
+        if (manifest["sha256_content"], manifest["bytes"], manifest["url"]) != (
+                o["content_sha256"], o["bytes"], o["url"]):
+            errs.append(f"{label} integrity: {o['url']} manifest disagrees with the record")
+    return errs
+
+
+def verify_scenarios() -> int:
+    """Checks 1 + 2 for every scenario's blobs (spec/conformance.md "Scenarios").
+
+    A scenario pins a SEQUENCE of calls, which each track's own suite runs; what
+    the oracle can and must check here is that every blob it names is the one
+    the corpus commits, and that a file declared ``in_corpus: false`` really is
+    absent — that absence is what ``prefetch-errors`` is about."""
+    failed = 0
+    for path in sorted((CORPUS / "scenarios").glob("*.json")):
+        sc = json.loads(path.read_text())
+        errs = _verify_blob_records(sc.get("blobs", []), sc["id"])
+        sources = list((sc.get("sources") or {}).values())
+        for key in ("source",):
+            if sc.get(key):
+                sources.append(sc[key])
+        if sc.get("discrete"):
+            sources.append(sc["discrete"]["source"])
+        listed = {b["url"] for b in sc.get("blobs", [])}
+        for src in sources:
+            for f in src["files"]:
+                present = (CORPUS / "cache" / "v1" / "meta" /
+                           f"{hashlib.sha256(f['url'].encode('utf-8')).hexdigest()}.json").exists()
+                if present != f["in_corpus"]:
+                    errs.append(f"{sc['id']}: {f['url']} in_corpus={f['in_corpus']} but present={present}")
+                if f["in_corpus"] and f["url"] not in listed:
+                    errs.append(f"{sc['id']}: {f['url']} is in the corpus but not in `blobs`")
+        print(f"{'FAIL' if errs else 'PASS'}  scenario {sc['id']}")
+        for e in errs:
+            print(f"        - {e}")
+        failed += bool(errs)
+    return failed
+
+
 def validate_schemas() -> int:
     """Optional: validate manifests + cases against ../spec/schemas (if jsonschema
     is installed). Cross-language tracks rely on the schemas as the contract; this
@@ -704,7 +791,8 @@ def main() -> int:
         else:
             print(f"PASS  {entry['id']}")
     print(f"\n{len(index['cases']) - failed}/{len(index['cases'])} cases passed (offline)")
-    return 1 if (failed or schema_fails) else 0
+    scenario_fails = verify_scenarios()
+    return 1 if (failed or schema_fails or scenario_fails) else 0
 
 
 if __name__ == "__main__":

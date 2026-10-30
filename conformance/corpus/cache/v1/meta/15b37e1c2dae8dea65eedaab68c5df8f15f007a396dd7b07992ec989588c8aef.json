@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 2216,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "292638386e19ce6b969a4f12092e5acbe903ac42c82d224d700a073e589c88b9",
+  "source_loader": "geosfp",
+  "url": "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc"
+}

@@ -1296,6 +1296,439 @@ def build_zarr_permuted():
     return objects, expected
 
 
+# -----------------------------------------------------------------------------
+# Fixtures 6–8 — NAMED-DIMENSION windows (spec/prefetch.md §2.1).
+#
+# A positional `select` cannot window a provider whose fields differ in rank or
+# carry a staggered dimension: rank 3 is both `[time, lat, lon]` and `[time, lat,
+# lon_edge]` here, so position 2 would mean two different dimensions. The named
+# form says `{"dims": {"lat": …, "lon": …, "lon_edge": …}}` and applies each
+# selector to every field and coordinate carrying that dimension, whatever its
+# rank. Every expectation below is stated as the gate states it: the FULL read,
+# sliced by name afterwards (`_slice_by_name`).
+# -----------------------------------------------------------------------------
+GEOSFP_MIXED_URL = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc"
+
+GEOSFP_NAMED_WINDOW = {"dims": {
+    "lat": {"slice": [1, 3]},
+    "lon": {"indices": [4, 0, 2]},       # permuted: returned in this order
+    "lev": {"slice": [0, 3, 2]},         # stepped
+    "lon_edge": {"slice": [2, 5]},       # the staggered dim, independently
+}}
+
+GEOSFP_WRAP_WINDOW = {"dims": {"lon": {"indices": [3, 4, 0, 1]}}}
+
+
+def _named_axis_indices(spec, dim_len):
+    """One named selector -> its ordered global index list (the shared rules)."""
+    if spec == "all":
+        return list(range(dim_len))
+    if "indices" in spec:
+        return [int(i) for i in spec["indices"]]
+    s = spec["slice"]
+    return list(range(int(s[0]), int(s[1]), int(s[2]) if len(s) > 2 else 1))
+
+
+def _slice_by_name(arr, dims, window, sizes):
+    """``arr`` (on ``dims``) sliced by the named ``window`` — "the full read,
+    sliced by name afterwards", which is exactly the acceptance gate."""
+    for axis, dim in enumerate(dims):
+        if dim in window["dims"]:
+            arr = np.take(arr, _named_axis_indices(window["dims"][dim], sizes[dim]),
+                          axis=axis)
+    return arr
+
+
+def _nested(arr, dtype):
+    """A numpy array as the corpus's nested-list encoding (NaN -> null)."""
+    if dtype == "float64":
+        def cell(v):
+            return None if np.isnan(v) else round(float(v), 10)
+    else:
+        def cell(v):
+            return int(v)
+    if arr.ndim == 0:
+        return cell(arr[()])
+
+    def rec(a):
+        return [cell(v) for v in a] if a.ndim == 1 else [rec(s) for s in a]
+    return rec(arr)
+
+
+def _fields_expected(variables, coords, window, sizes):
+    """Expected native fields for every variable + coordinate under ``window``
+    (``None`` = the whole read). ``variables``/``coords`` map a name to
+    ``(decoded numpy array, dims, dtype, extra)``."""
+    def enc(arr, dims, dtype, extra, is_coord):
+        if window is not None:
+            arr = _slice_by_name(arr, dims, window, sizes)
+        out = {"dtype": dtype, "data": _nested(arr, dtype)}
+        if not is_coord:
+            out = {"dtype": dtype, "dims": list(dims), "shape": list(arr.shape),
+                   "fill_value": None, "data": out["data"]}
+        out.update(extra)
+        return out
+    return {
+        "variables": {n: enc(*v, False) for n, v in variables.items()},
+        "coords": {n: enc(*c, True) for n, c in coords.items()},
+    }
+
+
+def build_geosfp_mixed_netcdf():
+    """A GEOS-FP-shaped blob with fields of rank 1, 2, 3 and 4 and a STAGGERED
+    ``lon_edge`` beside ``lon``. Returns ``(bytes, variables, coords, sizes)`` —
+    the decoded arrays, so each case states its expectation by slicing them."""
+    from netCDF4 import Dataset
+
+    nt, nlev, nlat, nlon, nedge = 2, 3, 4, 5, 6
+    sizes = {"time": nt, "lev": nlev, "lat": nlat, "lon": nlon, "lon_edge": nedge}
+    time = np.array([0, 3], dtype="i4")                   # hours since 2024-01-01
+    lev = np.array([1.0, 2.0, 3.0])
+    lat = np.array([-1.5, -0.5, 0.5, 1.5])
+    lon = np.array([0.0, 72.0, 144.0, 216.0, 288.0])      # periodic: 288 -> 0 wraps
+    lon_edge = np.array([-36.0, 36.0, 108.0, 180.0, 252.0, 324.0])
+
+    # T: int16-packed (scale/offset/_FillValue) on [time, lev, lat, lon]. The raw
+    # value self-encodes its indices; one cell INSIDE the named window is masked.
+    scale, offset, fill = 0.01, 250.0, np.int16(-32767)
+    t_raw = np.fromfunction(lambda t, l, y, x: t * 1000 + l * 100 + y * 10 + x,
+                            (nt, nlev, nlat, nlon), dtype=int).astype("i2")
+    t_raw[1, 2, 2, 4] = fill
+    t_dec = t_raw.astype("f8") * scale + offset
+    t_dec[t_raw == fill] = np.nan
+    ps = np.fromfunction(lambda t, y, x: 100000.0 + t * 1000 + y * 10 + x,
+                         (nt, nlat, nlon))
+    u_edge = np.fromfunction(lambda t, y, e: t * 1000 + y * 10 + e + 0.5,
+                             (nt, nlat, nedge))
+    phis = np.fromfunction(lambda y, x: y * 10 + x + 0.25, (nlat, nlon))
+    area = np.array([10.0, 20.0, 30.0, 40.0])
+
+    tmp = CORPUS / ".tmp_geosfp_mixed.nc"
+    ds = Dataset(tmp, "w", format="NETCDF3_CLASSIC")
+    ds.createDimension("time", None)
+    for d in ("lev", "lat", "lon", "lon_edge"):
+        ds.createDimension(d, sizes[d])
+    v = ds.createVariable("time", "i4", ("time",))
+    v.units, v.calendar = "hours since 2024-01-01 00:00:00", "standard"
+    v[:] = time
+    for name, vals, units in (("lev", lev, "level"), ("lat", lat, "degrees_north"),
+                              ("lon", lon, "degrees_east"),
+                              ("lon_edge", lon_edge, "degrees_east")):
+        v = ds.createVariable(name, "f8", (name,))
+        v.units = units
+        v[:] = vals
+    v = ds.createVariable("T", "i2", ("time", "lev", "lat", "lon"), fill_value=fill)
+    v.set_auto_maskandscale(False)
+    v.scale_factor, v.add_offset, v.units = scale, offset, "K"
+    v[:] = t_raw
+    for name, dims, vals, units in (
+        ("PS", ("time", "lat", "lon"), ps, "Pa"),
+        ("U_EDGE", ("time", "lat", "lon_edge"), u_edge, "m s-1"),
+        ("PHIS", ("lat", "lon"), phis, "m2 s-2"),
+        ("AREA_LAT", ("lat",), area, "m2"),
+    ):
+        v = ds.createVariable(name, "f8", dims)
+        v.units = units
+        v[:] = vals
+    ds.close()
+    data = tmp.read_bytes()
+    tmp.unlink()
+
+    variables = {
+        "T": (t_dec, ("time", "lev", "lat", "lon"), "float64", {}),
+        "PS": (ps, ("time", "lat", "lon"), "float64", {}),
+        "U_EDGE": (u_edge, ("time", "lat", "lon_edge"), "float64", {}),
+        "PHIS": (phis, ("lat", "lon"), "float64", {}),
+        "AREA_LAT": (area, ("lat",), "float64", {}),
+    }
+    coords = {
+        "time": (time, ("time",), "int32",
+                 {"units": "hours since 2024-01-01 00:00:00", "calendar": "standard"}),
+        "lev": (lev, ("lev",), "float64", {}),
+        "lat": (lat, ("lat",), "float64", {}),
+        "lon": (lon, ("lon",), "float64", {}),
+        "lon_edge": (lon_edge, ("lon_edge",), "float64", {}),
+    }
+    return data, variables, coords, sizes
+
+
+# The store-backed twin. `T3` [lev, lat, lon] chunked [1, 2, 3] (12 chunks) and
+# `PS2` [lat, lon] chunked [2, 3] (4 chunks); the window names `lev` "all"
+# outright, `lat` {slice:[2,4]} (the second lat chunk) and `lon` {indices:[5,3]}
+# (the second lon chunk, permuted), so it intersects T3/{0,1,2}.1.1 and PS2/1.1
+# and NOTHING else. Every other chunk object is POISONED: committed and
+# manifest-valid, but a well-formed blosc container holding the wrong number of
+# bytes, so every track's decoder fails on it. Absent chunks would not do: a
+# reader that over-fetched would just get `fill_value` outside the window and
+# pass. A poisoned one cannot be fetched without failing the case.
+GEOSFP_ZARR_URL = "s3://earthsci-fixtures/geosfp-mini.zarr"
+GEOSFP_ZARR_WINDOW = {"dims": {
+    "lev": "all",
+    "lat": {"slice": [2, 4]},
+    "lon": {"indices": [5, 3]},
+}}
+
+
+def build_geosfp_named_zarr():
+    """``(objects, expected)`` for the named-window zarr store; ``objects`` rows
+    are ``(relpath, bytes, poisoned)``."""
+    codec = _blosc_codec()
+    poison = bytes(codec.encode(np.zeros(1, dtype="<f4")))   # decodes to 4 bytes
+    arrays = {
+        "T3": ((3, 4, 6), (1, 2, 3), "<f4", ["lev", "lat", "lon"],
+               lambda g: g[0] * 100 + g[1] * 10 + g[2]),
+        "PS2": ((4, 6), (2, 3), "<f8", ["lat", "lon"],
+                lambda g: 1000 + g[0] * 10 + g[1]),
+    }
+    objects, variables = [], {}
+    for name, (shape, chunks, dt, dims, fn) in arrays.items():
+        objects.append((f"{name}/.zarray",
+                        json.dumps(_zarray_meta(shape, chunks, dt),
+                                   sort_keys=True).encode("utf-8"), False))
+        objects.append((f"{name}/.zattrs",
+                        json.dumps({"_ARRAY_DIMENSIONS": dims},
+                                   sort_keys=True).encode("utf-8"), False))
+        sizes = dict(zip(dims, shape))
+        wanted = [sorted({g // c for g in _named_axis_indices(
+                     GEOSFP_ZARR_WINDOW["dims"].get(d, "all"), sizes[d])})
+                  for d, c in zip(dims, chunks)]
+        for key, enc in _zarr_chunks(shape, chunks, np.dtype(dt), fn):
+            cidx = [int(c) for c in key.split(".")]
+            hit = all(ci in w for ci, w in zip(cidx, wanted))
+            objects.append((f"{name}/{key}", enc if hit else poison, not hit))
+        full = np.fromfunction(lambda *g: fn(g), shape).astype("f8")
+        variables[name] = (full, tuple(dims), "float64", {})
+    sizes = {"lev": 3, "lat": 4, "lon": 6}
+    return objects, _fields_expected(variables, {}, GEOSFP_ZARR_WINDOW, sizes)
+
+
+# -----------------------------------------------------------------------------
+# Scenarios (spec/conformance.md "Scenarios", spec/prefetch.md §6): sequences of
+# calls each track's own test suite runs against these committed blobs.
+#
+# `hourly` is three 4-record files (00Z, 04Z, 08Z); `two_hourly` is two
+# 3-record files (00Z, 06Z) on a 2-hour cadence, so a group of both has an
+# hourly union in which the slow member repeats (`changed` false) every other
+# epoch. Times are int32 "seconds since 1970-01-01" so every track — Julia's,
+# whose cadence grid is in the file's own unit, included — counts in Unix
+# seconds. `prefetch-errors` declares the hourly source one file longer (to
+# 16Z) than the corpus holds, so its fourth file is a CacheMiss offline.
+# -----------------------------------------------------------------------------
+PREFETCH_BASE = "https://data.earthsci.dev/prefetch"
+PREFETCH_T0 = 1704067200                    # 2024-01-01T00:00:00Z
+PREFETCH_SOURCES = {
+    "hourly": {"stem": "geosfp-hourly", "frequency_s": 3600, "file_period_s": 14400,
+               "files": 3, "variables": ["Q", "TP"]},
+    "two_hourly": {"stem": "geosfp-2hourly", "frequency_s": 7200, "file_period_s": 21600,
+                   "files": 2, "variables": ["PS"]},
+}
+
+
+def _iso(epoch_s):
+    import datetime as dt
+    return dt.datetime.fromtimestamp(epoch_s, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _prefetch_url(stem, epoch_s):
+    import datetime as dt
+    stamp = dt.datetime.fromtimestamp(epoch_s, dt.timezone.utc).strftime("%Y%m%d_%H%M")
+    return f"{PREFETCH_BASE}/{stem}.{stamp}.nc"
+
+
+def build_prefetch_file(source, file_index):
+    """One file of a scenario source: ``records`` consecutive cadence records,
+    each cell self-encoding its GLOBAL record index, plus (hourly) an
+    int16-packed ``TP`` with one masked cell so NaN equality is exercised."""
+    from netCDF4 import Dataset
+
+    src = PREFETCH_SOURCES[source]
+    nrec = src["file_period_s"] // src["frequency_s"]
+    nlat, nlon = 2, 3
+    rec0 = file_index * nrec
+    times = np.array([PREFETCH_T0 + (rec0 + r) * src["frequency_s"]
+                      for r in range(nrec)], dtype="i4")
+    tmp = CORPUS / f".tmp_{source}_{file_index}.nc"
+    ds = Dataset(tmp, "w", format="NETCDF3_CLASSIC")
+    ds.createDimension("time", None)
+    ds.createDimension("lat", nlat)
+    ds.createDimension("lon", nlon)
+    v = ds.createVariable("time", "i4", ("time",))
+    v.units, v.calendar = "seconds since 1970-01-01 00:00:00", "standard"
+    v[:] = times
+    v = ds.createVariable("lat", "f8", ("lat",))
+    v.units = "degrees_north"
+    v[:] = np.array([10.0, 20.0])
+    v = ds.createVariable("lon", "f8", ("lon",))
+    v.units = "degrees_east"
+    v[:] = np.array([0.0, 120.0, 240.0])
+    grid = np.fromfunction(lambda r, y, x: (rec0 + r) * 100 + y * 10 + x,
+                           (nrec, nlat, nlon))
+    if source == "hourly":
+        v = ds.createVariable("Q", "f8", ("time", "lat", "lon"))
+        v.units = "kg kg-1"
+        v[:] = grid + 0.5
+        fill = np.int16(-32767)
+        raw = grid.astype("i2")
+        raw[nrec - 1, 1, 2] = fill        # the last record of every file: a seam cell
+        v = ds.createVariable("TP", "i2", ("time", "lat", "lon"), fill_value=fill)
+        v.set_auto_maskandscale(False)
+        v.scale_factor, v.add_offset, v.units = 0.5, 200.0, "K"
+        v[:] = raw
+    else:
+        v = ds.createVariable("PS", "f8", ("time", "lat", "lon"))
+        v.units = "Pa"
+        v[:] = grid + 90000.0
+    ds.close()
+    data = tmp.read_bytes()
+    tmp.unlink()
+    return data
+
+
+def emit_scenario_blob(url, data, loader, ext="nc"):
+    """Write one scenario blob + manifest; return its integrity record."""
+    key = cache_key(url)
+    sha = sha256_bytes(data)
+    rel = write_blob(key, ext, data)
+    write_manifest(key, {
+        "schema": "earthsciio/manifest/v1", "url": url, "etag": None,
+        "last_modified": None, "sha256_content": sha, "bytes": len(data),
+        "fetched_at": FIXED_FETCHED_AT, "source_loader": loader, "auth_realm": None,
+    })
+    return {"url": url, "cache_key": key, "blob_path": rel,
+            "content_sha256": sha, "bytes": len(data)}
+
+
+def _scenario_source(name, *, files):
+    """The language-neutral description of a scenario source: every track builds
+    its own DISCRETE provider from it (Python strftime, Rust `time` format
+    description, Julia the explicit per-file URL list)."""
+    src = PREFETCH_SOURCES[name]
+    end = PREFETCH_T0 + files * src["file_period_s"]
+    file_list = []
+    for i in range(files):
+        anchor = PREFETCH_T0 + i * src["file_period_s"]
+        file_list.append({"anchor": _iso(anchor), "anchor_s": anchor,
+                          "url": _prefetch_url(src["stem"], anchor),
+                          "in_corpus": i < src["files"]})
+    return {
+        "format": "netcdf",
+        "url_template": {
+            "strftime": f"{PREFETCH_BASE}/{src['stem']}.%Y%m%d_%H%M.nc",
+            "rust": f"{PREFETCH_BASE}/{src['stem']}.[year][month][day]_[hour][minute].nc",
+        },
+        "start": _iso(PREFETCH_T0), "start_s": PREFETCH_T0,
+        "end": _iso(end), "end_s": end,
+        "frequency_s": src["frequency_s"], "file_period_s": src["file_period_s"],
+        "time_dim": "time", "variables": list(src["variables"]),
+        "refresh_times_s": list(range(PREFETCH_T0, end, src["frequency_s"])),
+        "files": file_list,
+    }
+
+
+def emit_scenarios(mixed_blob_record):
+    """Write the prefetch blobs and the three scenario files."""
+    blobs = []
+    for name, src in PREFETCH_SOURCES.items():
+        for i in range(src["files"]):
+            anchor = PREFETCH_T0 + i * src["file_period_s"]
+            blobs.append(emit_scenario_blob(_prefetch_url(src["stem"], anchor),
+                                            build_prefetch_file(name, i), "geosfp"))
+    hourly, two_hourly = _scenario_source("hourly", files=3), _scenario_source("two_hourly", files=2)
+    union = sorted(set(hourly["refresh_times_s"]) | set(two_hourly["refresh_times_s"]))
+    sdir = CORPUS / "scenarios"
+    hourly_windows = [
+        {"dims": {"lat": {"slice": [1, 2]}, "lon": {"indices": [2, 0]}}},
+        {"dims": {"lon": {"slice": [0, 3, 2]}}},
+    ]
+
+    write_json(sdir / "multi-window.json", {
+        "schema": "earthsciio/scenario/v1",
+        "id": "multi-window",
+        "description": (
+            "sample_windows_at(t, W) must equal [with_window(w).sample_at(t) for w in W] "
+            "BITWISE -- variables, coordinates, dims, dtypes, NaN for NaN -- and each must "
+            "equal the whole read sliced by name. `const` runs the mixed-rank blob as a "
+            "CONST provider (overlapping, permuted, repeated, wrapping and EMPTY windows); "
+            "`discrete` runs the hourly source with records_per_sample 1 and 2 at every "
+            "refresh time, file seams included."),
+        "blobs": [mixed_blob_record] + [b for b in blobs if "geosfp-hourly" in b["url"]],
+        "const": {
+            "format": "netcdf", "url": GEOSFP_MIXED_URL, "variables": [],
+            "windows": [
+                {"dims": {"lat": {"slice": [0, 2]}, "lon": {"indices": [3, 4, 0]},
+                          "lev": {"indices": [2, 0]}}},
+                {"dims": {"lat": {"slice": [1, 4]}, "lon": {"indices": [4, 4, 1]},
+                          "lon_edge": {"slice": [0, 6, 2]}}},
+                {"dims": {"lat": {"indices": []}, "lon": "all"}},
+                {"dims": {"lon": {"indices": [4, 0]}, "lev": "all"}},
+            ],
+        },
+        "discrete": {"source": hourly, "records_per_sample": [1, 2],
+                     "windows": hourly_windows},
+    })
+
+    write_json(sdir / "prefetch-equivalence.json", {
+        "schema": "earthsciio/scenario/v1",
+        "id": "prefetch-equivalence",
+        "description": (
+            "For every combination of order x depth x workers x max_bytes (and once with "
+            "`windows`), the PrefetchGroup take(k) sequence must equal, member by member "
+            "and BITWISE, the synchronous sequence of a FRESH provider's refresh(B[k]) "
+            "(Rust: refresh's variables + coords()). Randomize decode latency with the "
+            "binding's test hook so completion order varies. `expect` pins boundaries and, "
+            "per member, the anchor of every epoch and which epochs are `changed` in a "
+            "forward order; epochs are 0-based here (Julia adds 1)."),
+        "blobs": blobs,
+        "sources": {"hourly": hourly, "two_hourly": two_hourly},
+        "members": [
+            {"key": "Q1", "source": "hourly", "records_per_sample": 1},
+            {"key": "Q2", "source": "hourly", "records_per_sample": 2},
+            {"key": "PS", "source": "two_hourly", "records_per_sample": 1},
+        ],
+        "orders": ["forward", "reverse", [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 0, 11, 11, 10, 7, 8]],
+        "depth": [1, 2, 3],
+        "workers": [1, 4],
+        "max_bytes": [None, 1],
+        "windows": hourly_windows,
+        "expect": {
+            "boundaries_s": union,
+            "anchors_s": {
+                "Q1": union, "Q2": union,
+                "PS": [t - (t - PREFETCH_T0) % 7200 for t in union],
+            },
+            "changed_forward": {
+                "Q1": [True] * len(union), "Q2": [True] * len(union),
+                "PS": [(t - PREFETCH_T0) % 7200 == 0 for t in union],
+            },
+        },
+    })
+
+    long_hourly = _scenario_source("hourly", files=4)
+    missing_first = long_hourly["refresh_times_s"].index(long_hourly["files"][3]["anchor_s"])
+    write_json(sdir / "prefetch-errors.json", {
+        "schema": "earthsciio/scenario/v1",
+        "id": "prefetch-errors",
+        "description": (
+            "The hourly source declared one file LONGER than the corpus holds (to 16Z): "
+            "offline, its fourth file is a CacheMiss. (1) For depth in {1, 3} and workers "
+            "in {1, 4}, a forward order's take(k) succeeds for every k < `missing_from` and "
+            "raises CacheMiss (the binding's own cache-miss error, never a wrapper) at "
+            "take(missing_from), not before -- although the workers reach it early; the "
+            "next take is an error telling the caller to start again. (2) Take `cancel_after` "
+            "epochs, cancel(), start(forward, from=`cancel_after`): the rest equals the "
+            "uninterrupted sequence. (3) A COLD cache (an empty offline root) raises "
+            "CacheMiss at take(0)."),
+        "blobs": [b for b in blobs if "geosfp-hourly" in b["url"]],
+        "source": long_hourly,
+        "records_per_sample": 1,
+        "depth": [1, 3],
+        "workers": [1, 4],
+        "missing_from": missing_first,
+        "cancel_after": 5,
+    })
+    return blobs
+
+
 def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
                    decode, select, notes):
     """Write every store object as a cache blob + manifest, then the case JSON.
@@ -1307,7 +1740,8 @@ def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
     """
     obj_records = []
     primary = None
-    for rel, data in objects:
+    for rel, data, *flags in objects:
+        poisoned = bool(flags and flags[0])
         url = f"{base_url}/{rel}"
         key = cache_key(url)
         content_sha = sha256_bytes(data)
@@ -1326,6 +1760,10 @@ def emit_zarr_case(case_id, *, loader, base_url, objects, variables, expected,
         write_manifest(key, manifest)
         rec = {"url": url, "cache_key": key, "blob_path": blob_rel,
                "content_sha256": content_sha, "bytes": len(data)}
+        if poisoned:
+            # Outside the case's selection, and undecodable on purpose: a reader
+            # that fetches it fails (the oracle skips it, as a lazy reader must).
+            rec["poisoned"] = True
         obj_records.append(rec)
         if rel.endswith(f"{variables[0]}/.zarray"):
             primary = rec
@@ -1632,6 +2070,67 @@ def main() -> None:
                "interleaving is not agreed across tifffile/rasterio/the Rust "
                "tiff crate, so pinning it here would invent a convention."),
     ))
+
+    mixed_data, mixed_vars, mixed_coords, mixed_sizes = build_geosfp_mixed_netcdf()
+    mixed_decode = {"scale_factor_offset": True, "fill_to_nan": True,
+                    "time_decoded": False, "decode_time_select": True,
+                    "select_form": "dims"}
+    mixed = emit_case(
+        "named-window-mixed-rank",
+        loader="geosfp", kind="grid", fmt="netcdf", transport="file", store="local",
+        resolved_url=GEOSFP_MIXED_URL, ext="nc", data=mixed_data,
+        expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_NAMED_WINDOW,
+                                  mixed_sizes),
+        decode=mixed_decode, select=GEOSFP_NAMED_WINDOW,
+        notes=("GEOS-FP-shaped blob with fields of rank 1 (AREA_LAT[lat]), 2 "
+               "(PHIS[lat,lon]), 3 (PS[time,lat,lon] AND U_EDGE[time,lat,lon_edge] "
+               "on the STAGGERED lon_edge) and 4 (T[time,lev,lat,lon], int16-packed "
+               "with one masked cell inside the window), read through ONE "
+               "named-dimension select (spec/prefetch.md 2.1): lat {slice:[1,3]}, "
+               "lon {indices:[4,0,2]} (permuted), lev {slice:[0,3,2]} (stepped), "
+               "lon_edge {slice:[2,5]}; time unnamed, so whole and raw. No "
+               "positional `axes` can say this: rank 3 is [time,lat,lon] for PS and "
+               "[time,lat,lon_edge] for U_EDGE. Every field and every coordinate "
+               "carrying a named dim is sliced by name; the expectation is the full "
+               "read sliced afterwards."),
+    )
+    summary.append(("named-window-mixed-rank",) + mixed)
+
+    summary.append(("window-wrap",) + emit_case(
+        "window-wrap",
+        loader="geosfp", kind="grid", fmt="netcdf", transport="file", store="local",
+        resolved_url=GEOSFP_MIXED_URL, ext="nc", data=mixed_data,
+        expected=_fields_expected(mixed_vars, mixed_coords, GEOSFP_WRAP_WINDOW,
+                                  mixed_sizes),
+        decode=mixed_decode, select=GEOSFP_WRAP_WINDOW,
+        notes=("The SAME blob and cache key as named-window-mixed-rank under "
+               "{dims: {lon: {indices: [3, 4, 0, 1]}}}: a window ACROSS the periodic "
+               "longitude seam (216, 288, 0, 72), returned in the order given -- the "
+               "spelling a rank whose halo wraps uses. Applied to `lon` and every "
+               "field on it; `lon_edge` is a different dimension and stays whole."),
+    ))
+
+    gz_objects, gz_expected = build_geosfp_named_zarr()
+    summary.append(("named-window-zarr",) + emit_zarr_case(
+        "named-window-zarr",
+        loader="geosfp", base_url=GEOSFP_ZARR_URL, objects=gz_objects,
+        variables=["T3", "PS2"], expected=gz_expected,
+        decode={"compressor": "blosc-lz4-shuffle", "fill_to_nan": False,
+                "order": "C", "zarr_format": 2, "select_form": "dims"},
+        select=GEOSFP_ZARR_WINDOW,
+        notes=("Store-backed Zarr v2 store read through a NAMED-dimension select: "
+               "T3 [lev,lat,lon] chunked [1,2,3] and PS2 [lat,lon] chunked [2,3] "
+               "under {lev: all, lat: {slice:[2,4]}, lon: {indices:[5,3]}} -- one "
+               "window, two ranks. It intersects T3/0.1.1, T3/1.1.1, T3/2.1.1 and "
+               "PS2/1.1 only; the other 12 chunk objects are POISONED (committed, "
+               "manifest-valid, a well-formed blosc container of the WRONG size), so "
+               "a reader that fetches one fails rather than quietly discarding it. "
+               "fill_value 0.0 is not NaN; no coordinate arrays."),
+    ))
+
+    emit_scenarios({"url": GEOSFP_MIXED_URL, "cache_key": mixed[0],
+                    "blob_path": mixed[3], "content_sha256": mixed[1],
+                    "bytes": mixed[2]})
 
     index = {
         "schema": "earthsciio/cases-index/v1",

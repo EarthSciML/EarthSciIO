@@ -196,12 +196,13 @@ function dump_case(corpus, case)
     elseif fmt == "netcdf"
         # Whole-file, but selection-capable: a case carrying an orthogonal
         # `select` is a DECODE-TIME window — the same blob under the same cache
-        # key, with only the requested hyperslab materialised. A case without
-        # `axes` reads the blob whole (the `{all_records: true}` form).
+        # key, with only the requested hyperslab materialised — in either form,
+        # positional `axes` or named `dims` (spec/prefetch.md §2.1). A case with
+        # neither reads the blob whole (the `{all_records: true}` form).
         sel = get(case, "select", nothing)
-        axes = sel === nothing ? nothing : get(sel, "axes", nothing)
-        axes === nothing ? const_provider(cache, url; format = fmt) :
-            const_provider(cache, url; format = fmt, reader_kwargs = (; select = sel))
+        windowed = sel !== nothing && (haskey(sel, "axes") || haskey(sel, "dims"))
+        windowed ? const_provider(cache, url; format = fmt, reader_kwargs = (; select = sel)) :
+            const_provider(cache, url; format = fmt)
     elseif fmt == "zarr"
         # Store-backed: `url` is the store base; `variables` names the arrays (no
         # .zmetadata to enumerate); `select` (the orthogonal selection) rides in

@@ -23,6 +23,11 @@ EarthSciIO spec (`spec/cache-format.md`, `spec/registries.md`,
     and exposes [`materialize`]/[`refresh`]/[`refresh_times`]/[`prefetch`]. The
     library provides DATA, not a solver: it exposes `refresh_times`; the
     user/solver drives the discrete-cadence update (no solver embedded).
+  * **epoch prefetch + named windows** — `spec/prefetch.md` (RFC U11):
+    [`sample_at`] (thread-safe `refresh` data), [`DimWindow`] / the `select =
+    {"dims": …}` form, [`with_window`] / [`sample_windows_at`], and
+    [`PrefetchGroup`], which decodes upcoming epochs on `Threads.@spawn` workers,
+    bitwise identical to synchronous `refresh`.
 
 Variable remap and unit conversion stay in ESS; regrid stays in ESD/C4 — the
 readers return arrays keyed by the on-disk `file_variable` name, unremapped.
@@ -73,6 +78,11 @@ export NativeField, NativeDataset, variable_names, coord_names
 export Provider, const_provider, discrete_provider, Cadence, CONST, DISCRETE
 export materialize, refresh, refresh_times, prefetch, is_const
 
+# epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11).
+# `take!`, `isready` and `close` are Base functions the group adds methods to.
+export sample_at, DimWindow, select_form, with_window, sample_windows_at
+export PrefetchGroup, Sample, EpochSample, boundaries, start!, cancel!, stats
+
 # errors
 export CacheMiss, IntegrityError
 
@@ -88,6 +98,8 @@ include("readers.jl")
 include("zarr.jl")
 include("zarr_write.jl")
 include("provider.jl")
+include("windows.jl")
+include("prefetch.jl")
 
 """Register the built-in transports + stores into the shared registries.
 

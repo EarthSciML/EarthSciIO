@@ -35,7 +35,10 @@ use netcdf_reader::{NcFile, NcType, NcVariable};
 
 use crate::error::{Error, Result};
 
-use super::{ArrayData, Coord, DType, NativeDataset, NativeField, Reader, Records, Selection};
+use super::{
+    gather, ArrayData, AxisSelect, Coord, DType, NativeDataset, NativeField, Reader, Records,
+    Selection,
+};
 
 /// The active `netcdf` reader: pure-Rust NetCDF-3 + NetCDF-4/HDF5 decode.
 #[derive(Debug, Default, Clone, Copy)]
@@ -84,7 +87,7 @@ impl Reader for NetcdfReader {
         records: Option<&Records>,
     ) -> Result<NativeDataset> {
         let file = NcFile::open(blob_path).map_err(fmt_err)?;
-        let sel = dim_selection(&file, select)?;
+        let sel = dim_selection(&file, select, variables)?;
         let sel = merge_records(&file, sel, records)?;
         decode(&file, variables, sel.as_ref())
     }
@@ -162,14 +165,23 @@ fn is_time_dim(vars: &[NcVariable], dim: &str) -> bool {
 /// those selectors by name to every other array in the file — silently moving
 /// which dimension a selector means for the numeric variables the caller was
 /// actually windowing.
-fn dim_selection(file: &NcFile, select: &Selection) -> Result<Option<DimSelection>> {
+///
+/// A [`Selection::Named`] skips the positional match entirely: see
+/// [`named_dim_selection`]. `variables` is the read's projection, which only
+/// that form consults — it decides which fields "the read" has.
+fn dim_selection(
+    file: &NcFile,
+    select: &Selection,
+    variables: &[String],
+) -> Result<Option<DimSelection>> {
     let axes = match select {
         Selection::All => return Ok(None),
         Selection::Orthogonal(axes) => axes,
+        Selection::Named(named) => return named_dim_selection(file, named, variables),
     };
     let vars: Vec<NcVariable> = file.variables().map_err(fmt_err)?.to_vec();
 
-    let mut bydim: Vec<(String, &super::AxisSelect, usize)> = Vec::new();
+    let mut bydim: Vec<(String, &AxisSelect, usize)> = Vec::new();
     let mut matched = false;
     for var in &vars {
         if classify(var).is_none() {
@@ -213,23 +225,107 @@ fn dim_selection(file: &NcFile, select: &Selection) -> Result<Option<DimSelectio
 
     let mut out = DimSelection::new();
     for (name, axis, len) in bydim {
-        if matches!(axis, super::AxisSelect::All) {
+        if matches!(axis, AxisSelect::All) {
             continue;
         }
         if is_time_dim(&vars, &name) {
-            return Err(Error::Format {
-                format: "netcdf".to_string(),
-                detail: format!(
-                    "select asks for a subset of the time dimension '{name}'; record \
-                     selection is the Provider's (it owns the cadence: \
-                     records_per_sample), not the reader's — the time axis of a netcdf \
-                     `select` must be \"all\""
-                ),
-            });
+            return Err(time_refused(&name));
         }
         out.insert(name, axis.resolve_in(len, "netcdf")?);
     }
     Ok(if out.is_empty() { None } else { Some(out) })
+}
+
+/// Resolve a NAMED-dimension `select` (`spec/prefetch.md` §2.1) into the same
+/// `{dimension: indices}` map the positional form induces — after which the
+/// decode cannot tell the two spellings apart, which is the point: one hyperslab
+/// path, one gather, one set of coordinate rules.
+///
+/// What the named form changes is only how a selector finds its axis. There is
+/// no rank match, so a 2-D `PHIS(lat, lon)`, a 4-D `T(time, lev, lat, lon)` and
+/// a staggered `U_EDGE(time, lat, lon_edge)` are all windowed by one map. In
+/// exchange, the map must MEAN something: a name that no field of this read
+/// carries — "the fields" being the data variables after the `variables`
+/// projection plus the coordinate variables returned with them, each on its
+/// [`field_dims`] — is an error naming the dimensions that ARE present. That
+/// includes a consumed string length, which is not an axis of any field and,
+/// applied, would truncate every string.
+///
+/// Every selector is resolved — so every index bounds-checked against the file's
+/// dimension length — here, before a single array is read.
+fn named_dim_selection(
+    file: &NcFile,
+    named: &std::collections::BTreeMap<String, AxisSelect>,
+    variables: &[String],
+) -> Result<Option<DimSelection>> {
+    let vars: Vec<NcVariable> = file.variables().map_err(fmt_err)?.to_vec();
+    let want: HashSet<&str> = variables.iter().map(String::as_str).collect();
+
+    let mut carried = std::collections::BTreeMap::<String, usize>::new();
+    let mut consumed = std::collections::BTreeSet::<&str>::new();
+    for var in &vars {
+        if classify(var).is_none() {
+            continue;
+        }
+        if !var.is_coordinate_variable() && !want.is_empty() && !want.contains(var.name()) {
+            continue;
+        }
+        let (dims, shape) = field_dims(&vars, var);
+        for (d, len) in dims.into_iter().zip(shape) {
+            carried.insert(d, len);
+        }
+        consumed.extend(consumed_length_dim(&vars, var));
+    }
+
+    let unknown: Vec<&str> = named
+        .keys()
+        .map(String::as_str)
+        .filter(|d| !carried.contains_key(*d))
+        .collect();
+    if !unknown.is_empty() {
+        let lengths: Vec<&str> = unknown.iter().copied().filter(|d| consumed.contains(d)).collect();
+        let note = if lengths.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({lengths:?} is the string LENGTH of a char variable, not a dimension \
+                 of any decoded field)"
+            )
+        };
+        return Err(Error::Format {
+            format: "netcdf".to_string(),
+            detail: format!(
+                "select names dimension(s) {unknown:?}, which no field of this read \
+                 carries{note}; present: {:?}",
+                carried.keys().collect::<Vec<_>>()
+            ),
+        });
+    }
+
+    let mut out = DimSelection::new();
+    for (name, axis) in named {
+        if matches!(axis, AxisSelect::All) {
+            continue;
+        }
+        if is_time_dim(&vars, name) {
+            return Err(time_refused(name));
+        }
+        out.insert(name.clone(), axis.resolve_in(carried[name], "netcdf")?);
+    }
+    Ok(if out.is_empty() { None } else { Some(out) })
+}
+
+/// The refusal of a non-`all` selector on the time axis, in either spelling.
+fn time_refused(name: &str) -> Error {
+    Error::Format {
+        format: "netcdf".to_string(),
+        detail: format!(
+            "select asks for a subset of the time dimension '{name}'; record \
+             selection is the Provider's (it owns the cadence: \
+             records_per_sample), not the reader's — the time axis of a netcdf \
+             `select` must be \"all\""
+        ),
+    }
 }
 
 /// The declared length of dimension `dim` in the file's header, or `None` when
@@ -628,39 +724,6 @@ fn plan_slab(var: &NcVariable, sel: Option<&DimSelection>) -> Option<Slab> {
         take,
         needs_gather,
     })
-}
-
-/// Gather `take` out of a row-major slab of `slab_shape`, preserving the
-/// requested index ORDER on every axis (a reader that sorted them fails the
-/// permuted corpus case).
-///
-/// `Clone` rather than `Copy` so the one gather serves both the numeric slabs
-/// and [`select_text`]'s `String` cells — two gathers would be two chances to
-/// get the row-major arithmetic subtly different in one of them.
-fn gather<T: Clone>(flat: &[T], slab_shape: &[usize], take: &[Vec<usize>]) -> Vec<T> {
-    let out_shape: Vec<usize> = take.iter().map(Vec::len).collect();
-    let n: usize = out_shape.iter().product();
-    let mut src_strides = vec![1usize; slab_shape.len()];
-    for i in (0..slab_shape.len().saturating_sub(1)).rev() {
-        src_strides[i] = src_strides[i + 1] * slab_shape[i + 1];
-    }
-    let mut out = Vec::with_capacity(n);
-    let mut idx = vec![0usize; out_shape.len()];
-    for _ in 0..n {
-        let mut off = 0;
-        for (ax, &k) in idx.iter().enumerate() {
-            off += take[ax][k] * src_strides[ax];
-        }
-        out.push(flat[off].clone());
-        for ax in (0..idx.len()).rev() {
-            idx[ax] += 1;
-            if idx[ax] < out_shape[ax] {
-                break;
-            }
-            idx[ax] = 0;
-        }
-    }
-    out
 }
 
 /// Read one variable's values as f64, whole or through the selection's slab.
