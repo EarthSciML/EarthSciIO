@@ -1,0 +1,25 @@
+# Starter ruff config for repositories that call the shared lint workflow
+# (EarthSciML/.github/.github/workflows/lint.yml). Copy it to the repository
+# root and adjust; ruff cannot inherit config from another repository.
+line-length = 100
+# Set this to match the package's `requires-python`: a root ruff.toml does
+# not read pyproject.toml, so without it ruff assumes its own default
+# (py311 as of 0.17) and may suggest syntax older Pythons lack.
+target-version = "py39"
+
+[lint]
+# An explicit `select`, not ruff's default set: the default grew from 59 to
+# 413 rules in ruff 0.16, and an explicit list does not move when the pinned
+# ruff version is bumped. Add rule groups one at a time.
+#   E4/E7/E9/F  pyflakes + core pycodestyle (correctness)
+#   B           flake8-bugbear (likely bugs)
+#   UP          pyupgrade (modern syntax for the target version)
+#   I           isort (import order)
+#   NPY         NumPy-specific rules
+#   RUF         ruff's own rules
+select = ["E4", "E7", "E9", "F", "B", "UP", "I", "NPY", "RUF"]
+# Math notation (Greek letters, the minus and multiplication signs) is
+# routine in scientific docstrings and comments, not a typo. RUF046 flags
+# int(round(x)) as redundant, but round() of a NumPy scalar is not always a
+# Python int.
+ignore = ["RUF001", "RUF002", "RUF003", "RUF046"]
