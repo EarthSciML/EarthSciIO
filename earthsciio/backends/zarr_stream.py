@@ -441,6 +441,32 @@ class CommitToken:
         return cls.from_dict(text if isinstance(text, dict) else json.loads(text))
 
 
+# --- whole-shard writes ------------------------------------------------------ #
+
+_WHOLE_SHARD_PIPELINES: Dict[type, type] = {}
+
+
+def _whole_shard_pipeline(p):
+    """``p`` with partial encoding turned off. A sharded array's pipeline
+    supports partial encoding, and older zarr-python (3.1.x) then reads the stored
+    shard back even for a write that covers it whole; without partial encoding
+    a complete shard goes through the plain encode, which never reads. Every
+    write here covers whole shards, so nothing is lost. A pipeline type that is
+    not a dataclass is returned as is."""
+    import dataclasses
+
+    cls = type(p)
+    if not dataclasses.is_dataclass(p) or not hasattr(cls, "supports_partial_encode"):
+        return p
+    sub = _WHOLE_SHARD_PIPELINES.get(cls)
+    if sub is None:
+        sub = type(f"_WholeShard{cls.__name__}", (cls,),
+                   {"supports_partial_encode": property(lambda self: False)})
+        sub = dataclasses.dataclass(frozen=True)(sub)
+        _WHOLE_SHARD_PIPELINES[cls] = sub
+    return sub(**{f.name: getattr(p, f.name) for f in dataclasses.fields(p) if f.init})
+
+
 # --- per-array geometry ------------------------------------------------------ #
 
 
@@ -624,6 +650,7 @@ class ZarrStreamHandle:
             shape[dims.index(self.schema.time_dim)] = time_len
         am = AsyncArray(metadata=meta.update_shape(tuple(shape)),
                         store_path=StorePath(self.store, name))
+        object.__setattr__(am, "codec_pipeline", _whole_shard_pipeline(am.codec_pipeline))
         return zarr.Array(am)
 
     def _set_time_shape(self, n: int) -> None:
