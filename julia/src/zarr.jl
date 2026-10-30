@@ -1,4 +1,5 @@
-# The `zarr` format reader — a STORE-BACKED chunked-array reader (Zarr v2).
+# The `zarr` format reader — a STORE-BACKED chunked-array reader (Zarr v2 and
+# sharded v3; the v3 path is below `read_store`).
 #
 # A Zarr v2 store is not one blob: each array's `.zarray`/`.zattrs` metadata and
 # every chunk is its OWN object with its OWN URL, so "lazy partial read" is just
@@ -22,7 +23,7 @@
 # absent); NO coordinate arrays. fill_value is NOT mapped to NaN — a deliberate
 # deviation (0.0 is real ISRM data); it fills only an ABSENT chunk object's region.
 
-"""The `zarr` store-backed reader (Zarr v2 chunked arrays)."""
+"""The `zarr` store-backed reader (Zarr v2 and sharded Zarr v3 chunked arrays)."""
 struct ZarrReader <: Reader end
 
 store_backed(::ZarrReader) = true
@@ -47,7 +48,7 @@ _ndim(m::ZArrayMeta) = length(m.shape)
 function _parse_zarray(bytes)::ZArrayMeta
     d = JSON.parse(String(bytes))
     Int(get(d, "zarr_format", 2)) == 2 || error(
-        "zarr reader supports zarr_format 2 only, got $(get(d,"zarr_format",nothing)) (v3 is future work)")
+        "zarr reader supports zarr_format 2 only, got $(get(d,"zarr_format",nothing)) (v3 stores are read via zarr.json)")
     shape = Int[Int(s) for s in d["shape"]]
     chunks = Int[Int(c) for c in d["chunks"]]
     length(shape) == length(chunks) ||
