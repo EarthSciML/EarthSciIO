@@ -607,7 +607,7 @@ fn shapefile_members(path: &Path, member: Option<&str>) -> Result<HashMap<String
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| fmt_err(&format!("cannot open the zip blob: {e}")))?;
     let names: Vec<String> = (0..archive.len())
-        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| archive.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.into_owned())))
         .filter(|n| !n.ends_with('/'))
         .collect();
     let mut shps: Vec<&String> = names
