@@ -485,3 +485,89 @@ end
     write_blob!(ZW, o, :static, "x", UInt8[1])
     @test write_close!(ZW, o)["schema"] == "earthsciio/output-manifest/v2"
 end
+
+@testset "zarr stream: an owner off the origin writes replicated vars and statics" begin
+    # The owner holds lat [2, 6): no writer's region starts at 0 on lat, but the
+    # replicated var, the time coordinate and the replicated static are still
+    # the owner's to write.
+    dir = mktempdir()
+    sts = [("dJ", ["lat", "lon"], Float64, 500), ("dJ_dlon", ["lon"], Float64, 600)]
+    s = _sschema(; statics = sts)
+    store = joinpath(dir, "off")
+    w0 = write_open!(ZW, nothing, store, s; role = :owner, n_writers = 2, region = LB)
+    w1 = write_open!(ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1, region = LA)
+    for r in 0:2
+        write_record!(ZW, w0, DT * (r + 1), _sarrays(r, LB))
+        write_record!(ZW, w1, DT * (r + 1), _sarrays(r, LA; contributor = true))
+    end
+    for (nm, d, T, seed) in sts
+        write_static!(ZW, w0, nm, _sarr(T, seed, 0, d, LB))
+        "lat" in d && write_static!(ZW, w1, nm, _sarr(T, seed, 0, d, LA))
+    end
+    t1 = write_flush!(ZW, w1)
+    write_close!(ZW, w1)
+    write_close!(ZW, w0, [t1])
+    @test _readall(store) == _expected(0:2)
+    for (nm, d, T, seed) in sts
+        @test read_static(store, nm) == _sarr(T, seed, 0, d)
+    end
+    tm = JSON.parsefile(joinpath(store, "time", "zarr.json"))
+    @test tm["shape"] == [3]
+    @test isfile(joinpath(store, "time", "c", "0"))
+end
+
+@testset "zarr stream: a contributor's refresh reloads its whole view" begin
+    dir = mktempdir()
+    times = [0.0, DT]
+    s = _sschema(; time_mode = IndexedTime(times))
+    store = joinpath(dir, "refresh")
+    w0 = write_open!(ZW, nothing, store, s; role = :owner, n_writers = 2, region = LA)
+    w1 = write_open!(ZW, nothing, store, s; role = :contributor, n_writers = 2, id = 1, region = LB)
+    for r in 0:1
+        write_record_at!(ZW, w0, r, times[r + 1], _sarrays(r, LA))
+        write_record_at!(ZW, w1, r, times[r + 1], _sarrays(r, LB; contributor = true))
+    end
+    write_blob!(ZW, w1, (:record, 0), "k", UInt8[1])
+    write_commit!(ZW, w0, [write_flush!(ZW, w0), write_flush!(ZW, w1)])
+    write_invalidate!(ZW, w0, [0])
+    # the contributor's view says record 0 is committed: it re-reads the
+    # manifest, which has invalidated it and dropped its record(0) blob
+    write_record_at!(ZW, w1, 0, 0.0, _sarrays(7, LB; contributor = true))
+    @test isempty(w1.blobs)
+    @test w1.commit_seq == 2
+    @test first.(w1.writers) == [0, 1]           # as of the last commit, not of the join
+    write_record_at!(ZW, w0, 0, 0.0, _sarrays(7, LA))
+    m = write_commit!(ZW, w0, [write_flush!(ZW, w0), write_flush!(ZW, w1)])
+    @test [e["generation"] for e in m["records"]["entries"]] == [2, 1]
+    @test _readall(store) == _expected([7, 1])
+    # committed again: a rewrite without invalidate is refused after the refresh
+    @test_throws ErrorException write_record_at!(ZW, w1, 0, 0.0, _sarrays(8, LB; contributor = true))
+end
+
+@testset "zarr stream: a failed commit changes nothing and can be retried" begin
+    dir = mktempdir()
+    times = [0.0, DT]
+    store = joinpath(dir, "flaky")
+    h = write_open!(ZW, nothing, store, _sschema(; time_mode = IndexedTime(times));
+                    role = :owner, n_writers = 1)
+    write_record_at!(ZW, h, 0, 0.0, _sarrays(0))
+    write_record_at!(ZW, h, 1, DT, _sarrays(1))
+    tok = write_flush!(ZW, h)
+    chmod(store, 0o555)                 # the manifest write fails
+    try
+        @test_throws Exception write_commit!(ZW, h, [tok])
+    finally
+        chmod(store, 0o755)
+    end
+    @test h.commit_seq == 0 && !any(h.rec_committed)
+    m = write_commit!(ZW, h, [tok])
+    @test m["commit_seq"] == 1 && m["records"]["committed"] == [[0, 2]]
+end
+
+@testset "zarr stream: blob keys '.' and '..' are refused" begin
+    dir = mktempdir()
+    h = write_open!(ZW, nothing, joinpath(dir, "b"), _sschema(; statics = [("dJ", ["lat", "lon"], Float64, 500)]);
+                    role = :owner, n_writers = 1)
+    @test_throws ArgumentError write_blob!(ZW, h, :static, ".", UInt8[1])
+    @test_throws ArgumentError write_blob!(ZW, h, :static, "..", UInt8[1])
+end

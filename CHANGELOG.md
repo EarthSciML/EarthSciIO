@@ -46,7 +46,10 @@ moves.
   the read-back functions. `write_zarr_v3` and `write_all_to_store` are now
   thin wrappers over it. Their `zarr.json` and manifest output is unchanged; the
   order of inner chunks inside a shard object may differ, the decoded arrays do
-  not. On wasm32 only `Role::Single` is accepted.
+  not. On wasm32 only `Role::Single` is accepted. **Breaking:** a time
+  coordinate in `coords` must now hold exactly `dims[time_dim]` strictly
+  increasing, non-NaN values (append-mode `t`, `spec/writer.md` §6.1); this is
+  checked before any I/O. Before, any values were written verbatim.
 - **feat:** `Error::RegionNotShardAligned` and `Error::Commit`.
 
 ### Python
@@ -55,6 +58,8 @@ moves.
   `region`, `write_record_at`, `write_static`, `write_blob`, `write_commit`,
   `write_invalidate`, `write_resume`, and `write_flush` returns a `CommitToken`.
   `OutputSchema` gains `statics` and `time_mode` (`IndexedTime`).
+  **Breaking:** `write_record` now requires strictly increasing `t`
+  (`spec/writer.md` §6.1), as the Julia and Rust writers do.
   `RegionNotShardAligned` and `CommitError` are exported from `earthsciio`.
   Shards are written as whole-shard selections, which zarr-python 3 encodes
   without reading back.

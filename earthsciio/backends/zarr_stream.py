@@ -42,6 +42,8 @@ writer flushed), and keeps its ``time_shards`` list of flushed batches.
 from __future__ import annotations
 
 import bisect
+import contextlib
+import copy
 import hashlib
 import itertools
 import json
@@ -467,13 +469,17 @@ class _Geo:
         self.partitioned = any(d in region for d in self.sdims)
         #: this writer passes the array (contributors: partitioned ones only)
         self.supplies = role != "contributor" or self.partitioned
-        # A partitioned array that lacks some region dim is identical across
-        # the writers that differ only along that dim; the one at start 0 of
-        # every such dim writes it, so each shard object keeps exactly one
-        # writer (spec/writer.md §4 leaves this case implicit).
-        self.writes = self.supplies and all(
-            region[d][0] == 0 for d in region if d not in self.sdims
-        )
+        # A replicated array is written by the owner (or Single writer),
+        # wherever its region sits. A partitioned array that lacks some
+        # region dim is identical across the writers that differ only along
+        # that dim; the one at start 0 of every such dim writes it, so each
+        # shard object keeps exactly one writer (spec/writer.md §4).
+        if not self.partitioned:
+            self.writes = role != "contributor"
+        else:
+            self.writes = all(
+                region[d][0] == 0 for d in region if d not in self.sdims
+            )
 
     def place(self, buf: np.ndarray, slot: Optional[int], arr: np.ndarray) -> None:
         idx: List[Any] = [slice(0, n) for n in self.shape]
@@ -564,6 +570,13 @@ class ZarrStreamHandle:
         self.writers: List[Dict[str, Any]] = [{"id": 0, "region": _region_wire(region)}]
         self._base_manifest: Dict[str, Any] = {}
         self._v1_time_shards: List[Dict[str, Any]] = []
+        #: the store has a time-coordinate array (a Rust store may not)
+        self.time_coord = True
+        #: append, no time coordinate: the committed records' t cannot be read
+        #: back, so a resumed handle keeps the manifest's time shards for the
+        #: first ``_t_base`` records and ``committed_t`` holds the rest
+        self._t_base = 0
+        self._prior_time_shards: List[Dict[str, Any]] = []
 
         # writing state
         self.next_index = 0
@@ -620,7 +633,7 @@ class ZarrStreamHandle:
         from zarr.core.buffer import default_buffer_prototype
 
         tname = self.schema.time_dim
-        for name in [tname] + [g.name for g in self.vars]:
+        for name in [tname] * self.time_coord + [g.name for g in self.vars]:
             meta = self._meta[name]
             dims = list(meta.dimension_names)
             shape = list(meta.shape)
@@ -671,7 +684,7 @@ class ZarrStreamHandle:
         return self.S if not self.indexed else min(self.S, self.N - ts * self.S)
 
     def _owner_time(self) -> bool:
-        return self.is_owner and not self.indexed
+        return self.is_owner and not self.indexed and self.time_coord
 
     def _load_shard(self, ts: int) -> _Shard:
         """A buffer for time shard ``ts``. When some of its records are
@@ -847,8 +860,8 @@ class ZarrStreamHandle:
                 "statics is v1): open with role='owner', n_writers=1"
             )
         sc, rec = _parse_scope(scope)
-        if not isinstance(key, str) or not _BLOB_KEY.match(key):
-            raise ValueError(f"blob key {key!r} must match [A-Za-z0-9._-]+")
+        if not isinstance(key, str) or not _BLOB_KEY.match(key) or key in (".", ".."):
+            raise ValueError(f"blob key {key!r} must match [A-Za-z0-9._-]+ and not be '.' or '..'")
         if self.indexed and rec is not None and rec >= self.N:
             raise ValueError(f"blob record {rec} out of range [0, {self.N})")
         path = _blob_key(sc, rec, self.writer_id, key)
@@ -875,14 +888,16 @@ class ZarrStreamHandle:
             blobs=sorted(self._pending_blobs, key=_blob_sort),
             objects=sorted(self._pending_objects),
         )
+        if self.role == "single" and not tok.empty:
+            # commit before clearing, so a failed commit leaves the writes
+            # pending and the flush can be retried
+            self.commit([tok])
         self._tokened_records.update(self._pending_records)
         self._tokened_statics.update(self._pending_statics)
         self._pending_records.clear()
         self._pending_statics.clear()
         self._pending_blobs.clear()
         self._pending_objects.clear()
-        if self.role == "single" and not tok.empty:
-            self.commit([tok])
         return tok
 
     def _verify(self, tokens: List[CommitToken]):
@@ -978,6 +993,22 @@ class ZarrStreamHandle:
                 )
         return tokens, ref, names
 
+    _COMMITTED_STATE = ("commit_seq", "n_committed", "committed_t", "last_committed_t",
+                        "entries", "static_state", "blobs", "writers", "_v1_time_shards")
+
+    @contextlib.contextmanager
+    def _transaction(self):
+        """Restore the committed state if the body fails (a store error on the
+        shapes or the manifest), so the handle never claims a commit the
+        manifest does not record and the call can be retried."""
+        saved = {a: copy.deepcopy(getattr(self, a)) for a in self._COMMITTED_STATE}
+        try:
+            yield
+        except BaseException:
+            for a, v in saved.items():
+                setattr(self, a, v)
+            raise
+
     def commit(self, tokens: Sequence[Union[CommitToken, str, Dict[str, Any]]]) -> Dict[str, Any]:
         """Owner: verify ``tokens`` (one per writer, the owner's included) and
         commit: grow ``shape[time]`` (append mode), update the record / static /
@@ -989,6 +1020,10 @@ class ZarrStreamHandle:
             raise EarthSciIOError("only the owner (or a single writer) commits")
         toks = [t if isinstance(t, CommitToken) else CommitToken.from_json(t) for t in tokens]
         toks, recs, statics = self._verify(toks)
+        with self._transaction():
+            return self._apply_commit(toks, recs, statics)
+
+    def _apply_commit(self, toks, recs, statics) -> Dict[str, Any]:
         if recs and not self.indexed:
             new = self.n_committed + len(recs)
             self._set_time_shape(new)
@@ -1030,11 +1065,12 @@ class ZarrStreamHandle:
         for i in idx:
             if not 0 <= i < self.N:
                 raise ValueError(f"record index {i} out of range [0, {self.N})")
-        for i in idx:
-            self.entries[i]["committed"] = False
-        self.blobs = {b for b in self.blobs if not (b[0] == "record" and b[1] in idx)}
-        self.commit_seq += 1
-        return self._write_manifest()
+        with self._transaction():
+            for i in idx:
+                self.entries[i]["committed"] = False
+            self.blobs = {b for b in self.blobs if not (b[0] == "record" and b[1] in idx)}
+            self.commit_seq += 1
+            return self._write_manifest()
 
     def invalidate_statics(self, names: Iterable[str]) -> Dict[str, Any]:
         """Owner / single: mark statics uncommitted so they may be rewritten."""
@@ -1045,10 +1081,11 @@ class ZarrStreamHandle:
         for nm in names:
             if nm not in self.static_state:
                 raise ValueError(f"unknown static {nm!r}")
-        for nm in names:
-            self.static_state[nm]["committed"] = False
-        self.commit_seq += 1
-        return self._write_manifest()
+        with self._transaction():
+            for nm in names:
+                self.static_state[nm]["committed"] = False
+            self.commit_seq += 1
+            return self._write_manifest()
 
     def close(self, tokens: Sequence[Any] = ()) -> Optional[Dict[str, Any]]:
         """Single: flush, then rewrite the manifest (same ``commit_seq``).
@@ -1084,11 +1121,16 @@ class ZarrStreamHandle:
         if self.indexed:
             pairs = [(i, e["t"]) for i, e in enumerate(self.entries) if e["committed"]]
         else:
-            pairs = list(enumerate(self.committed_t))
-        out: List[Dict[str, Any]] = []
+            pairs = list(enumerate(self.committed_t, start=self._t_base))
+        out = [dict(e) for e in self._prior_time_shards]
         for ts, grp in itertools.groupby(pairs, key=lambda p: p[0] // self.S):
             tv = [t for _, t in grp]
-            out.append({"index": ts, "t_start": min(tv), "t_end": max(tv), "n": len(tv)})
+            if out and out[-1]["index"] == ts:  # extends a kept, partial shard
+                e = out[-1]
+                e.update(t_start=min(e["t_start"], *tv), t_end=max(e["t_end"], *tv),
+                         n=e["n"] + len(tv))
+            else:
+                out.append({"index": ts, "t_start": min(tv), "t_end": max(tv), "n": len(tv)})
         return out
 
     def _manifest_dict(self) -> Dict[str, Any]:
@@ -1347,9 +1389,11 @@ def _open_existing(base_url: str, role: str, n_writers: int, wid: int, region: R
                          role=role, n_writers=n_writers, wid=wid, region=region,
                          version=2 if v2 else 1)
     h._base_manifest = {k: v for k, v in m.items()}
+    h.time_coord = _get_bytes(store, f"{rebuilt.time_dim}/zarr.json") is not None
     names = [g.name for g in h.vars if g.writes] + [g.name for g in h.statics.values() if g.writes]
     if h.is_owner:
-        names = [rebuilt.time_dim] + [g.name for g in h.vars] + list(h.statics)
+        names = ([rebuilt.time_dim] * h.time_coord + [g.name for g in h.vars]
+                 + list(h.statics))
     for nm in names:
         h._meta[nm] = _load_meta(store, nm)
     _load_state(h, m)
@@ -1382,6 +1426,17 @@ def resume_writer(base_url: str, role: str = "single", n_writers: int = 1, id: i
 
     n = h.n_committed
     times: List[float] = []
+    if not h.time_coord:
+        if at is not None:
+            raise EarthSciIOError(
+                f"resume at t = {at} needs the time coordinate {h.schema.time_dim!r}, "
+                f"which the store does not have"
+            )
+        h._t_base = n
+        h._prior_time_shards = [dict(e) for e in h._base_manifest.get("time_shards", [])]
+        h.last_t = h.last_committed_t
+        h.next_index = n
+        return h
     if n:
         tarr = zarr.open_array(store=h.store, path=h.schema.time_dim, mode="r")
         times = [float(x) for x in np.asarray(tarr[:n], dtype=np.float64)]
@@ -1431,6 +1486,14 @@ def committed_records(m: Dict[str, Any]) -> List[int]:
     return list(range(int(m.get("n_records", m.get("total_records", 0)))))
 
 
+def _record_committed(m: Dict[str, Any], i: int) -> bool:
+    """Is record ``i`` committed in manifest ``m``? A range check, without
+    expanding the committed ranges."""
+    if m["schema"] == OUTPUT_MANIFEST_V2:
+        return any(a <= i < b for a, b in m["records"]["committed"])
+    return 0 <= i < int(m.get("n_records", m.get("total_records", 0)))
+
+
 def _read_region(base_url: str, name: str, dims: List[str], time_dim: Optional[str],
                  i: Optional[int], region) -> np.ndarray:
     import zarr
@@ -1459,7 +1522,7 @@ def read_record(base_url: str, var: str, i: int, region=None) -> np.ndarray:
     v = next((v for v in m["vars"] if v["name"] == var), None)
     if v is None:
         raise ValueError(f"unknown streaming variable {var!r}")
-    if int(i) not in set(committed_records(m)):
+    if not _record_committed(m, int(i)):
         raise EarthSciIOError(f"record {i} is not committed")
     return _read_region(base_url, var, v["dims"], m["time_dim"], int(i), region)
 

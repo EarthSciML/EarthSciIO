@@ -266,7 +266,7 @@ is an error in `append` mode.
 - **`write_blob(scope, key, bytes)`** stores a small rank-local payload at
   `blobs/static/<writer>/<key>` (scope `static`) or
   `blobs/record/<i>/<writer>/<key>` (scope `record(i)`). `key` matches
-  `[A-Za-z0-9._-]+`. Blobs are committed like records (they appear in the
+  `[A-Za-z0-9._-]+` and is not `.` or `..`. Blobs are committed like records (they appear in the
   token and, once committed, in the manifest). A blob is one object written
   atomically, so rewriting a committed blob is allowed and replaces it.
   `invalidate([i, …])` also uncommits the `record(i)` blobs.

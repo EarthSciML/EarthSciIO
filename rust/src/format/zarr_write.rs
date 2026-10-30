@@ -208,14 +208,16 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
 /// `write_record` per time step, `close` — so the whole-dataset and the
 /// streaming paths are one code path (`spec/writer.md` §9). A time step's `t`
 /// is the time coordinate's value when `coords` carries one for `time_dim`,
-/// else the record index.
+/// else the record index. A time coordinate must therefore hold exactly
+/// `dims[time_dim]` strictly increasing values.
 ///
 /// `base_url` is recorded verbatim in the output manifest's `base_url` field.
 ///
 /// # Errors
 /// [`Error::Format`] on a schema inconsistency (a shard shape that is not a
 /// multiple of the inner chunk, a variable whose data length disagrees with its
-/// dims) or a `zarrs` encode/store failure.
+/// dims, a time coordinate of the wrong length or not strictly increasing) or a
+/// `zarrs` encode/store failure.
 pub fn write_all_to_store<S>(store: Arc<S>, base_url: &str, schema: &OutputSchema) -> Result<()>
 where
     S: zarrs::storage::ReadableWritableStorageTraits + 'static,
@@ -282,6 +284,31 @@ where
         .iter()
         .find(|c| c.name == schema.time_dim)
         .map(|c| &c.values);
+    // Each record's t comes from the time coordinate, and append-mode t must
+    // be strictly increasing (`spec/writer.md` §6.1): check it whole, before
+    // any I/O, rather than failing partway or mixing in record indices.
+    if let Some(tv) = times {
+        if tv.len() != n_rec {
+            return Err(err(format!(
+                "time coordinate '{}' has {} values but dims['{}'] = {n_rec}",
+                schema.time_dim,
+                tv.len(),
+                schema.time_dim
+            )));
+        }
+        if let Some(t) = tv.iter().find(|t| t.is_nan()) {
+            return Err(err(format!("time coordinate '{}' holds {t}", schema.time_dim)));
+        }
+        if let Some(i) = (1..tv.len()).find(|&i| !(tv[i] > tv[i - 1])) {
+            return Err(err(format!(
+                "time coordinate '{}' must be strictly increasing: value {i} = {} is not after value {} = {}",
+                schema.time_dim,
+                tv[i],
+                i - 1,
+                tv[i - 1]
+            )));
+        }
+    }
 
     let mut w = ZarrStreamWriter::create(store, base_url, stream, Role::Single, Region::whole())?;
     for r in 0..n_rec {
@@ -309,7 +336,7 @@ where
             .map(|(v, s)| (v.name.clone(), s.as_slice().into()))
             .collect();
         #[allow(clippy::cast_precision_loss)]
-        let t = times.and_then(|tv| tv.get(r).copied()).unwrap_or(r as f64);
+        let t = times.map_or(r as f64, |tv| tv[r]);
         w.write_record(t, &arrays)?;
     }
     w.close(&[])?;

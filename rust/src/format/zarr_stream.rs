@@ -836,8 +836,8 @@ impl Geometry {
         dims.iter().any(|d| self.region.contains_key(d))
     }
 
-    /// Whether this writer owns the shard objects of an array over `dims`: a
-    /// partitioned array that lacks some region dim (`[time, lon]` under a
+    /// Whether this writer owns the shard objects of a partitioned array over
+    /// `dims`: a partitioned array that lacks some region dim (`[time, lon]` under a
     /// `{lat, lon}` split) is supplied by every writer but written only by the
     /// one whose region starts at 0 on each missing dim, so every shard object
     /// keeps exactly one writer (`spec/writer.md` §4).
@@ -1228,10 +1228,17 @@ fn from_manifest(m: &Value) -> Result<(StreamSchema, Version, CommitState)> {
         .ok_or_else(|| bad("dims"))?
         .iter()
         .map(|d| {
-            Ok((
-                s(&d["name"], "dims.name")?,
-                u(&d["length"], "dims.length")? as usize,
-            ))
+            // `{name, length}` (Rust, Julia) or `[name, length]` (Python v1)
+            Ok(match d.as_array() {
+                Some(p) if p.len() == 2 => (
+                    s(&p[0], "dims.name")?,
+                    u(&p[1], "dims.length")? as usize,
+                ),
+                _ => (
+                    s(&d["name"], "dims.name")?,
+                    u(&d["length"], "dims.length")? as usize,
+                ),
+            })
         })
         .collect::<Result<_>>()?;
     let umap = |v: &Value, w: &str| -> Result<BTreeMap<String, usize>> {
@@ -1262,7 +1269,11 @@ fn from_manifest(m: &Value) -> Result<(StreamSchema, Version, CommitState)> {
             .collect()
     };
     let mut state = CommitState::default();
-    let n_records = u(&m["n_records"], "n_records")?;
+    // Python's v1 spelling is `total_records`
+    let n_records = match &m["n_records"] {
+        Value::Null => u(&m["total_records"], "n_records")?,
+        v => u(v, "n_records")?,
+    };
     let mut time_mode = TimeMode::Append;
     if version == Version::V2 {
         state.commit_seq = u(&m["commit_seq"], "commit_seq")?;
@@ -1323,7 +1334,11 @@ fn from_manifest(m: &Value) -> Result<(StreamSchema, Version, CommitState)> {
             t_end: t["t_end"]
                 .as_f64()
                 .ok_or_else(|| bad("time_shards.t_end"))?,
-            n: u(&t["n"], "time_shards.n")?,
+            // Python's v1 spelling is `n_records`
+            n: match &t["n"] {
+                Value::Null => u(&t["n_records"], "time_shards.n")?,
+                v => u(v, "time_shards.n")?,
+            },
         });
     }
     state.last_t = m["last_t"].as_f64();
@@ -1344,7 +1359,7 @@ fn from_manifest(m: &Value) -> Result<(StreamSchema, Version, CommitState)> {
 
 // --- the writer ----------------------------------------------------------------
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Pending {
     records: BTreeMap<u64, f64>,
     statics: BTreeSet<String>,
@@ -1804,6 +1819,18 @@ where
         matches!(self.role, Role::Contributor { .. })
     }
 
+    /// Whether this writer PUTs the shard objects of an array over `dims`:
+    /// replicated arrays (and the time coordinate) belong to the owner or
+    /// `Single` writer wherever its region sits; partitioned ones follow
+    /// [`Geometry::owns`].
+    fn writes_array(&self, dims: &[String]) -> bool {
+        if self.geo.partitioned(dims) {
+            self.geo.owns(dims)
+        } else {
+            !self.is_contributor()
+        }
+    }
+
     fn writes_time_coord(&self) -> bool {
         self.time_coord && !self.is_contributor() && self.geo.n_indexed().is_none()
     }
@@ -1875,7 +1902,7 @@ where
         let mut keys = Vec::new();
         for (name, buf) in &sb.bufs {
             let (dims, dtype) = self.array_spec(name);
-            if !self.geo.owns(&dims) {
+            if !self.writes_array(&dims) {
                 continue;
             }
             keys.extend(
@@ -2113,7 +2140,7 @@ where
             esize: v.dtype.size(),
             data: array.to_ne_bytes(),
         };
-        if self.geo.owns(&v.dims) {
+        if self.writes_array(&v.dims) {
             let keys = self
                 .geo
                 .write_box(&self.store, name, &v.dims, v.dtype, &buf, 0)?;
@@ -2134,11 +2161,13 @@ where
             ));
         }
         if key.is_empty()
+            || key == "."
+            || key == ".."
             || !key
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
         {
-            return Err(err(format!("blob key '{key}' must match [A-Za-z0-9._-]+")));
+            return Err(err(format!("blob key '{key}' must match [A-Za-z0-9._-]+ and not be '.' or '..'")));
         }
         if let (BlobScope::Record(i), Some(n)) = (scope, self.geo.n_indexed()) {
             if i >= n {
@@ -2200,9 +2229,21 @@ where
         for ts in std::mem::take(&mut self.dirty) {
             self.write_shard(ts)?;
         }
+        if self.role != Role::Single {
+            return Ok(self.take_token());
+        }
+        // a failed commit leaves the writes pending, so the flush can be retried
+        let saved = (
+            self.pending.clone(),
+            self.tokened_records.clone(),
+            self.tokened_statics.clone(),
+        );
         let token = self.take_token();
-        if self.role == Role::Single && !token.is_empty() {
-            self.commit(std::slice::from_ref(&token))?;
+        if !token.is_empty() {
+            if let Err(e) = self.commit(std::slice::from_ref(&token)) {
+                (self.pending, self.tokened_records, self.tokened_statics) = saved;
+                return Err(e);
+            }
         }
         Ok(token)
     }
@@ -2398,6 +2439,22 @@ where
         }
         self.verify(tokens)
             .map_err(|detail| Error::Commit { detail })?;
+        self.transact(|w| w.apply_commit(tokens))
+    }
+
+    /// Run a state change that ends in store writes; on failure restore the
+    /// committed state, so the in-memory view never claims a commit (or
+    /// invalidation) the manifest does not record and the call can be retried.
+    fn transact<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let saved = self.state.clone();
+        let r = f(self);
+        if r.is_err() {
+            self.state = saved;
+        }
+        r
+    }
+
+    fn apply_commit(&mut self, tokens: &[CommitToken]) -> Result<CommitReceipt> {
         let mut toks: Vec<&CommitToken> = tokens.iter().collect();
         toks.sort_by_key(|t| t.writer);
         let recs = toks[0].records.clone();
@@ -2470,16 +2527,18 @@ where
                 )));
             }
         }
-        for &i in indices {
-            self.state.entries[i as usize].committed = false;
-        }
-        let gone: BTreeSet<u64> = indices.iter().copied().collect();
-        self.state
-            .blobs
-            .retain(|b| !matches!(b.scope, BlobScope::Record(i) if gone.contains(&i)));
-        self.state.rebuild_indexed_shards(self.geo.st);
-        self.state.commit_seq += 1;
-        self.write_manifest()
+        self.transact(|w| {
+            for &i in indices {
+                w.state.entries[i as usize].committed = false;
+            }
+            let gone: BTreeSet<u64> = indices.iter().copied().collect();
+            w.state
+                .blobs
+                .retain(|b| !matches!(b.scope, BlobScope::Record(i) if gone.contains(&i)));
+            w.state.rebuild_indexed_shards(w.geo.st);
+            w.state.commit_seq += 1;
+            w.write_manifest()
+        })
     }
 
     /// Owner: mark committed statics uncommitted so they may be rewritten.
@@ -2495,13 +2554,15 @@ where
                 return Err(err(format!("unknown static '{n}'")));
             }
         }
-        for n in names {
-            if let Some(s) = self.state.statics.get_mut(*n) {
-                s.0 = false;
+        self.transact(|w| {
+            for n in names {
+                if let Some(s) = w.state.statics.get_mut(*n) {
+                    s.0 = false;
+                }
             }
-        }
-        self.state.commit_seq += 1;
-        self.write_manifest()
+            w.state.commit_seq += 1;
+            w.write_manifest()
+        })
     }
 
     /// Finish the handle. Single: flush (committing) and rewrite the manifest.

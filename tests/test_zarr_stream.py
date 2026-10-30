@@ -769,3 +769,107 @@ def test_memory_store_multi_writer(tmp_path):
     h = w.write_resume(base, role="owner", n_writers=1, at=DT)
     assert read_output_manifest(base)["n_records"] == 2
     assert h.n_committed == 2
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes.
+# --------------------------------------------------------------------------- #
+
+
+def test_owner_off_the_origin_writes_replicated_vars_and_statics(tmp_path):
+    # The owner holds lat [4, 6): no writer's region starts at 0 on lat, but
+    # the replicated var, the time coordinate and the replicated static are
+    # still the owner's to write.
+    sch = schema(statics=STATICS)
+    base = str(tmp_path / "off")
+    w = ZarrWriter()
+    r0, r1 = {"lat": (4, 6)}, {"lat": (0, 4)}
+    h0 = w.write_open(base, sch, role="owner", n_writers=2, region=r0)
+    h1 = w.write_open(base, sch, role="contributor", id=1, region=r1)
+    st = lambda reg, nm: arrays(sch, 0, reg, which=[s for s in STATICS if s[0] == nm])[nm]  # noqa: E731
+    for r in range(3):
+        w.write_record(h0, DT * (r + 1), arrays(sch, r, r0))
+        w.write_record(h1, DT * (r + 1), arrays(sch, r, r1, True))
+    for nm in ("dJ_dfield", "step_count"):
+        w.write_static(h0, nm, st(r0, nm))
+        w.write_static(h1, nm, st(r1, nm))
+    w.write_static(h0, "dJ_dlon", st({}, "dJ_dlon"))
+    tok = w.write_flush(h1)
+    w.write_close(h1)
+    w.write_close(h0, [tok])
+    got = read_all(base, sch)
+    want = np.stack([gen(SEEDS["global_mean"], r, "float64", []) for r in range(3)])
+    assert got["global_mean"].tobytes() == want.tobytes()
+    assert list(zarr.open_group(base, mode="r")["time"][...]) == [DT, 2 * DT, 3 * DT]
+    assert read_static(base, "dJ_dlon").tobytes() == st({}, "dJ_dlon").tobytes()
+
+
+def test_failed_commit_leaves_state_unchanged_and_retries(tmp_path, monkeypatch):
+    from earthsciio.backends import zarr_stream as zs
+
+    real = zs._put_bytes
+    fail = {"on": False}
+
+    def flaky(store, key, data):
+        if fail["on"] and key == zs.MANIFEST_KEY:
+            raise OSError("injected manifest failure")
+        return real(store, key, data)
+
+    monkeypatch.setattr(zs, "_put_bytes", flaky)
+    sch = schema()
+    w = ZarrWriter()
+    h = w.write_open(str(tmp_path / "o"), sch, role="owner", n_writers=1)
+    for r in range(3):
+        w.write_record(h, DT * r, arrays(sch, r))
+    tok = w.write_flush(h)
+    fail["on"] = True
+    with pytest.raises(OSError):
+        w.write_commit(h, [tok])
+    fail["on"] = False
+    m = w.write_commit(h, [tok])
+    assert (m["commit_seq"], m["n_records"]) == (1, 3)
+
+    # a single writer's failed flush keeps its writes pending
+    h = w.write_open(str(tmp_path / "s"), sch)
+    w.write_record(h, 0.0, arrays(sch, 0))
+    fail["on"] = True
+    with pytest.raises(OSError):
+        w.write_flush(h)
+    fail["on"] = False
+    assert len(w.write_flush(h).records) == 1
+    assert w.write_close(h)["total_records"] == 1
+
+
+def test_blob_keys_dot_and_dotdot_are_refused(tmp_path):
+    sch = schema(statics=STATICS)
+    w = ZarrWriter()
+    h = w.write_open(str(tmp_path / "b"), sch, role="owner", n_writers=1)
+    for key in (".", ".."):
+        with pytest.raises(ValueError, match="key"):
+            w.write_blob(h, "static", key, b"x")
+
+
+def test_resume_a_store_without_a_time_coordinate(tmp_path):
+    # A Rust store has a time-coordinate array only when the schema's coords
+    # carry one; resuming such a store continues from the manifest.
+    import shutil
+
+    sch = schema(statics=STATICS)  # statics: a v2 store
+    base = str(tmp_path / "nt")
+    w = ZarrWriter()
+    h = w.write_open(base, sch, role="owner", n_writers=1)
+    for r in range(3):
+        w.write_record(h, DT * r, arrays(sch, r))
+    w.write_close(h, [])
+    shutil.rmtree(tmp_path / "nt" / "time")
+    with pytest.raises(EarthSciIOError, match="time coordinate"):
+        w.write_resume(base, role="owner", n_writers=1, at=DT)
+    h = w.write_resume(base, role="owner", n_writers=1)
+    w.write_record(h, DT * 3, arrays(sch, 3))
+    m = w.write_close(h, [])
+    assert m["n_records"] == 4 and m["records"]["committed"] == [[0, 4]]
+    assert m["time_shards"] == [
+        {"index": 0, "t_start": 0.0, "t_end": DT, "n": 2},
+        {"index": 1, "t_start": 2 * DT, "t_end": 3 * DT, "n": 2},
+    ]
+    assert read_record(base, "temperature", 3).tobytes() == arrays(sch, 3)["temperature"].tobytes()

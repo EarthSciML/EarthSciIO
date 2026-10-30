@@ -320,12 +320,17 @@ _partitioned(rd, dims) = any(d -> d in rd, dims)
 _supplies(h::ZarrWriteHandle, dims) =
     h.role !== :contributor || _partitioned(_region_dims(h), dims)
 
-# Does this writer PUT the shard objects of a variable over `dims`? A variable
-# that lacks some region dim is supplied by every writer, but only the writer
-# whose region starts at 0 on each region dim it lacks writes it, so every shard
-# object keeps exactly one writer (spec §4, partly partitioned arrays).
-_writes_objects(h::ZarrWriteHandle, dims) =
-    _supplies(h, dims) && all(h.lo[d] == 0 for d in _region_dims(h) if !(d in dims))
+# Does this writer PUT the shard objects of a variable over `dims`? A replicated
+# variable is written by the owner/single writer wherever its region sits. A
+# partitioned variable that lacks some region dim is supplied by every writer,
+# but only the writer whose region starts at 0 on each region dim it lacks
+# writes it, so every shard object keeps exactly one writer (spec §4, partly
+# partitioned arrays).
+function _writes_objects(h::ZarrWriteHandle, dims)
+    rd = _region_dims(h)
+    _partitioned(rd, dims) || return h.role !== :contributor
+    return all(h.lo[d] == 0 for d in rd if !(d in dims))
+end
 
 function _is_committed(h::ZarrWriteHandle, i::Int)
     _indexed(h) && return 0 <= i < _ntime(h) && h.rec_committed[i + 1]
@@ -908,18 +913,22 @@ end
 
 # A contributor re-reads the manifest before refusing a rewrite (spec §6.2): the
 # owner may have invalidated the record since the contributor's view was taken.
+# The whole view (records, statics, blobs, writers, commit_seq) is reloaded.
+# Tokened records the manifest now shows committed leave `tokened`; the rest
+# still hold this writer's data in the store, so they stay known for shard
+# reloads, and in append mode they stay on the end of the committed prefix the
+# next flush extends.
 function _refresh_view!(h::ZarrWriteHandle)
     m = read_output_manifest(h.base)
     m isa AbstractDict || return h
-    for e in get(m["records"], "entries", Any[])
-        i = Int(e["index"]) + 1
-        h.rec_committed[i] = Bool(e["committed"])
-        h.rec_generation[i] = Int(e["generation"])
+    _load_state!(h, m)
+    filter!(p -> !_is_committed(h, p.first), h.tokened)
+    if !_indexed(h)
+        for i in sort!(collect(keys(h.tokened)))
+            i == length(h.committed_t) || break
+            push!(h.committed_t, h.tokened[i])
+        end
     end
-    for e in m["statics"]
-        h.static_committed[String(e["name"])] = Bool(e["committed"])
-    end
-    h.commit_seq = Int(m["commit_seq"])
     return h
 end
 
@@ -1124,7 +1133,7 @@ function write_blob!(::ZarrWriter, h::ZarrWriteHandle, scope, key::AbstractStrin
                             "without statics writes the v1 manifest (open with role = :owner, " *
                             "n_writers = 1 instead)")
     (occursin(r"^[A-Za-z0-9._-]+$", key) && key != "." && key != "..") ||
-        throw(ArgumentError("blob key '$key' must match [A-Za-z0-9._-]+"))
+        throw(ArgumentError("blob key '$key' must match [A-Za-z0-9._-]+ and not be '.' or '..'"))
     sc, rec = _blob_scope(scope)
     path = _blob_key(sc, rec, h.id, key)
     put_object!(h.base, path, Vector{UInt8}(bytes))       # one atomic object
@@ -1153,11 +1162,22 @@ function write_flush!(::ZarrWriter, h::ZarrWriteHandle)
         buf = h.shards[k]
         buf.dirty && _write_time_shard!(h, k, buf)
     end
-    tok = _take_token!(h)
     if h.role === :single
-        # commits only when something is pending; else a no-op (spec §5.1)
-        isempty(tok) || _commit!(h, [tok])
-    elseif h.role === :contributor
+        # commits only when something is pending; else a no-op (spec §5.1). A
+        # failed commit leaves the writes pending, so the flush can be retried.
+        saved = deepcopy((h.pending_records, h.pending_statics, h.pending_blobs, h.objects,
+                          h.tokened))
+        tok = _take_token!(h)
+        try
+            isempty(tok) || _commit!(h, [tok])
+        catch
+            h.pending_records, h.pending_statics, h.pending_blobs, h.objects, h.tokened = saved
+            rethrow()
+        end
+        return tok
+    end
+    tok = _take_token!(h)
+    if h.role === :contributor
         # its committed view: the manifest it read plus what it has tokened
         for (i, t) in tok.records
             _indexed(h) ? (h.rec_committed[i + 1] = true) : push!(h.committed_t, t)
@@ -1251,6 +1271,29 @@ function _commit!(h::ZarrWriteHandle, tokens::AbstractVector)
     end
 
     # --- verified: apply, then shapes, then the manifest LAST
+    return _transaction!(() -> _apply_commit!(h, toks, ref), h)
+end
+
+const _COMMITTED_FIELDS = (:committed_t, :rec_committed, :rec_generation, :static_committed,
+                           :static_generation, :blobs, :writers, :commit_seq, :tokened)
+
+# Run `f`, which changes the committed state and ends in store writes; if it
+# throws (a store error on the shapes or the manifest), restore that state, so
+# the handle never claims a commit the manifest does not record and the call
+# can be retried.
+function _transaction!(f, h::ZarrWriteHandle)
+    saved = [deepcopy(getfield(h, k)) for k in _COMMITTED_FIELDS]
+    try
+        return f()
+    catch
+        for (k, v) in zip(_COMMITTED_FIELDS, saved)
+            setfield!(h, k, v)
+        end
+        rethrow()
+    end
+end
+
+function _apply_commit!(h::ZarrWriteHandle, toks, ref)
     if _indexed(h)
         for (i, _) in ref
             h.rec_committed[i + 1] = true
@@ -1289,13 +1332,15 @@ function write_invalidate!(::ZarrWriter, h::ZarrWriteHandle, indices)
     for i in idx
         0 <= i < _ntime(h) || error("record index $i outside 0..$(_ntime(h) - 1)")
     end
-    for i in idx
-        h.rec_committed[i + 1] = false
+    _transaction!(h) do
+        for i in idx
+            h.rec_committed[i + 1] = false
+        end
+        # the record(i) blobs are uncommitted with their record (spec §7)
+        filter!(b -> !(b[1] == "record" && b[2] in idx), h.blobs)
+        h.commit_seq += 1
+        _write_manifest!(h)
     end
-    # the record(i) blobs are uncommitted with their record (spec §7)
-    filter!(b -> !(b[1] == "record" && b[2] in idx), h.blobs)
-    h.commit_seq += 1
-    _write_manifest!(h)
     return nothing
 end
 
@@ -1307,11 +1352,13 @@ function write_invalidate_statics!(::ZarrWriter, h::ZarrWriteHandle, names)
     for nm in nms
         haskey(h.static_committed, nm) || error("'$nm' is not a static of the schema")
     end
-    for nm in nms
-        h.static_committed[nm] = false
+    _transaction!(h) do
+        for nm in nms
+            h.static_committed[nm] = false
+        end
+        h.commit_seq += 1
+        _write_manifest!(h)
     end
-    h.commit_seq += 1
-    _write_manifest!(h)
     return nothing
 end
 

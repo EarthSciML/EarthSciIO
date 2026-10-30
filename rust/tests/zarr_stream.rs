@@ -541,3 +541,175 @@ fn a_v1_store_refuses_blobs_and_tokens_round_trip_json() {
     assert_eq!(CommitToken::from_json(&t.to_json()).unwrap(), t);
     assert!(w.fingerprint().starts_with("sha256:"));
 }
+
+#[test]
+fn an_owner_off_the_origin_writes_the_replicated_variables() {
+    // The owner holds lat 4..6, the contributor lat 0..4: nobody's region of a
+    // replicated array starts at 0 on `lat`, yet the owner still writes it.
+    let store = Arc::new(MemoryStore::new());
+    let (r0, r1) = (Region::new([("lat", 4..6)]), Region::new([("lat", 0..4)]));
+    let mut owner = ZarrStreamWriter::create(
+        store.clone(),
+        "mem://off",
+        schema(TimeMode::Append),
+        Role::Owner { n_writers: 2 },
+        r0.clone(),
+    )
+    .unwrap();
+    let mut c = ZarrStreamWriter::join(store.clone(), "mem://off", Role::Contributor { id: 1 }, r1.clone()).unwrap();
+    for r in 0..3u64 {
+        let (x0, x1) = (rec(r, &r0), rec(r, &r1));
+        owner.write_record(r as f64 + 1.0, &arrays(&x0, true)).unwrap();
+        c.write_record(r as f64 + 1.0, &arrays(&x1, false)).unwrap();
+    }
+    let tok = c.flush().unwrap();
+    owner.close(&[tok]).unwrap();
+    for r in 0..3u64 {
+        let g = read_record(store.clone(), "global_mean", r, &Region::whole()).unwrap();
+        assert_eq!(g, TypedVec::F32(vec![r as f32 + 0.25]), "global_mean[{r}]");
+    }
+    let tk = zarrs::storage::StoreKey::new("time/c/0").unwrap();
+    assert!(store.get(&tk).unwrap().is_some(), "the owner wrote the time coordinate");
+}
+
+#[test]
+fn a_python_v1_manifest_parses() {
+    // Python spells v1 dims as `[name, length]`, the count `total_records` and
+    // a time shard's count `n_records`.
+    let store = Arc::new(MemoryStore::new());
+    let mut w = ZarrStreamWriter::create(
+        store.clone(),
+        "mem://v1",
+        schema(TimeMode::Append),
+        Role::Single,
+        Region::whole(),
+    )
+    .unwrap();
+    for r in 0..3u64 {
+        let x = rec(r, &Region::whole());
+        w.write_record(r as f64, &arrays(&x, true)).unwrap();
+    }
+    let mut m = w.close(&[]).unwrap().unwrap();
+    let dims: Vec<serde_json::Value> = m["dims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| serde_json::json!([d["name"], d["length"]]))
+        .collect();
+    m["dims"] = dims.into();
+    m["total_records"] = m["n_records"].take();
+    m.as_object_mut().unwrap().remove("n_records");
+    for t in m["time_shards"].as_array_mut().unwrap() {
+        let n = t["n"].take();
+        let o = t.as_object_mut().unwrap();
+        o.remove("n");
+        o.insert("n_records".into(), n);
+    }
+    let k = zarrs::storage::StoreKey::new("output_manifest.json").unwrap();
+    zarrs::storage::WritableStorageTraits::set(
+        store.as_ref(),
+        &k,
+        serde_json::to_vec(&m).unwrap().into(),
+    )
+    .unwrap();
+    let mut w = ZarrStreamWriter::resume(store.clone(), "mem://v1", Role::Single, Region::whole(), None).unwrap();
+    let x = rec(3, &Region::whole());
+    w.write_record(3.0, &arrays(&x, true)).unwrap();
+    let m = w.close(&[]).unwrap().unwrap();
+    assert_eq!(m["n_records"], 4);
+}
+
+/// A [`MemoryStore`] whose manifest PUT fails while `fail` is set.
+struct FlakyStore {
+    inner: MemoryStore,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl ReadableStorageTraits for FlakyStore {
+    fn get_partial_many<'a>(
+        &'a self,
+        key: &zarrs::storage::StoreKey,
+        byte_ranges: zarrs::storage::byte_range::ByteRangeIterator<'a>,
+    ) -> Result<zarrs::storage::MaybeBytesIterator<'a>, zarrs::storage::StorageError> {
+        self.inner.get_partial_many(key, byte_ranges)
+    }
+    fn size_key(&self, key: &zarrs::storage::StoreKey) -> Result<Option<u64>, zarrs::storage::StorageError> {
+        self.inner.size_key(key)
+    }
+    fn supports_get_partial(&self) -> bool {
+        self.inner.supports_get_partial()
+    }
+}
+
+impl zarrs::storage::WritableStorageTraits for FlakyStore {
+    fn set(&self, key: &zarrs::storage::StoreKey, value: zarrs::storage::Bytes) -> Result<(), zarrs::storage::StorageError> {
+        if key.as_str() == "output_manifest.json" && self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(zarrs::storage::StorageError::Unsupported("injected manifest failure".into()));
+        }
+        self.inner.set(key, value)
+    }
+    fn set_partial_many(
+        &self,
+        key: &zarrs::storage::StoreKey,
+        offset_values: zarrs::storage::OffsetBytesIterator,
+    ) -> Result<(), zarrs::storage::StorageError> {
+        self.inner.set_partial_many(key, offset_values)
+    }
+    fn erase(&self, key: &zarrs::storage::StoreKey) -> Result<(), zarrs::storage::StorageError> {
+        self.inner.erase(key)
+    }
+    fn erase_prefix(&self, prefix: &zarrs::storage::StorePrefix) -> Result<(), zarrs::storage::StorageError> {
+        self.inner.erase_prefix(prefix)
+    }
+    fn supports_set_partial(&self) -> bool {
+        self.inner.supports_set_partial()
+    }
+}
+
+#[test]
+fn a_failed_commit_changes_nothing_and_can_be_retried() {
+    let store = Arc::new(FlakyStore {
+        inner: MemoryStore::new(),
+        fail: false.into(),
+    });
+    let mut w = ZarrStreamWriter::create(
+        store.clone(),
+        "mem://flaky",
+        schema(TimeMode::Append),
+        Role::Owner { n_writers: 1 },
+        Region::whole(),
+    )
+    .unwrap();
+    for r in 0..3u64 {
+        let x = rec(r, &Region::whole());
+        w.write_record(r as f64, &arrays(&x, true)).unwrap();
+    }
+    let tok = w.flush().unwrap();
+    store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(w.commit(std::slice::from_ref(&tok)).is_err());
+    store.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+    let receipt = w.commit(&[tok]).unwrap();
+    assert_eq!((receipt.commit_seq, receipt.n_committed), (1, 3));
+
+    // Single: a failed flush keeps its writes pending.
+    let store = Arc::new(FlakyStore {
+        inner: MemoryStore::new(),
+        fail: false.into(),
+    });
+    let mut w = ZarrStreamWriter::create(
+        store.clone(),
+        "mem://flaky1",
+        schema(TimeMode::Append),
+        Role::Single,
+        Region::whole(),
+    )
+    .unwrap();
+    let x = rec(0, &Region::whole());
+    w.write_record(0.0, &arrays(&x, true)).unwrap();
+    store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(w.flush().is_err());
+    store.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(w.flush().unwrap().records.len(), 1);
+    let m = w.close(&[]).unwrap().unwrap();
+    assert_eq!(m["n_records"], 1);
+}
