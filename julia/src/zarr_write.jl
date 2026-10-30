@@ -10,8 +10,14 @@
 #     objects). Inner-chunk pipeline = `[bytes(little), blosc(zstd+shuffle)]`;
 #     index pipeline = `[bytes(little), crc32c]`, `index_location: "end"`.
 #   * The `time` axis grows by array resize: each `write_record!` buffers one time
-#     slice; a full time-shard flushes as ONE atomically-committed shard object,
-#     after which each array's `zarr.json` `shape[time]` is rewritten.
+#     slice; a full time-shard is written as ONE atomically-committed shard object,
+#     and a commit (`write_flush!` for a `:single` writer) rewrites each array's
+#     `zarr.json` `shape[time]` and then the output manifest.
+#
+# This file holds the format pieces (profiles, the schema, `zarr.json` dicts, the
+# inner-chunk encode + shard assembly). The streaming state machine — roles,
+# regions, the commit protocol, indexed records, statics, blobs, read-back and
+# resume (spec/writer.md) — lives in zarr_stream.jl.
 #
 # Commit discipline (identical to the read cache): every shard/metadata object is
 # staged to `<base>/tmp/<uuid>.part` and `rename(2)`d into place; the per-store
@@ -69,10 +75,11 @@ _profile(sym::Symbol) =
 """
     OutputVar(dims, dtype; attrs = Dict())
 
-One streaming output variable: its on-disk dim names (file order, MUST include
-the schema's `time_dim`), its element type (`Float64`/`Float32`/`Int32`/`Int64`),
-and optional CF variable attributes `attrs` (e.g. `"units"`, `"standard_name"`,
-and the `"coordinates"` attribute naming this variable's auxiliary coordinates).
+One output variable: its on-disk dim names (file order; a streaming variable's
+dims MUST include the schema's `time_dim`, a static's MUST NOT), its element type
+(`Float64`/`Float32`/`Int32`/`Int64`/`UInt8`, plus `UInt32`/`UInt64`), and
+optional CF variable attributes `attrs` (e.g. `"units"`, `"standard_name"`, and
+the `"coordinates"` attribute naming this variable's auxiliary coordinates).
 The attrs are written verbatim into the array node's `attributes` alongside the
 mechanical `_ARRAY_DIMENSIONS`/`dimension_names`."""
 struct OutputVar
@@ -84,16 +91,31 @@ OutputVar(dims::AbstractVector, dtype::DataType; attrs::AbstractDict = Dict{Stri
     OutputVar(String.(collect(dims)), dtype, Dict{String,Any}(attrs))
 
 """
+    IndexedTime(times)
+
+The `indexed` time mode (spec/writer.md §6.2): the time axis has a fixed length
+`n_records = length(times)` from [`write_open!`], the owner writes `times` as the
+time coordinate at open, and records are written by index with
+[`write_record_at!`], in any order. The default time mode is `:append`."""
+struct IndexedTime
+    times::Vector{Float64}
+end
+IndexedTime(times::AbstractVector) = IndexedTime(Float64[Float64(t) for t in times])
+
+"""
     OutputSchema(; dims, time_dim, vars, chunk_shape, shard_shape,
-                   coords=[], profile=:diagnostic, attrs=Dict(), time_dtype=Float64)
+                   coords=[], statics=[], time_mode=:append,
+                   profile=:diagnostic, attrs=Dict(), time_dtype=Float64)
 
 The input to [`write_open!`] — a plain struct in this repo (the EarthSciAST
 `OutputSchema` maps onto it at the binding layer; no EarthSciAST dependency here).
+It is the spec/writer.md §3 *stream schema*.
 
 Fields (all load-bearing for the binding to construct):
-  * `dims::Vector{Pair{String,Int}}` — ORDERED dim name => length. The `time_dim`
-    entry's length is a placeholder (0 is conventional); the time axis grows.
-  * `time_dim::String` — the growable axis name.
+  * `dims::Vector{Pair{String,Int}}` — ORDERED dim name => length. In `:append`
+    mode the `time_dim` entry's length is a placeholder (0 is conventional); the
+    time axis grows. In indexed mode it is `n_records` (filled in when 0).
+  * `time_dim::String` — the record axis name.
   * `coords::Vector{Pair{String,Tuple{Vector,Dict{String,Any}}}}` — ORDERED static
     coordinate arrays: name => (values, attrs). 1-D over their own dim; written
     once at `write_open!`. An entry for `time_dim` supplies the time coordinate's
@@ -102,11 +124,14 @@ Fields (all load-bearing for the binding to construct):
   * `chunk_shape::Dict{String,Int}` — dim name => INNER chunk length.
   * `shard_shape::Dict{String,Int}` — dim name => SHARD length (must be a multiple
     of the inner chunk length along every dim). `shard_shape[time_dim]` is the
-    number of records packed per flushed shard object.
+    number of records packed per shard object.
   * `profile::Symbol` — `:diagnostic`/`:checkpoint` (Blosc-zstd inner codec) or
     `:wasm` (plain v3 zstd inner codec, no Blosc — wasm/browser-loadable).
   * `attrs::Dict{String,Any}` — group-level attributes.
-  * `time_dtype::DataType` — element type of the time coordinate (default `Float64`)."""
+  * `time_dtype::DataType` — element type of the time coordinate (default `Float64`).
+  * `statics::Vector{Pair{String,OutputVar}}` — ORDERED time-less variables
+    (gradient fields, …) written once each with [`write_static!`].
+  * `time_mode` — `:append` (default) or an [`IndexedTime`]."""
 struct OutputSchema
     dims::Vector{Pair{String,Int}}
     time_dim::String
@@ -117,45 +142,45 @@ struct OutputSchema
     profile::Symbol
     attrs::Dict{String,Any}
     time_dtype::DataType
+    statics::Vector{Pair{String,OutputVar}}
+    time_mode::Union{Symbol,IndexedTime}
 end
 
 function OutputSchema(; dims, time_dim, vars, chunk_shape, shard_shape,
                       coords = Pair{String,Tuple{Vector,Dict{String,Any}}}[],
                       profile::Symbol = :diagnostic,
                       attrs::AbstractDict = Dict{String,Any}(),
-                      time_dtype::DataType = Float64)
+                      time_dtype::DataType = Float64,
+                      statics = Pair{String,OutputVar}[],
+                      time_mode::Union{Symbol,IndexedTime} = :append)
+    time_mode isa Symbol && time_mode !== :append && error(
+        "unknown time_mode $time_mode (expected :append or IndexedTime(times))")
+    td = String(time_dim)
     d = Pair{String,Int}[String(k) => Int(v) for (k, v) in dims]
+    if time_mode isa IndexedTime
+        # the time dim's length IS n_records in indexed mode (filled in when 0)
+        n = length(time_mode.times)
+        for (k, (nm, len)) in enumerate(d)
+            nm == td || continue
+            len == 0 || len == n || error(
+                "indexed time_mode has $n records but dims[$td] = $len")
+            d[k] = nm => n
+        end
+    end
     co = Pair{String,Tuple{Vector,Dict{String,Any}}}[
         String(k) => (collect(vals), Dict{String,Any}(a)) for (k, (vals, a)) in coords]
     vs = Pair{String,OutputVar}[String(k) => v for (k, v) in vars]
+    st = Pair{String,OutputVar}[String(k) => v for (k, v) in statics]
     cs = Dict{String,Int}(String(k) => Int(v) for (k, v) in chunk_shape)
     ss = Dict{String,Int}(String(k) => Int(v) for (k, v) in shard_shape)
-    return OutputSchema(d, String(time_dim), co, vs, cs, ss, profile,
-                        Dict{String,Any}(attrs), time_dtype)
+    return OutputSchema(d, td, co, vs, cs, ss, profile,
+                        Dict{String,Any}(attrs), time_dtype, st, time_mode)
 end
-
-# --- the writer + its handle ------------------------------------------------
 
 """The `zarr` streaming writer (sharded Zarr v3). Registered `:active` in
-[`WRITER_REGISTRY`]; the write mirror of [`ZarrReader`]."""
+[`WRITER_REGISTRY`]; the write mirror of [`ZarrReader`]. Its handle and the
+streaming contract live in zarr_stream.jl."""
 struct ZarrWriter <: Writer end
-
-"""Opaque write handle threaded through [`write_record!`]/[`write_close!`]."""
-mutable struct ZarrWriteHandle
-    base::String                       # output directory (local FS)
-    schema::OutputSchema
-    dimlens::Dict{String,Int}          # non-time dim => fixed length
-    codec::CodecProfile
-    shard_time::Int                    # records per time-shard
-    n_in_shard::Int                    # records buffered in the current shard
-    shard_time_index::Int              # 0-based index of the current time-shard
-    total_records::Int                 # durably committed records
-    time_buffer::Vector                # current shard's time-coord values
-    buffers::Dict{String,Array}        # var name => (shard_time × spatial...) buffer
-    time_shards::Vector{TimeShardRecord}
-    shard_t_start::Float64             # t of the first record in the current shard
-    last_t::Union{Float64,Nothing}
-end
 
 # --- dtype <-> Zarr v3 data_type --------------------------------------------
 
@@ -165,6 +190,7 @@ _v3_dtype(::Type{Int32})   = "int32"
 _v3_dtype(::Type{Int64})   = "int64"
 _v3_dtype(::Type{UInt32})  = "uint32"
 _v3_dtype(::Type{UInt64})  = "uint64"
+_v3_dtype(::Type{UInt8})   = "uint8"
 _v3_dtype(T::DataType) = error("unsupported output dtype $T for Zarr v3")
 
 _v3_fill(::Type{<:AbstractFloat}) = 0.0
@@ -263,6 +289,11 @@ end
 
 _group_meta_dict(schema::OutputSchema) = Dict{String,Any}(
     "zarr_format" => 3, "node_type" => "group", "attributes" => schema.attrs)
+
+# Metadata writes of a `:single` writer run under the per-object advisory lock
+# (the v1 behaviour); a multi-writer store takes none — its owner is the only
+# metadata writer (spec/writer.md §9).
+_maybe_locked(f, lock::Bool, base, name) = lock ? with_output_lock(f, base, name) : f()
 
 _write_json(base, relpath, d) =
     put_object!(base, relpath, Vector{UInt8}(codeunits(JSON.json(d; pretty = true))))
@@ -387,7 +418,8 @@ end
 
 # --- static (time-independent) coordinate arrays ----------------------------
 
-function _write_static_array!(base, name, values::AbstractVector, attrs, schema, codec)
+function _write_static_array!(base, name, values::AbstractVector, attrs, schema, codec;
+                              lock::Bool = true)
     dims = [name]
     T = eltype(values)
     Tout = T <: Integer ? (sizeof(T) <= 4 ? Int32 : Int64) :
@@ -397,204 +429,12 @@ function _write_static_array!(base, name, values::AbstractVector, attrs, schema,
     haskey(schema.chunk_shape, name) ||
         error("static coord '$name' has no chunk_shape entry")
     shape = [len]
-    with_output_lock(base, name) do
+    _maybe_locked(lock, base, name) do
         _write_json(base, "$name/zarr.json",
                     _array_meta_dict(dims, Tout, shape, schema, codec, Dict{String,Any}(attrs)))
     end
     _write_array_shards!(base, name, dims, Tout, data, schema, codec,
                          [len], [0], 0, nothing)
-    return nothing
-end
-
-# --- write_open! ------------------------------------------------------------
-
-function write_open!(::ZarrWriter, store, base_url::AbstractString, schema::OutputSchema)
-    base = _output_base(base_url)
-    mkpath(base)
-    codec = _profile(schema.profile)
-    dimlens = Dict{String,Int}(k => v for (k, v) in schema.dims if k != schema.time_dim)
-
-    # validate the chunk/shard grid
-    for (d, _) in schema.dims
-        haskey(schema.chunk_shape, d) || error("dim '$d' missing from chunk_shape")
-        haskey(schema.shard_shape, d) || error("dim '$d' missing from shard_shape")
-        schema.shard_shape[d] % schema.chunk_shape[d] == 0 ||
-            error("shard_shape[$d]=$(schema.shard_shape[d]) not a multiple of " *
-                  "chunk_shape[$d]=$(schema.chunk_shape[d])")
-    end
-    shard_time = schema.shard_shape[schema.time_dim]
-
-    # group metadata
-    with_output_lock(base, "__group__") do
-        _write_json(base, "zarr.json", _group_meta_dict(schema))
-    end
-
-    # static coords (values known now) — written once
-    time_attrs = Dict{String,Any}()
-    for (nm, (vals, attrs)) in schema.coords
-        if nm == schema.time_dim
-            time_attrs = attrs                      # attrs only; values come from t
-            continue
-        end
-        _write_static_array!(base, nm, vals, attrs, schema, codec)
-    end
-
-    # time coordinate (growable, 1-D) + streaming vars: initial shape[time]=0
-    with_output_lock(base, schema.time_dim) do
-        _write_json(base, "$(schema.time_dim)/zarr.json",
-                    _array_meta_dict([schema.time_dim], schema.time_dtype, [0],
-                                     schema, codec, time_attrs))
-    end
-    for (nm, ov) in schema.vars
-        schema.time_dim in ov.dims ||
-            error("streaming var '$nm' must include the time dim '$(schema.time_dim)'")
-        shape = _init_var_shape(ov, schema)
-        with_output_lock(base, nm) do
-            _write_json(base, "$nm/zarr.json",
-                        _array_meta_dict(ov.dims, ov.dtype, shape, schema, codec,
-                                         ov.attrs))
-        end
-    end
-
-    h = ZarrWriteHandle(base, schema, dimlens, codec, shard_time, 0, 0, 0,
-                        Vector{schema.time_dtype}(undef, 0),
-                        Dict{String,Array}(), TimeShardRecord[], 0.0, nothing)
-    _alloc_buffers!(h)
-    return h
-end
-
-# var shape with time set to `nt` (dims order)
-function _init_var_shape(ov::OutputVar, schema::OutputSchema, nt::Int = 0)
-    dimlen = Dict(schema.dims)
-    return Int[d == schema.time_dim ? nt : dimlen[d] for d in ov.dims]
-end
-
-# allocate fresh fill-initialized shard buffers (time axis = shard_time)
-function _alloc_buffers!(h::ZarrWriteHandle)
-    s = h.schema
-    h.time_buffer = Vector{s.time_dtype}(undef, h.shard_time)
-    h.buffers = Dict{String,Array}()
-    for (nm, ov) in s.vars
-        shp = Tuple(d == s.time_dim ? h.shard_time : h.dimlens[d] for d in ov.dims)
-        h.buffers[nm] = fill(_v3_fill(ov.dtype) |> ov.dtype, shp...)
-    end
-    return nothing
-end
-
-# --- write_record! ----------------------------------------------------------
-
-function write_record!(::ZarrWriter, h::ZarrWriteHandle, t, arrays; region = nothing)
-    region === nothing || error("write_record! `region` is reserved (nothing in Wave 1)")
-    s = h.schema
-    slot = h.n_in_shard + 1
-    h.n_in_shard == 0 && (h.shard_t_start = Float64(t))
-    h.time_buffer[slot] = convert(s.time_dtype, t)
-
-    for (nm, ov) in s.vars
-        haskey(arrays, nm) || error("write_record! missing array for var '$nm'")
-        a = arrays[nm]
-        ti = findfirst(==(s.time_dim), ov.dims)
-        # place the spatial slice into buffer[..., slot along time, ...]
-        idx = ntuple(d -> d == ti ? (slot:slot) : Colon(), length(ov.dims))
-        dst = @view h.buffers[nm][idx...]
-        # `a` has the var's dims minus the time axis, in order
-        @inbounds dropdims(dst; dims = ti) .= a
-    end
-
-    h.n_in_shard += 1
-    h.last_t = Float64(t)
-    if h.n_in_shard == h.shard_time
-        _flush_shard!(h)
-    end
-    return nothing
-end
-
-# --- flush ------------------------------------------------------------------
-
-function _flush_shard!(h::ZarrWriteHandle)
-    n = h.n_in_shard
-    n == 0 && return nothing
-    s = h.schema
-    base = h.base
-    tbase = h.shard_time_index * h.shard_time    # global time offset of this slab
-
-    # 1) write the covering shard objects (durable BEFORE any shape bump)
-    #    time coord (1-D)
-    tvalid = tbase + n
-    _write_array_shards!(base, s.time_dim, [s.time_dim], s.time_dtype,
-                         h.time_buffer, s, h.codec, [tvalid], [tbase], 1,
-                         h.shard_time_index)
-    #    streaming vars
-    for (nm, ov) in s.vars
-        ti = findfirst(==(s.time_dim), ov.dims)
-        valid = Int[dn == s.time_dim ? tvalid : h.dimlens[dn] for dn in ov.dims]
-        tb = Int[i == ti ? tbase : 0 for i in 1:length(ov.dims)]
-        _write_array_shards!(base, nm, ov.dims, ov.dtype, h.buffers[nm], s, h.codec,
-                             valid, tb, ti, h.shard_time_index)
-    end
-
-    # 2) record (or REFRESH) this time-shard's manifest entry + durable counters.
-    #    A PARTIAL commit must not push a second entry for the same shard index:
-    #    the shard object is rewritten in place as later records land in its
-    #    remaining slots, so the entry is updated to the new (t_end, n).
-    rec = TimeShardRecord(h.shard_time_index, h.shard_t_start,
-                          h.last_t === nothing ? h.shard_t_start : h.last_t, n)
-    if !isempty(h.time_shards) && h.time_shards[end].index == h.shard_time_index
-        h.time_shards[end] = rec
-    else
-        push!(h.time_shards, rec)
-    end
-    # Records live at global time positions `tbase .. tbase+n-1`, so the durable
-    # record count IS that end position — never a running sum, which would drift
-    # away from where the data actually is the moment a shard is committed twice.
-    h.total_records = tvalid
-
-    # 3) bump each growable array's shape[time] (atomic, guarded)
-    _update_shapes!(h)
-    # 4) refresh the output manifest (crash-recovery record)
-    _write_output_manifest!(h)
-
-    # 5) Roll to the next shard ONLY when this one is full. A partial commit
-    #    (`write_flush!`/`write_close!` mid-shard) leaves the shard OPEN — buffer
-    #    and slot counter retained — so the next `write_record!` continues filling
-    #    it and re-commits the same shard object. Advancing the shard index on a
-    #    partial commit is what used to corrupt a flushed stream: the next record
-    #    jumped to the next shard's first slot, leaving the skipped slots as
-    #    fill-valued (all-zero) phantom records, and `shape[time]` no longer
-    #    covered the records written past the gap (they silently vanished).
-    if n == h.shard_time
-        h.shard_time_index += 1
-        h.n_in_shard = 0
-        _alloc_buffers!(h)
-    end
-    return nothing
-end
-
-# Records of the CURRENT (open) shard already committed to its shard object. Zero
-# when the last manifest entry is for an earlier shard, i.e. nothing of this shard
-# is durable yet. Used to make a redundant flush/close a genuine no-op.
-function _committed_in_current_shard(h::ZarrWriteHandle)
-    isempty(h.time_shards) && return 0
-    last = h.time_shards[end]
-    return last.index == h.shard_time_index ? last.n : 0
-end
-
-function _update_shapes!(h::ZarrWriteHandle)
-    s = h.schema
-    nt = h.total_records
-    with_output_lock(h.base, s.time_dim) do
-        _write_json(h.base, "$(s.time_dim)/zarr.json",
-                    _array_meta_dict([s.time_dim], s.time_dtype, [nt], s, h.codec,
-                                     _time_attrs(s)))
-    end
-    for (nm, ov) in s.vars
-        shape = _init_var_shape(ov, s, nt)
-        with_output_lock(h.base, nm) do
-            _write_json(h.base, "$nm/zarr.json",
-                        _array_meta_dict(ov.dims, ov.dtype, shape, s, h.codec,
-                                         ov.attrs))
-        end
-    end
     return nothing
 end
 
@@ -617,54 +457,3 @@ _codec_manifest(c::BloscProfile) =
                      "shuffle" => c.shuffle ? "shuffle" : "noshuffle")
 _codec_manifest(c::ZstdProfile) =
     Dict{String,Any}("id" => "zstd", "level" => c.level, "checksum" => c.checksum)
-
-function _write_output_manifest!(h::ZarrWriteHandle)
-    s = h.schema
-    codec = _codec_manifest(h.codec)
-    vars = Vector{Dict{String,Any}}()
-    for (nm, ov) in s.vars
-        push!(vars, Dict{String,Any}("name" => nm, "dims" => ov.dims,
-                                     "dtype" => _v3_dtype(ov.dtype)))
-    end
-    m = OutputManifest(
-        h.base, "zarr", 3, String(s.profile), codec, s.time_dim,
-        s.dims, vars, s.chunk_shape, s.shard_shape,
-        copy(h.time_shards), h.last_t, h.total_records, rfc3339_utc())
-    with_output_lock(h.base, "__manifest__") do
-        write_output_manifest(joinpath(h.base, "output_manifest.json"), m)
-    end
-    return m
-end
-
-# --- write_flush! -----------------------------------------------------------
-
-"""
-    write_flush!(::ZarrWriter, h::ZarrWriteHandle)
-
-Force any buffered-but-unflushed records out as a durable (partial) shard and
-refresh the output manifest — the checkpoint durable barrier
-(streaming-output-sinks RFC §10, §16.7). After this returns, a restart reading the
-manifest sees every record written so far as committed.
-
-Safe to interleave with ordinary records at any cadence: a partial commit leaves
-the shard OPEN, so the following records fill its remaining slots and rewrite the
-same shard object. The time axis stays gap-free and `shape[time]` always equals
-the number of records written. A no-op when nothing new is buffered.
-"""
-function write_flush!(::ZarrWriter, h::ZarrWriteHandle)
-    h.n_in_shard > _committed_in_current_shard(h) && _flush_shard!(h)
-    return nothing
-end
-
-# --- write_close! -----------------------------------------------------------
-
-function write_close!(::ZarrWriter, h::ZarrWriteHandle)
-    # partial trailing shard (skipped when it is already durable)
-    h.n_in_shard > _committed_in_current_shard(h) && _flush_shard!(h)
-    # consolidated metadata is per-array `zarr.json` (already durable + up to
-    # date); rewrite the group node + the final output manifest as the close record.
-    with_output_lock(h.base, "__group__") do
-        _write_json(h.base, "zarr.json", _group_meta_dict(h.schema))
-    end
-    return _write_output_manifest!(h)
-end

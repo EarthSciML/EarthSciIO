@@ -142,6 +142,21 @@ pub enum Error {
         detail: String,
     },
 
+    /// A writer's region does not sit on shard boundaries (`spec/writer.md` §4),
+    /// so two writers could share a shard object. Raised at open, before any I/O.
+    RegionNotShardAligned {
+        /// Which region bound breaks the rule, and the shard length it misses.
+        detail: String,
+    },
+
+    /// An owner's `commit` refused the writers' tokens (`spec/writer.md` §5.3):
+    /// a gap or an overlap in the regions, a divergent writer (fingerprint,
+    /// record indices or `t`), a missing token. Nothing was committed.
+    Commit {
+        /// The gap, the overlap or the divergent writer.
+        detail: String,
+    },
+
     /// A [`PrefetchGroup`](crate::PrefetchGroup) was asked for something its
     /// contract refuses (`spec/prefetch.md` §3): a construction it cannot honour,
     /// a `take` of any epoch but the next one, a `take` before `start`, after
@@ -220,6 +235,10 @@ impl std::fmt::Display for Error {
             Error::Format { format, detail } => {
                 write!(f, "{format} decode error: {detail}")
             }
+            Error::RegionNotShardAligned { detail } => {
+                write!(f, "region not shard-aligned: {detail}")
+            }
+            Error::Commit { detail } => write!(f, "commit refused: {detail}"),
             Error::Prefetch { detail } => write!(f, "prefetch: {detail}"),
         }
     }

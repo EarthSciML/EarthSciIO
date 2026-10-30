@@ -473,6 +473,209 @@
         "python": "cds_api_key",
         "julia": "cds_api_key"
       }
+    },
+    {
+      "name": "stream_writer",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "julia": "ZarrWriter",
+        "rust": "ZarrStreamWriter"
+      }
+    },
+    {
+      "name": "stream_schema",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "julia": "OutputSchema",
+        "rust": "StreamSchema"
+      }
+    },
+    {
+      "name": "indexed_time",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "julia": "IndexedTime",
+        "rust": "TimeMode"
+      }
+    },
+    {
+      "name": "writer_role",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "Role"
+      }
+    },
+    {
+      "name": "region",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "Region"
+      }
+    },
+    {
+      "name": "commit_token",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "julia": "CommitToken",
+        "rust": "CommitToken"
+      }
+    },
+    {
+      "name": "commit_receipt",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "CommitReceipt"
+      }
+    },
+    {
+      "name": "write_open",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_open!"
+      }
+    },
+    {
+      "name": "write_resume",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_resume"
+      }
+    },
+    {
+      "name": "write_record",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_record!"
+      }
+    },
+    {
+      "name": "write_record_at",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_record_at!"
+      }
+    },
+    {
+      "name": "write_static",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_static!"
+      }
+    },
+    {
+      "name": "write_blob",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_blob!"
+      }
+    },
+    {
+      "name": "write_flush",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_flush!"
+      }
+    },
+    {
+      "name": "write_commit",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_commit!"
+      }
+    },
+    {
+      "name": "write_invalidate",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_invalidate!"
+      }
+    },
+    {
+      "name": "write_close",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "write_close!"
+      }
+    },
+    {
+      "name": "read_output_manifest",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "read_output_manifest",
+        "rust": "read_output_manifest"
+      }
+    },
+    {
+      "name": "read_record",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "read_record",
+        "rust": "read_record"
+      }
+    },
+    {
+      "name": "read_static",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "read_static",
+        "rust": "read_static"
+      }
+    },
+    {
+      "name": "read_blob",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "read_blob",
+        "rust": "read_blob"
+      }
+    },
+    {
+      "name": "schema_fingerprint",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "schema_fingerprint",
+        "rust": "schema_fingerprint"
+      }
+    },
+    {
+      "name": "region_not_shard_aligned",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "RegionNotShardAligned",
+        "julia": "RegionNotShardAligned"
+      }
+    },
+    {
+      "name": "commit_error",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "CommitError",
+        "julia": "CommitError"
+      }
     }
   ]
 }

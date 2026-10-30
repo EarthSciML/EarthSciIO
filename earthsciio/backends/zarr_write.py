@@ -17,17 +17,21 @@ Shape of the emitted store (RFC §16.1, normative):
   the sharding codec's inner ``chunk_shape`` is the read chunk. One shard object
   packs many inner chunks (few large objects on S3/Lustre, small chunks for
   readers). Inner pipeline = bytes(little) + Blosc(zstd, shuffle).
-* The ``time`` axis grows by array resize: each :meth:`ZarrWriter.write_record`
-  buffers one time slice; a full time-shard (or an explicit :meth:`write_flush`)
-  resizes every growable array and writes the slab.
+* The ``time`` axis grows: each :meth:`ZarrWriter.write_record` buffers one
+  time slice into its time shard; a full time shard is encoded and written
+  whole, a partial one is written padded at :meth:`write_flush` and rewritten
+  whole when it fills. ``shape[time]`` in ``zarr.json`` grows only at a commit.
 
 Commit / durability. Local output goes through zarr-python's ``LocalStore``
 (atomic per-object writes); ``s3://`` output through ``FsspecStore`` (s3fs). A
-per-store **output manifest** (``output_manifest.json``, schema
-``earthsciio/output-manifest/v1``) records committed time-shards, the last durable
-``t``, the codec params, a schema fingerprint, and the base URL — the mirror of the
-read cache's per-blob manifest and the Julia writer's output manifest. It is
-refreshed on every flush, so a restart reads the last committed ``t`` from it.
+per-store **output manifest** (``output_manifest.json``) records the committed
+state; writing it is the commit point. A single-writer ``append`` store without
+statics writes ``earthsciio/output-manifest/v1`` (unchanged from before the
+writer contract); every other store writes ``earthsciio/output-manifest/v2``.
+
+The streaming writer contract (``spec/writer.md``: regions, roles + commit
+tokens, indexed records, statics, blobs, read-back, resume) is implemented in
+:mod:`earthsciio.backends.zarr_stream`; :class:`ZarrWriter` is its facade.
 
 Public surface (conceptual mirror of the Julia writer):
 
@@ -43,7 +47,6 @@ so a base install stays lean (matching the reader + the old ``numcodecs`` cultur
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -58,6 +61,7 @@ __all__ = [
     "ZSTD_WASM",
     "OutputVar",
     "OutputSchema",
+    "IndexedTime",
     "ZarrWriter",
     "ZarrWriteHandle",
     "OUTPUT_MANIFEST_SCHEMA",
@@ -139,6 +143,22 @@ class OutputVar:
 
 
 @dataclass
+class IndexedTime:
+    """The ``indexed`` time mode (``spec/writer.md`` §6.2): the record axis has
+    a fixed length ``len(times)`` from open, and record ``i`` holds time
+    ``times[i]`` (float64). Records are written by index in any order."""
+
+    times: Any
+
+    def __post_init__(self) -> None:
+        self.times = np.asarray(self.times, dtype=np.float64).reshape(-1)
+
+    @property
+    def n_records(self) -> int:
+        return int(self.times.shape[0])
+
+
+@dataclass
 class OutputSchema:
     """The input to :meth:`ZarrWriter.write_open`. Mirrors the Julia
     ``OutputSchema`` (a plain struct; no EarthSciAST dependency here).
@@ -161,6 +181,13 @@ class OutputSchema:
       or ``"wasm"`` (plain v3 zstd inner codec, no Blosc — wasm/browser-loadable).
     * ``attrs`` — group-level attributes.
     * ``time_dtype`` — element type of the time coordinate (default float64).
+    * ``statics`` — ORDERED ``[(name, OutputVar), ...]`` time-less variables
+      (``spec/writer.md`` §7); their dims MUST NOT include ``time_dim``. A
+      schema with statics writes a v2 store.
+    * ``time_mode`` — ``"append"`` (the default: records are appended, the time
+      axis grows) or :class:`IndexedTime` (``n_records`` fixed at open, records
+      written by index in any order; ``spec/writer.md`` §6.2). The time dim's
+      length in ``dims`` may be 0 (filled in) or MUST equal ``n_records``.
     """
 
     dims: List[Tuple[str, int]]
@@ -172,6 +199,8 @@ class OutputSchema:
     profile: str = "diagnostic"
     attrs: Dict[str, Any] = field(default_factory=dict)
     time_dtype: Any = np.float64
+    statics: List[Tuple[str, OutputVar]] = field(default_factory=list)
+    time_mode: Any = "append"
 
     def __post_init__(self) -> None:
         self.dims = [(str(k), int(v)) for k, v in self.dims]
@@ -184,35 +213,35 @@ class OutputSchema:
         ]
         self.attrs = dict(self.attrs)
         self.time_dtype = np.dtype(self.time_dtype)
+        self.statics = [(str(k), v) for k, v in self.statics]
+        if isinstance(self.time_mode, str):
+            if self.time_mode != "append":
+                raise ValueError(
+                    f"time_mode must be 'append' or IndexedTime(times), "
+                    f"got {self.time_mode!r}"
+                )
+        elif isinstance(self.time_mode, IndexedTime):
+            n = self.time_mode.n_records
+            self.dims = [
+                (k, n if k == self.time_dim and v == 0 else v) for k, v in self.dims
+            ]
+            if self.dim_lengths.get(self.time_dim, n) != n:
+                raise ValueError(
+                    f"indexed time mode: dims[{self.time_dim!r}] = "
+                    f"{self.dim_lengths[self.time_dim]} != n_records = {n}"
+                )
+        else:
+            raise TypeError(
+                f"time_mode must be 'append' or IndexedTime, got {self.time_mode!r}"
+            )
+
+    @property
+    def indexed(self) -> bool:
+        return isinstance(self.time_mode, IndexedTime)
 
     @property
     def dim_lengths(self) -> Dict[str, int]:
         return {k: v for k, v in self.dims}
-
-
-# --- the write handle -------------------------------------------------------- #
-
-
-@dataclass
-class ZarrWriteHandle:
-    """Opaque handle threaded through :meth:`write_record` / :meth:`write_close`."""
-
-    base: str
-    schema: OutputSchema
-    group: Any
-    store: Any
-    arrays: Dict[str, Any]
-    codec: Any  # BloscProfile | ZstdProfile (per the schema profile)
-    shard_time: int
-    #: buffered (not-yet-flushed) time-coord values for the current shard
-    time_buffer: List[float] = field(default_factory=list)
-    #: var name -> list of spatial slabs buffered for the current shard
-    buffers: Dict[str, List[np.ndarray]] = field(default_factory=dict)
-    total_records: int = 0
-    shard_time_index: int = 0
-    time_shards: List[Dict[str, Any]] = field(default_factory=list)
-    shard_t_start: Optional[float] = None
-    last_t: Optional[float] = None
 
 
 # --- dtype <-> Zarr v3 data_type (for the manifest fingerprint) -------------- #
@@ -222,6 +251,7 @@ _V3_DTYPE = {
     np.dtype("float32"): "float32",
     np.dtype("int32"): "int32",
     np.dtype("int64"): "int64",
+    np.dtype("uint8"): "uint8",
     np.dtype("uint32"): "uint32",
     np.dtype("uint64"): "uint64",
 }
@@ -270,264 +300,118 @@ def _open_output_store(base_url: str):
 
 class ZarrWriter:
     """The ``zarr`` streaming writer (sharded Zarr v3). The write mirror of
-    :class:`earthsciio.backends.zarr.ZarrReader`."""
+    :class:`earthsciio.backends.zarr.ZarrReader`.
+
+    Every method delegates to :mod:`earthsciio.backends.zarr_stream`, which
+    implements the streaming writer contract (``spec/writer.md``): regions,
+    roles and the commit protocol, indexed records, statics, blobs and resume.
+    A ``role="single"``, ``append``-mode store without statics is the v1 writer
+    and still writes the ``earthsciio/output-manifest/v1`` manifest."""
 
     NAME = "zarr"
 
     def name(self) -> str:
         return self.NAME
 
-    # -- write_open --------------------------------------------------------- #
-
-    def write_open(self, base_url: str, schema: OutputSchema) -> ZarrWriteHandle:
-        """Create the store: group node, static coords (written once), the
-        growable time coordinate, and every streaming var at ``shape[time] = 0``.
+    def write_open(
+        self,
+        base_url: str,
+        schema: OutputSchema,
+        role: str = "single",
+        n_writers: int = 1,
+        id: int = 0,
+        region: Optional[Dict[str, Tuple[int, int]]] = None,
+    ):
+        """Open a store for writing. ``role="single"`` / ``"owner"`` CREATE it
+        (group, coordinates, every array's ``zarr.json``; a v2 store also gets
+        its manifest at ``commit_seq`` 0); ``role="contributor"`` JOINS an
+        existing v2 store (reads the manifest, checks ``schema``'s fingerprint,
+        writes nothing). ``region`` (``{dim: (start, stop)}``, 0-based half-open,
+        shard-aligned) is this writer's block; ``None`` = the whole extent.
+        ``n_writers`` is the owner's writer count (advisory for a contributor,
+        checked only when > 1); ``id`` the contributor's writer id.
         Returns the handle threaded through the rest of the lifecycle."""
-        import zarr
-        from zarr.codecs import BloscCodec, ZstdCodec
+        from . import zarr_stream
 
-        codec = _profile(schema.profile)
-        store, base = _open_output_store(base_url)
-
-        # validate the chunk/shard grid
-        for d, _ in schema.dims:
-            if d not in schema.chunk_shape:
-                raise ValueError(f"dim {d!r} missing from chunk_shape")
-            if d not in schema.shard_shape:
-                raise ValueError(f"dim {d!r} missing from shard_shape")
-            if schema.shard_shape[d] % schema.chunk_shape[d] != 0:
-                raise ValueError(
-                    f"shard_shape[{d}]={schema.shard_shape[d]} is not a multiple of "
-                    f"chunk_shape[{d}]={schema.chunk_shape[d]}"
-                )
-        shard_time = schema.shard_shape[schema.time_dim]
-
-        group = zarr.open_group(store=store, mode="w", zarr_format=3)
-        for k, v in schema.attrs.items():
-            group.attrs[k] = v
-
-        # Inner (per-chunk) compressor: Blosc(zstd) for the diagnostic/checkpoint
-        # profiles; the PLAIN v3 zstd codec (no Blosc) for the wasm profile, so a
-        # WebAssembly/browser reader can decode the store (blosc-src does not
-        # target wasm32; the standard v3 zstd codec does). Sharding is unchanged.
-        if isinstance(codec, ZstdProfile):
-            compressor: Any = ZstdCodec(level=codec.level)
-        else:
-            compressor = BloscCodec(
-                cname=codec.cname,
-                clevel=codec.clevel,
-                shuffle="shuffle" if codec.shuffle else "noshuffle",
-            )
-        dimlen = schema.dim_lengths
-
-        def _mk(name, dims, dtype, shape):
-            chunks = tuple(schema.chunk_shape[d] for d in dims)
-            shards = tuple(schema.shard_shape[d] for d in dims)
-            return group.create_array(
-                name=name,
-                shape=tuple(shape),
-                chunks=chunks,
-                shards=shards,
-                dtype=np.dtype(dtype),
-                compressors=[compressor],
-                dimension_names=list(dims),
-                fill_value=_v3_fill(dtype),
-                overwrite=True,
-            )
-
-        arrays: Dict[str, Any] = {}
-
-        # static coords (values known now) — written once; time coord is separate
-        time_attrs: Dict[str, Any] = {}
-        for nm, (vals, attrs) in schema.coords:
-            if nm == schema.time_dim:
-                time_attrs = attrs
-                continue
-            varr = np.asarray(vals)
-            a = _mk(nm, [nm], varr.dtype, varr.shape)
-            a[...] = varr
-            for k, v in attrs.items():
-                a.attrs[k] = v
-            arrays[nm] = a
-
-        # growable time coordinate (1-D), starts empty
-        tarr = _mk(schema.time_dim, [schema.time_dim], schema.time_dtype, (0,))
-        for k, v in time_attrs.items():
-            tarr.attrs[k] = v
-        arrays[schema.time_dim] = tarr
-
-        # streaming vars, shape[time] = 0
-        for nm, ov in schema.vars:
-            if schema.time_dim not in ov.dims:
-                raise ValueError(
-                    f"streaming var {nm!r} must include the time dim "
-                    f"{schema.time_dim!r}"
-                )
-            shape = [0 if d == schema.time_dim else dimlen[d] for d in ov.dims]
-            a = _mk(nm, ov.dims, ov.dtype, shape)
-            for k, v in ov.attrs.items():
-                a.attrs[k] = v
-            arrays[nm] = a
-
-        h = ZarrWriteHandle(
-            base=base,
-            schema=schema,
-            group=group,
-            store=store,
-            arrays=arrays,
-            codec=codec,
-            shard_time=shard_time,
+        return zarr_stream.open_writer(
+            base_url, schema, role=role, n_writers=n_writers, id=id, region=region
         )
-        h.buffers = {nm: [] for nm, _ in schema.vars}
-        return h
 
-    # -- write_record ------------------------------------------------------- #
+    def write_resume(
+        self,
+        base_url: str,
+        role: str = "single",
+        n_writers: int = 1,
+        id: int = 0,
+        region: Optional[Dict[str, Tuple[int, int]]] = None,
+        at: Optional[float] = None,
+    ):
+        """Reopen a store after preemption (``spec/writer.md`` §7): in
+        ``append`` mode the committed records are truncated to ``t <= at``
+        (``at=None`` keeps all) and this writer's region of the open time shard
+        is reloaded, so later records continue the stream bitwise."""
+        from . import zarr_stream
 
-    def write_record(
-        self, h: ZarrWriteHandle, t: float, arrays: Dict[str, Any], region=None
+        return zarr_stream.resume_writer(
+            base_url, role=role, n_writers=n_writers, id=id, region=region, at=at
+        )
+
+    def write_record(self, h, t: float, arrays: Dict[str, Any], region=None) -> int:
+        """Append one time record (``append`` mode); returns its index. A
+        non-``None`` ``region`` must equal the handle's bound region."""
+        return h.write_record(t, arrays, region=region)
+
+    def write_record_at(
+        self, h, index: int, t: float, arrays: Dict[str, Any], region=None
     ) -> None:
-        """Buffer one time record. When the buffer fills a shard's worth of time
-        steps (``shard_shape[time_dim]``) it is flushed durably."""
-        if region is not None:
-            raise ValueError("write_record `region` is reserved (None in Wave 4)")
-        s = h.schema
-        if not h.time_buffer:
-            h.shard_t_start = float(t)
-        h.time_buffer.append(float(t))
-        for nm, ov in s.vars:
-            if nm not in arrays:
-                raise ValueError(f"write_record missing array for var {nm!r}")
-            slab = np.asarray(arrays[nm], dtype=ov.dtype)
-            expected = tuple(
-                s.dim_lengths[d] for d in ov.dims if d != s.time_dim
-            )
-            if slab.shape != expected:
-                raise ValueError(
-                    f"var {nm!r}: slab shape {slab.shape} != expected {expected} "
-                    f"(dims minus time)"
-                )
-            h.buffers[nm].append(slab)
-        h.last_t = float(t)
-        if len(h.time_buffer) >= h.shard_time:
-            self._flush(h)
+        """Write record ``index`` (``indexed`` mode, any order); ``t`` must equal
+        ``times[index]`` bitwise and the record must not be committed."""
+        h.write_record_at(index, t, arrays, region=region)
 
-    # -- flush -------------------------------------------------------------- #
+    def write_static(self, h, name: str, array: Any) -> None:
+        """Write a time-less variable (region-shaped when partitioned)."""
+        h.write_static(name, array)
 
-    def _flush(self, h: ZarrWriteHandle) -> None:
-        n = len(h.time_buffer)
-        if n == 0:
-            return
-        s = h.schema
-        old = h.total_records
-        new = old + n
+    def write_blob(self, h, scope, key: str, data: bytes) -> None:
+        """Store a small rank-local payload. ``scope`` is ``"static"`` or
+        ``("record", i)``."""
+        h.write_blob(scope, key, data)
 
-        # time coordinate
-        tarr = h.arrays[s.time_dim]
-        tarr.resize((new,))
-        tarr[old:new] = np.asarray(h.time_buffer, dtype=s.time_dtype)
+    def write_flush(self, h):
+        """Write every dirty shard of this writer's region and return a
+        :class:`~earthsciio.backends.zarr_stream.CommitToken` for the records,
+        statics and blobs written since the last token. A ``single`` writer
+        also commits (when anything is pending) — the durable barrier."""
+        return h.flush()
 
-        # streaming vars: resize the time axis and write the buffered slab block
-        for nm, ov in s.vars:
-            a = h.arrays[nm]
-            ti = ov.dims.index(s.time_dim)
-            newshape = list(a.shape)
-            newshape[ti] = new
-            a.resize(tuple(newshape))
-            block = np.stack(h.buffers[nm], axis=ti)  # (…, n along time, …)
-            sel = tuple(
-                slice(old, new) if d == ti else slice(None)
-                for d in range(len(ov.dims))
-            )
-            a[sel] = block
+    def write_commit(self, h, tokens) -> Dict[str, Any]:
+        """Owner: verify every writer's token and commit (``spec/writer.md``
+        §5.3). Raises :class:`~earthsciio.errors.CommitError`, writing nothing,
+        on a gap, overlap or divergent writer. Returns the new manifest."""
+        return h.commit(tokens)
 
-        h.time_shards.append(
-            {
-                "index": h.shard_time_index,
-                "t_start": h.shard_t_start,
-                "t_end": h.last_t,
-                "n_records": n,
-            }
-        )
-        h.total_records = new
-        h.shard_time_index += 1
-        h.time_buffer = []
-        h.buffers = {nm: [] for nm, _ in s.vars}
-        self._write_manifest(h)
+    def write_invalidate(self, h, indices) -> Dict[str, Any]:
+        """Owner / single, ``indexed`` mode: mark records uncommitted so they
+        may be rewritten."""
+        return h.invalidate(indices)
 
-    # -- write_flush (durable checkpoint barrier) --------------------------- #
+    def write_invalidate_statics(self, h, names) -> Dict[str, Any]:
+        """Owner / single: mark statics uncommitted so they may be rewritten."""
+        return h.invalidate_statics(names)
 
-    def write_flush(self, h: ZarrWriteHandle) -> None:
-        """Force any buffered-but-unflushed records out as a durable (partial)
-        shard and refresh the output manifest — the checkpoint durable barrier
-        (RFC §10, §16.7). After this returns, a restart reading the manifest sees
-        every record written so far as committed. No-op when the buffer is empty."""
-        if h.time_buffer:
-            self._flush(h)
+    def write_close(self, h, tokens=()) -> Optional[Dict[str, Any]]:
+        """Finish the handle. Single: flush, then rewrite the manifest. Owner:
+        flush, then commit its own token plus the OTHER writers' ``tokens``.
+        Both return the manifest dict. Contributor: errors if anything written
+        is unflushed; returns ``None``."""
+        return h.close(tokens)
 
-    # -- write_close -------------------------------------------------------- #
 
-    def write_close(self, h: ZarrWriteHandle) -> Dict[str, Any]:
-        """Flush any trailing partial shard, finalize, and write the end-of-run
-        output manifest (the close record). Returns the manifest dict."""
-        if h.time_buffer:
-            self._flush(h)
-        return self._write_manifest(h)
+def __getattr__(name: str):
+    # The handle type lives in zarr_stream (which imports this module); resolve
+    # the historical name lazily to avoid an import cycle.
+    if name == "ZarrWriteHandle":
+        from .zarr_stream import ZarrStreamHandle
 
-    # -- output manifest ---------------------------------------------------- #
-
-    def _manifest_dict(self, h: ZarrWriteHandle) -> Dict[str, Any]:
-        from datetime import datetime, timezone
-
-        s = h.schema
-        if isinstance(h.codec, ZstdProfile):
-            codec = {
-                "id": "zstd",
-                "level": h.codec.level,
-                "checksum": h.codec.checksum,
-            }
-        else:
-            codec = {
-                "id": "blosc",
-                "cname": h.codec.cname,
-                "clevel": h.codec.clevel,
-                "shuffle": "shuffle" if h.codec.shuffle else "noshuffle",
-            }
-        vars_meta = [
-            {"name": nm, "dims": list(ov.dims), "dtype": _v3_dtype(ov.dtype)}
-            for nm, ov in s.vars
-        ]
-        return {
-            "schema": OUTPUT_MANIFEST_SCHEMA,
-            "base_url": h.base,
-            "format": "zarr",
-            "zarr_format": 3,
-            "profile": s.profile,
-            "codec": codec,
-            "time_dim": s.time_dim,
-            "dims": [[k, v] for k, v in s.dims],
-            "vars": vars_meta,
-            "chunk_shape": dict(s.chunk_shape),
-            "shard_shape": dict(s.shard_shape),
-            "time_shards": list(h.time_shards),
-            "last_t": h.last_t,
-            "total_records": h.total_records,
-            "written_at": datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-
-    def _write_manifest(self, h: ZarrWriteHandle) -> Dict[str, Any]:
-        """Write ``output_manifest.json`` into the store as a sibling object,
-        through the same store the arrays use (so it lands on local FS or S3)."""
-        m = self._manifest_dict(h)
-        text = json.dumps(m, indent=2, sort_keys=True) + "\n"
-        self._put_manifest_bytes(h, text.encode("utf-8"))
-        return m
-
-    @staticmethod
-    def _put_manifest_bytes(h: ZarrWriteHandle, data: bytes) -> None:
-        from zarr.core.buffer import default_buffer_prototype
-        from zarr.core.sync import sync
-
-        buf = default_buffer_prototype().buffer.from_bytes(data)
-        sync(h.store.set("output_manifest.json", buf))
+        return ZarrStreamHandle
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

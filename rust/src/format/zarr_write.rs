@@ -16,11 +16,12 @@
 //!   * A per-store JSON output manifest (`output_manifest.json`, schema
 //!     `earthsciio/output-manifest/v1`) mirroring `EarthSciIO`'s Julia writer.
 //!
-//! Unlike the Julia writer's incremental `write_record!` streaming loop, this Rust
-//! writer commits a whole dataset in one [`write_zarr_v3`] call (the streaming
-//! record/flush handle is future work). `zarrs` owns the codec pipeline (blosc
-//! encode, crc32c, shard assembly), so the crate's own code stays
-//! `#![forbid(unsafe_code)]`.
+//! [`write_zarr_v3`] / [`write_all_to_store`] commit a whole dataset in one
+//! call; they are thin wrappers over the streaming handle
+//! [`ZarrStreamWriter`](super::ZarrStreamWriter) (`create / write_record /
+//! flush / close`, plus regions, a commit protocol and indexed records —
+//! `spec/writer.md`). `zarrs` owns the codec pipeline (blosc encode, crc32c,
+//! shard assembly), so the crate's own code stays `#![forbid(unsafe_code)]`.
 //!
 //! **Tolerance policy.** Cross-language output is NOT byte-identical (Blosc
 //! container bytes are host/version dependent). Conformance is on **decoded
@@ -45,7 +46,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
-use zarrs::array::{Array, ArrayMetadata};
 #[cfg(not(target_arch = "wasm32"))]
 use zarrs::filesystem::FilesystemStore;
 
@@ -106,7 +106,7 @@ pub enum CodecProfile {
     Zstd(ZstdProfile),
 }
 
-fn profile(name: &str) -> Result<CodecProfile> {
+pub(super) fn profile(name: &str) -> Result<CodecProfile> {
     match name {
         "diagnostic" => Ok(CodecProfile::Blosc(BLOSC_DIAGNOSTIC)),
         "checkpoint" => Ok(CodecProfile::Blosc(BLOSC_CHECKPOINT)),
@@ -167,7 +167,7 @@ pub struct OutputSchema {
     pub profile: String,
 }
 
-fn err(detail: impl Into<String>) -> Error {
+pub(super) fn err(detail: impl Into<String>) -> Error {
     Error::Format {
         format: "zarr".to_string(),
         detail: detail.into(),
@@ -203,6 +203,13 @@ pub fn write_zarr_v3(base: &Path, schema: &OutputSchema) -> Result<()> {
 /// true by construction rather than by inspection — a store written from a
 /// browser tab and one written by a server differ only in where the bytes land.
 ///
+/// It is itself a thin wrapper over the streaming handle
+/// ([`ZarrStreamWriter`](super::ZarrStreamWriter)): `create(Single)`, one
+/// `write_record` per time step, `close` — so the whole-dataset and the
+/// streaming paths are one code path (`spec/writer.md` §9). A time step's `t`
+/// is the time coordinate's value when `coords` carries one for `time_dim`,
+/// else the record index.
+///
 /// `base_url` is recorded verbatim in the output manifest's `base_url` field.
 ///
 /// # Errors
@@ -213,59 +220,20 @@ pub fn write_all_to_store<S>(store: Arc<S>, base_url: &str, schema: &OutputSchem
 where
     S: zarrs::storage::ReadableWritableStorageTraits + 'static,
 {
-    let codec = profile(&schema.profile)?;
-    let codec = &codec;
+    use super::zarr_stream::{Region, Role, StreamDType, StreamSchema, StreamVar, TimeMode, ZarrStreamWriter};
+
+    let _ = profile(&schema.profile)?;
     let dim_len: BTreeMap<&str, usize> =
         schema.dims.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    let n_rec = dim_len.get(schema.time_dim.as_str()).copied().unwrap_or(0);
 
-    // Validate the chunk/shard grid.
-    for (d, _) in &schema.dims {
-        let c = *schema
-            .chunk_shape
-            .get(d)
-            .ok_or_else(|| err(format!("dim '{d}' missing from chunk_shape")))?;
-        let s = *schema
-            .shard_shape
-            .get(d)
-            .ok_or_else(|| err(format!("dim '{d}' missing from shard_shape")))?;
-        if c == 0 || s == 0 || s % c != 0 {
-            return Err(err(format!(
-                "shard_shape[{d}]={s} must be a nonzero multiple of chunk_shape[{d}]={c}"
-            )));
-        }
-    }
-
-    // Group metadata (zarr.json at the root).
-    let group_meta = json!({
-        "zarr_format": 3,
-        "node_type": "group",
-        "attributes": Value::Object(schema.group_attrs.clone()),
-    });
-    set_json(store.as_ref(), "zarr.json", &group_meta)?;
-
-    // Static coordinate arrays (values known now).
-    for co in &schema.coords {
-        let shape = vec![co.values.len()];
-        write_array(
-            store.clone(),
-            &co.name,
-            std::slice::from_ref(&co.name),
-            &shape,
-            schema,
-            codec,
-            &co.attrs,
-            &co.values,
-        )?;
-    }
-
-    // Streaming variables.
+    // Validate each variable's data against its dims (the stream schema
+    // carries no data, so this check stays here).
+    let mut layouts = Vec::with_capacity(schema.vars.len());
     for v in &schema.vars {
-        if !v.dims.iter().any(|d| d == &schema.time_dim) {
-            return Err(err(format!(
-                "streaming var '{}' must include the time dim '{}'",
-                v.name, schema.time_dim
-            )));
-        }
+        let ti = v.dims.iter().position(|d| d == &schema.time_dim).ok_or_else(|| {
+            err(format!("streaming var '{}' must include the time dim '{}'", v.name, schema.time_dim))
+        })?;
         let shape: Vec<usize> = v
             .dims
             .iter()
@@ -285,10 +253,67 @@ where
                 shape
             )));
         }
-        write_array(store.clone(), &v.name, &v.dims, &shape, schema, codec, &v.attrs, &v.data)?;
+        layouts.push((ti, shape));
     }
 
-    write_output_manifest(store.as_ref(), base_url, schema, codec)
+    let stream = StreamSchema {
+        dims: schema.dims.clone(),
+        time_dim: schema.time_dim.clone(),
+        chunk_shape: schema.chunk_shape.clone(),
+        shard_shape: schema.shard_shape.clone(),
+        coords: schema.coords.clone(),
+        vars: schema
+            .vars
+            .iter()
+            .map(|v| StreamVar {
+                name: v.name.clone(),
+                dims: v.dims.clone(),
+                dtype: StreamDType::F64,
+                attrs: v.attrs.clone(),
+            })
+            .collect(),
+        statics: Vec::new(),
+        time_mode: TimeMode::Append,
+        group_attrs: schema.group_attrs.clone(),
+        profile: schema.profile.clone(),
+    };
+    let times: Option<&Vec<f64>> = schema
+        .coords
+        .iter()
+        .find(|c| c.name == schema.time_dim)
+        .map(|c| &c.values);
+
+    let mut w = ZarrStreamWriter::create(store, base_url, stream, Role::Single, Region::whole())?;
+    for r in 0..n_rec {
+        // Slice record r out of each row-major variable: the outer dims before
+        // the time axis, a fixed r, and the contiguous inner block after it.
+        let slabs: Vec<Vec<f64>> = schema
+            .vars
+            .iter()
+            .zip(&layouts)
+            .map(|(v, (ti, shape))| {
+                let outer: usize = shape[..*ti].iter().product();
+                let inner: usize = shape[ti + 1..].iter().product();
+                let mut out = Vec::with_capacity(outer * inner);
+                for o in 0..outer {
+                    let start = (o * shape[*ti] + r) * inner;
+                    out.extend_from_slice(&v.data[start..start + inner]);
+                }
+                out
+            })
+            .collect();
+        let arrays: super::zarr_stream::RecordArrays = schema
+            .vars
+            .iter()
+            .zip(&slabs)
+            .map(|(v, s)| (v.name.clone(), s.as_slice().into()))
+            .collect();
+        #[allow(clippy::cast_precision_loss)]
+        let t = times.and_then(|tv| tv.get(r).copied()).unwrap_or(r as f64);
+        w.write_record(t, &arrays)?;
+    }
+    w.close(&[])?;
+    Ok(())
 }
 
 /// The inner (per-chunk) compressor codec dict a profile selects: Blosc(zstd)
@@ -315,7 +340,7 @@ fn inner_compressor(codec: &CodecProfile, typesize: usize) -> Value {
 }
 
 /// The `sharding_indexed` codec dict for inner chunk shape `inner` (RFC §16).
-fn sharding_codec(inner: &[usize], codec: &CodecProfile, typesize: usize) -> Value {
+pub(super) fn sharding_codec(inner: &[usize], codec: &CodecProfile, typesize: usize) -> Value {
     json!({
         "name": "sharding_indexed",
         "configuration": {
@@ -333,85 +358,9 @@ fn sharding_codec(inner: &[usize], codec: &CodecProfile, typesize: usize) -> Val
     })
 }
 
-/// Build the v3 array metadata dict (mirrors Julia `_array_meta_dict`).
-fn array_meta(
-    dims: &[String],
-    shape: &[usize],
-    schema: &OutputSchema,
-    codec: &CodecProfile,
-    attrs: &Map<String, Value>,
-) -> Result<Value> {
-    let inner: Vec<usize> = dims
-        .iter()
-        .map(|d| {
-            schema
-                .chunk_shape
-                .get(d)
-                .copied()
-                .ok_or_else(|| err(format!("dim '{d}' missing from chunk_shape")))
-        })
-        .collect::<Result<_>>()?;
-    let shard: Vec<usize> = dims
-        .iter()
-        .map(|d| {
-            schema
-                .shard_shape
-                .get(d)
-                .copied()
-                .ok_or_else(|| err(format!("dim '{d}' missing from shard_shape")))
-        })
-        .collect::<Result<_>>()?;
-    let mut a = attrs.clone();
-    a.insert("_ARRAY_DIMENSIONS".to_string(), json!(dims));
-    Ok(json!({
-        "zarr_format": 3,
-        "node_type": "array",
-        "shape": shape,
-        "data_type": "float64",
-        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": shard}},
-        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-        "fill_value": 0.0,
-        "codecs": [sharding_codec(&inner, codec, std::mem::size_of::<f64>())],
-        "attributes": Value::Object(a),
-        "dimension_names": dims,
-    }))
-}
-
-/// Create the array node (writing its `zarr.json`) and store its `data`.
-#[allow(clippy::too_many_arguments)]
-fn write_array<S>(
-    store: Arc<S>,
-    name: &str,
-    dims: &[String],
-    shape: &[usize],
-    schema: &OutputSchema,
-    codec: &CodecProfile,
-    attrs: &Map<String, Value>,
-    data: &[f64],
-) -> Result<()>
-where
-    S: zarrs::storage::ReadableWritableStorageTraits + 'static,
-{
-    let meta_json = array_meta(dims, shape, schema, codec, attrs)?;
-    let metadata: ArrayMetadata = serde_json::from_value(meta_json)
-        .map_err(|e| err(format!("array '{name}' metadata is not valid v3: {e}")))?;
-    let array = Array::new_with_metadata(store, &format!("/{name}"), metadata)
-        .map_err(|e| err(format!("build zarr array '{name}': {e}")))?;
-    array
-        .store_metadata()
-        .map_err(|e| err(format!("write metadata for '{name}': {e}")))?;
-    // subset_all is the whole array; where the shard grid divides the shape evenly
-    // this writes each shard exactly once (no read-modify-write).
-    let subset = array.subset_all();
-    array
-        .store_array_subset(&subset, data)
-        .map_err(|e| err(format!("write data for '{name}': {e}")))?;
-    Ok(())
-}
-
 /// Store a pretty-JSON document at store key `key` (e.g. `zarr.json`,
 /// `output_manifest.json`).
-fn set_json<S>(store: &S, key: &str, value: &Value) -> Result<()>
+pub(super) fn set_json<S>(store: &S, key: &str, value: &Value) -> Result<()>
 where
     S: zarrs::storage::WritableStorageTraits,
 {
@@ -424,124 +373,3 @@ where
         .map_err(|e| err(format!("write {key}: {e}")))
 }
 
-/// Write the output manifest (`earthsciio/output-manifest/v1`) mirroring the
-/// Julia `OutputManifest` fields, through the store as `output_manifest.json`.
-fn write_output_manifest<S>(
-    store: &S,
-    base_url: &str,
-    schema: &OutputSchema,
-    codec: &CodecProfile,
-) -> Result<()>
-where
-    S: zarrs::storage::WritableStorageTraits,
-{
-    let n_records = schema
-        .dims
-        .iter()
-        .find(|(d, _)| d == &schema.time_dim)
-        .map(|(_, l)| *l)
-        .unwrap_or(0);
-    let shard_time = schema
-        .shard_shape
-        .get(&schema.time_dim)
-        .copied()
-        .unwrap_or(n_records.max(1));
-
-    // The time coordinate values (if a coord for the time dim was supplied) give
-    // the per-shard t_start/t_end; otherwise fall back to record indices.
-    let time_vals: Option<&Vec<f64>> = schema
-        .coords
-        .iter()
-        .find(|c| c.name == schema.time_dim)
-        .map(|c| &c.values);
-
-    let mut time_shards = Vec::new();
-    if shard_time > 0 && n_records > 0 {
-        let mut index = 0usize;
-        let mut start = 0usize;
-        while start < n_records {
-            let end = (start + shard_time).min(n_records);
-            let n = end - start;
-            let t_start = time_vals.and_then(|v| v.get(start).copied()).unwrap_or(start as f64);
-            let t_end = time_vals
-                .and_then(|v| v.get(end - 1).copied())
-                .unwrap_or((end - 1) as f64);
-            time_shards.push(json!({
-                "index": index, "t_start": t_start, "t_end": t_end, "n": n,
-            }));
-            index += 1;
-            start = end;
-        }
-    }
-    let last_t: Value = if n_records == 0 {
-        Value::Null
-    } else {
-        time_vals
-            .and_then(|v| v.last().copied())
-            .map(|t| json!(t))
-            .unwrap_or_else(|| json!((n_records - 1) as f64))
-    };
-
-    let vars: Vec<Value> = schema
-        .vars
-        .iter()
-        .map(|v| {
-            let mut entry = json!({"name": v.name, "dims": v.dims, "dtype": "float64"});
-            // The array's own `attributes`, repeated here because for a HOSTED
-            // store this manifest is the only thing a reader gets. Every array's
-            // attributes are already written to its `zarr.json`, but reaching
-            // them costs one request per array against a URL a browser often
-            // cannot open at all (`s3://`) — so a CF `grid_mapping` written onto
-            // a coordinate array would be invisible to precisely the consumer
-            // that needs it to put the data on a map. The manifest is already
-            // the store's self-description; this makes it complete.
-            //
-            // Omitted when empty, so a store that states nothing serializes
-            // byte-for-byte what it did before this field existed. That is what
-            // keeps the `earthsciio/output-manifest/v1` label honest: readers
-            // pin that string exactly, and an OPTIONAL addition is compatible
-            // where a new version string would not be.
-            if !v.attrs.is_empty() {
-                entry["attrs"] = Value::Object(v.attrs.clone());
-            }
-            entry
-        })
-        .collect();
-    let dims: Vec<Value> = schema
-        .dims
-        .iter()
-        .map(|(k, v)| json!({"name": k, "length": v}))
-        .collect();
-
-    let codec_meta = match codec {
-        CodecProfile::Blosc(b) => json!({
-            "id": "blosc",
-            "cname": b.cname,
-            "clevel": b.clevel,
-            "shuffle": if b.shuffle { "shuffle" } else { "noshuffle" },
-        }),
-        CodecProfile::Zstd(z) => json!({
-            "id": "zstd",
-            "level": z.level,
-            "checksum": z.checksum,
-        }),
-    };
-    let manifest = json!({
-        "schema": "earthsciio/output-manifest/v1",
-        "base_url": base_url,
-        "format": "zarr",
-        "zarr_format": 3,
-        "profile": schema.profile,
-        "codec": codec_meta,
-        "time_dim": schema.time_dim,
-        "dims": dims,
-        "vars": vars,
-        "chunk_shape": schema.chunk_shape,
-        "shard_shape": schema.shard_shape,
-        "time_shards": time_shards,
-        "last_t": last_t,
-        "n_records": n_records,
-        "created_at": crate::clock::now_rfc3339(),
-    });
-    set_json(store, "output_manifest.json", &manifest)
-}

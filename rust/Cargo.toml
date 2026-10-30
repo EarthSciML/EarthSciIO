@@ -291,6 +291,11 @@ name = "conformance_write"
 path = "examples/conformance_write.rs"
 required-features = ["conformance"]
 
+[[example]]
+name = "conformance_write_v2"
+path = "examples/conformance_write_v2.rs"
+required-features = ["conformance"]
+
 [features]
 default = ["conformance"]
 

@@ -286,6 +286,7 @@ function _elt_type(m::ZArrayMeta)
     m.typechar == 'f' && m.itemsize == 8 && return Float64
     m.typechar in ('i', 'u') && m.itemsize == 4 && return Int32
     m.typechar in ('i', 'u') && m.itemsize == 8 && return Int64
+    m.typechar == 'u' && m.itemsize == 1 && return UInt8
     error("unsupported zarr dtype $(m.byteorder)$(m.typechar)$(m.itemsize)")
 end
 _out_type(m::ZArrayMeta) = _elt_type(m) <: AbstractFloat ? Float64 : _elt_type(m)
@@ -507,7 +508,8 @@ _v3_typecode(dt::AbstractString) =
     dt == "float64" ? ('f', 8) : dt == "float32" ? ('f', 4) :
     dt == "int32"   ? ('i', 4) : dt == "int64"   ? ('i', 8) :
     dt == "uint32"  ? ('u', 4) : dt == "uint64"  ? ('u', 8) :
-    error("unsupported zarr v3 data_type '$dt' (the Julia track supports f4/f8/i4/i8/u4/u8)")
+    dt == "uint8"   ? ('u', 1) :
+    error("unsupported zarr v3 data_type '$dt' (the Julia track supports f4/f8/i4/i8/u1/u4/u8)")
 
 function _parse_zarr_json(bytes)::ZV3Meta
     d = JSON.parse(String(bytes))

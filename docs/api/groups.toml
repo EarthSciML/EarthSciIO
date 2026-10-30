@@ -31,7 +31,17 @@ ops = ["native_field", "native_dataset", "csv_reader", "netcdf_reader", "geotiff
        "shapefile_reader", "parquet_reader", "zarr_reader"]
 
 [[group]]
+id = "writer"
+title = "Streaming writer"
+description = "Streaming a run's output into a sharded Zarr v3 store: region writes from many ranks without a gather, commit tokens delivered to one owner, indexed records, statics, blobs, read-back and resume."
+ops = ["stream_writer", "stream_schema", "indexed_time", "writer_role", "region", "commit_token",
+       "commit_receipt", "write_open", "write_resume", "write_record", "write_record_at",
+       "write_static", "write_blob", "write_flush", "write_commit", "write_invalidate",
+       "write_close", "read_output_manifest", "read_record", "read_static", "read_blob",
+       "schema_fingerprint"]
+
+[[group]]
 id = "errors"
 title = "Errors"
 description = "What fails and how: offline misses, integrity failures and the general error."
-ops = ["error", "cache_miss", "integrity_error"]
+ops = ["error", "cache_miss", "integrity_error", "region_not_shard_aligned", "commit_error"]

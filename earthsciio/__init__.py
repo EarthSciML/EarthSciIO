@@ -29,10 +29,12 @@ from .errors import (
     AuthError,
     BackendNotRegistered,
     CacheMiss,
+    CommitError,
     EarthSciIOError,
     FetchError,
     IntegrityError,
     OfflineError,
+    RegionNotShardAligned,
     TransportError,
     UnknownReaderOption,
     Unsupported,
@@ -116,6 +118,9 @@ __all__ = [
     "BackendNotRegistered",
     "Unsupported",
     "UnknownReaderOption",
+    # errors — the streaming writer (spec/writer.md)
+    "RegionNotShardAligned",
+    "CommitError",
     # errors — cache core
     "CacheMiss",
     "IntegrityError",

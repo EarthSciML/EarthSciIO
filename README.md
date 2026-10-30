@@ -22,7 +22,9 @@ per-language implementations:
   [offline-mode](spec/offline-mode.md) contract, the
   [conformance](spec/conformance.md) corpus format, and
   [epoch prefetch + named-dimension windows](spec/prefetch.md) (`sample_at`,
-  `select.dims`, `with_window`, `PrefetchGroup`). JSON Schemas in
+  `select.dims`, `with_window`, `PrefetchGroup`), and the
+  [streaming writer](spec/writer.md) contract (region writes without a gather,
+  commit tokens, indexed records, statics, blobs, resume). JSON Schemas in
   [`spec/schemas/`](spec/schemas).
 - **[`conformance/`](conformance/)** — offline golden fixtures + expected native
   arrays + a reference runner. `python3 conformance/verify.py` validates the
