@@ -18,9 +18,9 @@ import pytest
 
 pytest.importorskip("zarr")
 
-import zarr  # noqa: E402
+import zarr
 
-from earthsciio.backends.zarr_stream import (  # noqa: E402
+from earthsciio.backends.zarr_stream import (
     COMMIT_TOKEN_SCHEMA,
     OUTPUT_MANIFEST_V1,
     OUTPUT_MANIFEST_V2,
@@ -35,13 +35,19 @@ from earthsciio.backends.zarr_stream import (  # noqa: E402
     read_static,
     schema_fingerprint,
 )
-from earthsciio.errors import CommitError, EarthSciIOError, RegionNotShardAligned  # noqa: E402
+from earthsciio.errors import CommitError, EarthSciIOError, RegionNotShardAligned
 
 DT = 3600.0
 NLAT, NLON = 6, 5
 P = [3, 5, 11, 17, 23]
-SEEDS = {"temperature": 100, "pressure": 200, "global_mean": 300,
-         "dJ_dfield": 500, "dJ_dlon": 600, "step_count": 700}
+SEEDS = {
+    "temperature": 100,
+    "pressure": 200,
+    "global_mean": 300,
+    "dJ_dfield": 500,
+    "dJ_dlon": 600,
+    "step_count": 700,
+}
 
 
 def schema(*, time_mode="append", statics=(), vars_=None, profile="diagnostic"):
@@ -166,8 +172,10 @@ def test_region_tiling_equals_single_writer_bitwise(tmp_path):
     assert m["schema"] == OUTPUT_MANIFEST_V2
     assert m["commit_seq"] == 2
     assert m["records"]["committed"] == [[0, 5]]
-    assert m["writers"] == [{"id": i, "region": {d: list(rg) for d, rg in reg.items()}}
-                            for i, (_, _, reg) in enumerate(QUAD)]
+    assert m["writers"] == [
+        {"id": i, "region": {d: list(rg) for d, rg in reg.items()}}
+        for i, (_, _, reg) in enumerate(QUAD)
+    ]
 
     a = zarr.open_group(str(tmp_path / "single"), mode="r")
     b = zarr.open_group(base, mode="r")
@@ -178,8 +186,12 @@ def test_region_tiling_equals_single_writer_bitwise(tmp_path):
     got = read_all(base, sch)
     for nm, ov in sch.vars:
         sdims = [d for d in ov.dims if d != "time"]
-        want = np.stack([gen(SEEDS[nm], r, ov.dtype, [range(sch.dim_lengths[d]) for d in sdims])
-                         for r in range(5)])
+        want = np.stack(
+            [
+                gen(SEEDS[nm], r, ov.dtype, [range(sch.dim_lengths[d]) for d in sdims])
+                for r in range(5)
+            ]
+        )
         assert got[nm].tobytes() == want.tobytes()
 
 
@@ -222,8 +234,10 @@ def test_gap_and_overlap_are_commit_errors(tmp_path, r1, what):
     assert (tmp_path / "s" / "temperature" / "zarr.json").read_bytes() == zj
     got = read_all(base, sch)
     assert got["temperature"].shape == (1, NLAT, NLON)
-    assert got["temperature"][0].tobytes() == gen(100, 0, "float64",
-                                                  [range(NLAT), range(NLON)]).tobytes()
+    assert (
+        got["temperature"][0].tobytes()
+        == gen(100, 0, "float64", [range(NLAT), range(NLON)]).tobytes()
+    )
 
 
 def test_commit_checks_writers_fingerprint_and_records(tmp_path):
@@ -265,8 +279,9 @@ def test_contributor_supplying_replicated_var_errors(tmp_path):
         w.write_record(h1, 0.0, a)
     with pytest.raises(ValueError, match="region"):
         w.write_record(h1, 0.0, arrays(sch, 0, {"lat": (2, 6)}, True), region={"lat": (0, 2)})
-    assert w.write_record(h1, 0.0, arrays(sch, 0, {"lat": (2, 6)}, True),
-                          region={"lat": (2, 6)}) == 0
+    assert (
+        w.write_record(h1, 0.0, arrays(sch, 0, {"lat": (2, 6)}, True), region={"lat": (2, 6)}) == 0
+    )
 
 
 def test_join_requires_v2_manifest_and_matching_schema(tmp_path):
@@ -530,8 +545,12 @@ def test_partial_shard_resume_regions(tmp_path):
     got = read_all(base, sch)
     for nm, ov in sch.vars:
         sdims = [d for d in ov.dims if d != "time"]
-        want = np.stack([gen(SEEDS[nm], r, ov.dtype, [range(sch.dim_lengths[d]) for d in sdims])
-                         for r in range(5)])
+        want = np.stack(
+            [
+                gen(SEEDS[nm], r, ov.dtype, [range(sch.dim_lengths[d]) for d in sdims])
+                for r in range(5)
+            ]
+        )
         assert got[nm].tobytes() == want.tobytes(), nm
 
 
@@ -622,11 +641,17 @@ def test_statics_and_blobs(tmp_path):
     m = w.write_close(h0, [tok])
     assert m["commit_seq"] == 1
     assert [(s["name"], s["committed"], s["generation"]) for s in m["statics"]] == [
-        ("dJ_dfield", True, 1), ("dJ_dlon", True, 1), ("step_count", True, 1)]
+        ("dJ_dfield", True, 1),
+        ("dJ_dlon", True, 1),
+        ("step_count", True, 1),
+    ]
     for nm, ov in STATICS:
         want = gen(SEEDS[nm], 0, ov.dtype, [range(sch.dim_lengths[d]) for d in ov.dims])
         assert read_static(base, nm).tobytes() == want.tobytes()
-    assert read_static(base, "dJ_dfield", region={"lat": (4, 6)}).tobytes() == st(r1, "dJ_dfield").tobytes()
+    assert (
+        read_static(base, "dJ_dfield", region={"lat": (4, 6)}).tobytes()
+        == st(r1, "dJ_dfield").tobytes()
+    )
     assert read_blob(base, "static", 0, "rng") == b"\x00\x01\x02\x03"
     assert read_blob(base, "static", 1, "rng") == b"\xff\x10"
     assert read_blob(base, ("record", 1), 1, "ctrl.state") == b"\xde\xad\xbe\xef"
@@ -671,9 +696,23 @@ def test_v1_manifest_is_the_pre_contract_format(tmp_path):
     # legacy behaviour: a shard's worth of pending records commits
     assert read_output_manifest(str(base))["total_records"] == 2
     m = w.write_close(h)
-    assert set(m) == {"schema", "base_url", "format", "zarr_format", "profile", "codec",
-                      "time_dim", "dims", "vars", "chunk_shape", "shard_shape",
-                      "time_shards", "last_t", "total_records", "written_at"}
+    assert set(m) == {
+        "schema",
+        "base_url",
+        "format",
+        "zarr_format",
+        "profile",
+        "codec",
+        "time_dim",
+        "dims",
+        "vars",
+        "chunk_shape",
+        "shard_shape",
+        "time_shards",
+        "last_t",
+        "total_records",
+        "written_at",
+    }
     assert m["schema"] == OUTPUT_MANIFEST_V1
     assert m["dims"] == [["time", 0], ["lat", NLAT], ["lon", NLON]]
     assert m["time_shards"] == [
@@ -686,9 +725,13 @@ def test_v1_manifest_is_the_pre_contract_format(tmp_path):
 
 def test_v2_when_not_single_append_without_statics(tmp_path):
     w = ZarrWriter()
-    for i, kw in enumerate([dict(role="owner", n_writers=1),
-                            dict(sch=schema(statics=STATICS)),
-                            dict(sch=schema(time_mode=IndexedTime([0.0])))]):
+    for i, kw in enumerate(
+        [
+            dict(role="owner", n_writers=1),
+            dict(sch=schema(statics=STATICS)),
+            dict(sch=schema(time_mode=IndexedTime([0.0]))),
+        ]
+    ):
         sch = kw.pop("sch", schema())
         base = tmp_path / f"s{i}"
         w.write_open(str(base), sch, **kw)
@@ -699,19 +742,34 @@ def test_v2_when_not_single_append_without_statics(tmp_path):
 
 
 def test_commit_token_wire_form():
-    tok = CommitToken(writer=1, region={"lon": (4, 5), "lat": (2, 4)}, fingerprint="sha256:ab",
-                      records=[(0, 0.0), (1, 0.1 + 0.2)], statics=["dJ_du0"],
-                      blobs=[("record", 1, "rng"), ("static", None, "k")],
-                      objects=["temperature/c/0/1/0"])
+    tok = CommitToken(
+        writer=1,
+        region={"lon": (4, 5), "lat": (2, 4)},
+        fingerprint="sha256:ab",
+        records=[(0, 0.0), (1, 0.1 + 0.2)],
+        statics=["dJ_du0"],
+        blobs=[("record", 1, "rng"), ("static", None, "k")],
+        objects=["temperature/c/0/1/0"],
+    )
     d = json.loads(tok.to_json())
-    assert list(d) == ["schema", "writer", "region", "fingerprint", "records", "statics",
-                       "blobs", "objects"]
+    assert list(d) == [
+        "schema",
+        "writer",
+        "region",
+        "fingerprint",
+        "records",
+        "statics",
+        "blobs",
+        "objects",
+    ]
     assert d["schema"] == COMMIT_TOKEN_SCHEMA
     assert d["region"] == {"lat": [2, 4], "lon": [4, 5]}
     assert list(d["region"]) == ["lat", "lon"]
     assert d["records"] == [{"index": 0, "t": 0.0}, {"index": 1, "t": 0.30000000000000004}]
-    assert d["blobs"] == [{"scope": "record", "record": 1, "key": "rng"},
-                          {"scope": "static", "record": None, "key": "k"}]
+    assert d["blobs"] == [
+        {"scope": "record", "record": 1, "key": "rng"},
+        {"scope": "static", "record": None, "key": "k"},
+    ]
     back = CommitToken.from_json(tok.to_json())
     assert back.records[1][1] == 0.1 + 0.2
     assert back.to_json() == tok.to_json()
@@ -719,11 +777,13 @@ def test_commit_token_wire_form():
 
 def test_schema_fingerprint_canonical_json():
     sch = schema(statics=STATICS[:1])
-    F = ('{"chunk_shape":{"lat":1,"lon":2,"time":1},"dims":[["time",0],["lat",6],["lon",5]],'
-         '"profile":"diagnostic","shard_shape":{"lat":2,"lon":4,"time":2},'
-         '"statics":[["dJ_dfield",["lat","lon"],"float64"]],"time_dim":"time",'
-         '"time_mode":"append","vars":[["temperature",["time","lat","lon"],"float64"],'
-         '["pressure",["time","lat","lon"],"float32"],["global_mean",["time"],"float64"]]}')
+    F = (
+        '{"chunk_shape":{"lat":1,"lon":2,"time":1},"dims":[["time",0],["lat",6],["lon",5]],'
+        '"profile":"diagnostic","shard_shape":{"lat":2,"lon":4,"time":2},'
+        '"statics":[["dJ_dfield",["lat","lon"],"float64"]],"time_dim":"time",'
+        '"time_mode":"append","vars":[["temperature",["time","lat","lon"],"float64"],'
+        '["pressure",["time","lat","lon"],"float32"],["global_mean",["time"],"float64"]]}'
+    )
     assert schema_fingerprint(sch) == "sha256:" + hashlib.sha256(F.encode()).hexdigest()
     idx = schema(time_mode=IndexedTime([0.0, 1.0, 2.0]))
     assert schema_fingerprint(idx) != schema_fingerprint(schema())

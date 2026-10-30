@@ -31,17 +31,12 @@ this module only defines the seam and the spec-faithful interfaces they bind to.
 from __future__ import annotations
 
 import importlib.util
-
+from collections.abc import Iterable
 from typing import (
     Any,
     Callable,
-    Dict,
     Generic,
-    Iterable,
-    List,
-    Optional,
     Protocol,
-    Tuple,
     TypeVar,
     runtime_checkable,
 )
@@ -49,21 +44,21 @@ from typing import (
 from .errors import BackendNotRegistered
 
 __all__ = [
-    "Transport",
     "Reader",
-    "Store",
-    "RegistryEntry",
     "Registry",
-    "transport_registry",
+    "RegistryEntry",
+    "Store",
+    "Transport",
+    "all_registries",
+    "dim_length",
     "format_registry",
     "store_registry",
-    "all_registries",
     "supports_selection",
-    "dim_length",
+    "transport_registry",
 ]
 
 
-def dim_length(reader: Any, path: Any, dim: str) -> Optional[int]:
+def dim_length(reader: Any, path: Any, dim: str) -> int | None:
     """The length of dimension ``dim`` in the blob at ``path``, or ``None``.
 
     Read from the blob's METADATA — the header, never an array
@@ -119,7 +114,7 @@ class Transport(Protocol):
     Never constructed in offline mode (the transport is bypassed entirely).
     """
 
-    def schemes(self) -> List[str]:
+    def schemes(self) -> list[str]:
         """URL schemes this transport serves, e.g. ``["http", "https"]``."""
         ...
 
@@ -127,8 +122,8 @@ class Transport(Protocol):
         self,
         resolved_url: str,
         dest: Any,
-        conditional: Optional[Dict[str, Any]] = None,
-        auth: Optional[Any] = None,
+        conditional: dict[str, Any] | None = None,
+        auth: Any | None = None,
     ) -> Any:
         """Download ``resolved_url`` to the staging path ``dest``.
 
@@ -148,11 +143,11 @@ class Reader(Protocol):
     are ESS contract semantics — spec §2, Risk R3).
     """
 
-    def formats(self) -> List[str]:
+    def formats(self) -> list[str]:
         """Format names this reader handles, e.g. ``["netcdf"]``."""
         ...
 
-    def extensions(self) -> List[str]:
+    def extensions(self) -> list[str]:
         """Filename-extension sniff hints, e.g. ``["nc", "nc4"]``."""
         ...
 
@@ -163,9 +158,9 @@ class Reader(Protocol):
     def read_native(
         self,
         handle: Any,
-        variables: List[str],
-        select: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        variables: list[str],
+        select: Any | None = None,
+    ) -> dict[str, Any]:
         """Read ``variables`` (file_variable names) into native fields + coords."""
         ...
 
@@ -250,15 +245,15 @@ def _module_available(module: str) -> bool:
 class RegistryEntry(Generic[T]):
     """One registered backend: its name, factory, status, lookup keys, metadata."""
 
-    __slots__ = ("name", "factory", "status", "keys", "meta")
+    __slots__ = ("factory", "keys", "meta", "name", "status")
 
     def __init__(
         self,
         name: str,
         factory: Callable[..., T],
         status: str,
-        keys: Tuple[str, ...],
-        meta: Dict[str, Any],
+        keys: tuple[str, ...],
+        meta: dict[str, Any],
     ) -> None:
         self.name = name
         self.factory = factory
@@ -272,8 +267,7 @@ class RegistryEntry(Generic[T]):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return (
-            f"RegistryEntry(name={self.name!r}, status={self.status!r}, "
-            f"keys={list(self.keys)!r})"
+            f"RegistryEntry(name={self.name!r}, status={self.status!r}, keys={list(self.keys)!r})"
         )
 
 
@@ -294,8 +288,8 @@ class Registry(Generic[T]):
     def __init__(self, kind: str, keyed_by: str) -> None:
         self.kind = kind
         self.keyed_by = keyed_by
-        self._entries: Dict[str, RegistryEntry[T]] = {}
-        self._by_key: Dict[str, RegistryEntry[T]] = {}
+        self._entries: dict[str, RegistryEntry[T]] = {}
+        self._by_key: dict[str, RegistryEntry[T]] = {}
 
     # -- registration ------------------------------------------------------- #
 
@@ -304,7 +298,7 @@ class Registry(Generic[T]):
         name: str,
         factory: Callable[..., T],
         *,
-        keys: Optional[Iterable[str]] = None,
+        keys: Iterable[str] | None = None,
         status: str = "active",
         **meta: Any,
     ) -> RegistryEntry[T]:
@@ -327,10 +321,9 @@ class Registry(Generic[T]):
         """
         if status not in ("active", "stub"):
             raise ValueError(
-                f"{self.kind} registry: status must be 'active' or 'stub', "
-                f"got {status!r}"
+                f"{self.kind} registry: status must be 'active' or 'stub', got {status!r}"
             )
-        key_tuple: Tuple[str, ...] = tuple(keys) if keys is not None else (name,)
+        key_tuple: tuple[str, ...] = tuple(keys) if keys is not None else (name,)
 
         existing = self._entries.get(name)
         if existing is not None:
@@ -348,9 +341,7 @@ class Registry(Generic[T]):
                     f"backend {other.name!r}"
                 )
 
-        entry: RegistryEntry[T] = RegistryEntry(
-            name, factory, status, key_tuple, dict(meta)
-        )
+        entry: RegistryEntry[T] = RegistryEntry(name, factory, status, key_tuple, dict(meta))
         self._entries[name] = entry
         for k in key_tuple:
             self._by_key[k] = entry
@@ -378,9 +369,7 @@ class Registry(Generic[T]):
         try:
             return self._by_key[key]
         except KeyError:
-            raise BackendNotRegistered(
-                self.kind, self.keyed_by, key, self._by_key.keys()
-            ) from None
+            raise BackendNotRegistered(self.kind, self.keyed_by, key, self._by_key.keys()) from None
 
     def factory(self, key: str) -> Callable[..., T]:
         """The factory (class/callable) registered for ``key``."""
@@ -393,7 +382,7 @@ class Registry(Generic[T]):
     def is_stub(self, key: str) -> bool:
         return self.entry(key).status == "stub"
 
-    def missing_requirements(self, key: str) -> List[str]:
+    def missing_requirements(self, key: str) -> list[str]:
         """The unsatisfied ``requires`` groups for ``key``, as ``"a or b"`` strings.
 
         Empty when the backend can run here. See :meth:`register` for the shape
@@ -401,9 +390,7 @@ class Registry(Generic[T]):
         """
         groups = self.entry(key).meta.get("requires") or ()
         return [
-            " or ".join(group)
-            for group in groups
-            if not any(_module_available(m) for m in group)
+            " or ".join(group) for group in groups if not any(_module_available(m) for m in group)
         ]
 
     def available(self, key: str) -> bool:
@@ -427,15 +414,15 @@ class Registry(Generic[T]):
 
     # -- introspection ------------------------------------------------------ #
 
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         """Registered implementation names, sorted."""
         return sorted(self._entries)
 
-    def keys(self) -> List[str]:
+    def keys(self) -> list[str]:
         """All lookup keys (schemes/formats/store-names), sorted."""
         return sorted(self._by_key)
 
-    def describe(self) -> Dict[str, Dict[str, Any]]:
+    def describe(self) -> dict[str, dict[str, Any]]:
         """``{name: {status, keys, meta}}`` — a snapshot for tests/diagnostics."""
         return {
             name: {
@@ -449,8 +436,7 @@ class Registry(Generic[T]):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return (
-            f"Registry(kind={self.kind!r}, keyed_by={self.keyed_by!r}, "
-            f"backends={self.names()!r})"
+            f"Registry(kind={self.kind!r}, keyed_by={self.keyed_by!r}, backends={self.names()!r})"
         )
 
 
@@ -459,12 +445,12 @@ class Registry(Generic[T]):
 # Active backends register from the core track; stubs from earthsciio.backends.
 # --------------------------------------------------------------------------- #
 
-transport_registry: "Registry[Transport]" = Registry("transport", keyed_by="url_scheme")
-format_registry: "Registry[Reader]" = Registry("format", keyed_by="format_name")
-store_registry: "Registry[Store]" = Registry("store", keyed_by="store_name")
+transport_registry: Registry[Transport] = Registry("transport", keyed_by="url_scheme")
+format_registry: Registry[Reader] = Registry("format", keyed_by="format_name")
+store_registry: Registry[Store] = Registry("store", keyed_by="store_name")
 
 
-def all_registries() -> Dict[str, Registry]:
+def all_registries() -> dict[str, Registry]:
     """Map of registry kind → the registry singleton (for spec-parity checks)."""
     return {
         "transport": transport_registry,

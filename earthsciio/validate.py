@@ -47,7 +47,6 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union
 
 from .cachekey import sha256_file
 from .manifest import Manifest, parse_rfc3339
@@ -77,18 +76,18 @@ class Temporal:
     """
 
     kind: _Kind
-    ttl: Optional[_dt.timedelta] = None
+    ttl: _dt.timedelta | None = None
 
     @classmethod
-    def static(cls) -> "Temporal":
+    def static(cls) -> Temporal:
         return cls(_Kind.STATIC)
 
     @classmethod
-    def closed_period(cls) -> "Temporal":
+    def closed_period(cls) -> Temporal:
         return cls(_Kind.CLOSED)
 
     @classmethod
-    def incomplete(cls, ttl: Union[_dt.timedelta, float, int]) -> "Temporal":
+    def incomplete(cls, ttl: _dt.timedelta | float | int) -> Temporal:
         return cls(_Kind.INCOMPLETE, _as_timedelta(ttl))
 
     @property
@@ -97,7 +96,7 @@ class Temporal:
         return self.kind in (_Kind.STATIC, _Kind.CLOSED)
 
 
-def _as_timedelta(ttl: Union[_dt.timedelta, float, int]) -> _dt.timedelta:
+def _as_timedelta(ttl: _dt.timedelta | float | int) -> _dt.timedelta:
     if isinstance(ttl, _dt.timedelta):
         return ttl
     return _dt.timedelta(seconds=float(ttl))
@@ -105,8 +104,8 @@ def _as_timedelta(ttl: Union[_dt.timedelta, float, int]) -> _dt.timedelta:
 
 def is_fresh(
     fetched_at: str,
-    ttl: Union[_dt.timedelta, float, int],
-    now: Optional[_dt.datetime] = None,
+    ttl: _dt.timedelta | float | int,
+    now: _dt.datetime | None = None,
 ) -> bool:
     """Whether a blob fetched at ``fetched_at`` is still within ``ttl``.
 
@@ -128,10 +127,10 @@ def is_fresh(
 
 def decide(
     manifest: Manifest,
-    temporal: Optional[Temporal] = None,
-    expected_checksum: Optional[str] = None,
+    temporal: Temporal | None = None,
+    expected_checksum: str | None = None,
     *,
-    now: Optional[_dt.datetime] = None,
+    now: _dt.datetime | None = None,
 ) -> str:
     """Return :data:`HIT`, :data:`REVALIDATE`, or :data:`MISS` for ``manifest``.
 
@@ -282,11 +281,7 @@ class SourceRevalidator:
 
 
 def _verdict(digest: str, manifest: Manifest) -> str:
-    return (
-        CURRENT
-        if digest.lower() == (manifest.sha256_content or "").lower()
-        else REPLACED
-    )
+    return CURRENT if digest.lower() == (manifest.sha256_content or "").lower() else REPLACED
 
 
 def file_source_state(source: os.PathLike, manifest: Manifest) -> str:

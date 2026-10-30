@@ -556,10 +556,18 @@ fn an_owner_off_the_origin_writes_the_replicated_variables() {
         r0.clone(),
     )
     .unwrap();
-    let mut c = ZarrStreamWriter::join(store.clone(), "mem://off", Role::Contributor { id: 1 }, r1.clone()).unwrap();
+    let mut c = ZarrStreamWriter::join(
+        store.clone(),
+        "mem://off",
+        Role::Contributor { id: 1 },
+        r1.clone(),
+    )
+    .unwrap();
     for r in 0..3u64 {
         let (x0, x1) = (rec(r, &r0), rec(r, &r1));
-        owner.write_record(r as f64 + 1.0, &arrays(&x0, true)).unwrap();
+        owner
+            .write_record(r as f64 + 1.0, &arrays(&x0, true))
+            .unwrap();
         c.write_record(r as f64 + 1.0, &arrays(&x1, false)).unwrap();
     }
     let tok = c.flush().unwrap();
@@ -569,7 +577,10 @@ fn an_owner_off_the_origin_writes_the_replicated_variables() {
         assert_eq!(g, TypedVec::F32(vec![r as f32 + 0.25]), "global_mean[{r}]");
     }
     let tk = zarrs::storage::StoreKey::new("time/c/0").unwrap();
-    assert!(store.get(&tk).unwrap().is_some(), "the owner wrote the time coordinate");
+    assert!(
+        store.get(&tk).unwrap().is_some(),
+        "the owner wrote the time coordinate"
+    );
 }
 
 #[test]
@@ -612,7 +623,14 @@ fn a_python_v1_manifest_parses() {
         serde_json::to_vec(&m).unwrap().into(),
     )
     .unwrap();
-    let mut w = ZarrStreamWriter::resume(store.clone(), "mem://v1", Role::Single, Region::whole(), None).unwrap();
+    let mut w = ZarrStreamWriter::resume(
+        store.clone(),
+        "mem://v1",
+        Role::Single,
+        Region::whole(),
+        None,
+    )
+    .unwrap();
     let x = rec(3, &Region::whole());
     w.write_record(3.0, &arrays(&x, true)).unwrap();
     let m = w.close(&[]).unwrap().unwrap();
@@ -633,7 +651,10 @@ impl ReadableStorageTraits for FlakyStore {
     ) -> Result<zarrs::storage::MaybeBytesIterator<'a>, zarrs::storage::StorageError> {
         self.inner.get_partial_many(key, byte_ranges)
     }
-    fn size_key(&self, key: &zarrs::storage::StoreKey) -> Result<Option<u64>, zarrs::storage::StorageError> {
+    fn size_key(
+        &self,
+        key: &zarrs::storage::StoreKey,
+    ) -> Result<Option<u64>, zarrs::storage::StorageError> {
         self.inner.size_key(key)
     }
     fn supports_get_partial(&self) -> bool {
@@ -642,9 +663,17 @@ impl ReadableStorageTraits for FlakyStore {
 }
 
 impl zarrs::storage::WritableStorageTraits for FlakyStore {
-    fn set(&self, key: &zarrs::storage::StoreKey, value: zarrs::storage::Bytes) -> Result<(), zarrs::storage::StorageError> {
-        if key.as_str() == "output_manifest.json" && self.fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(zarrs::storage::StorageError::Unsupported("injected manifest failure".into()));
+    fn set(
+        &self,
+        key: &zarrs::storage::StoreKey,
+        value: zarrs::storage::Bytes,
+    ) -> Result<(), zarrs::storage::StorageError> {
+        if key.as_str() == "output_manifest.json"
+            && self.fail.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(zarrs::storage::StorageError::Unsupported(
+                "injected manifest failure".into(),
+            ));
         }
         self.inner.set(key, value)
     }
@@ -658,7 +687,10 @@ impl zarrs::storage::WritableStorageTraits for FlakyStore {
     fn erase(&self, key: &zarrs::storage::StoreKey) -> Result<(), zarrs::storage::StorageError> {
         self.inner.erase(key)
     }
-    fn erase_prefix(&self, prefix: &zarrs::storage::StorePrefix) -> Result<(), zarrs::storage::StorageError> {
+    fn erase_prefix(
+        &self,
+        prefix: &zarrs::storage::StorePrefix,
+    ) -> Result<(), zarrs::storage::StorageError> {
         self.inner.erase_prefix(prefix)
     }
     fn supports_set_partial(&self) -> bool {

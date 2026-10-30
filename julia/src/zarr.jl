@@ -37,7 +37,7 @@ struct ZArrayMeta
     byteorder::Char          # '<' little, '>' big, '|' n/a
     typechar::Char           # 'f' float, 'i'/'u' int
     itemsize::Int
-    compressor::Union{Nothing,Dict{String,Any}}
+    compressor::Union{Nothing, Dict{String, Any}}
     order::String            # "C" | "F"
     fill_value::Float64
     dim_sep::String          # "." | "/"
@@ -48,7 +48,8 @@ _ndim(m::ZArrayMeta) = length(m.shape)
 function _parse_zarray(bytes)::ZArrayMeta
     d = JSON.parse(String(bytes))
     Int(get(d, "zarr_format", 2)) == 2 || error(
-        "zarr reader supports zarr_format 2 only, got $(get(d,"zarr_format",nothing)) (v3 stores are read via zarr.json)")
+        "zarr reader supports zarr_format 2 only, got $(get(d, "zarr_format", nothing)) (v3 stores are read via zarr.json)"
+    )
     shape = Int[Int(s) for s in d["shape"]]
     chunks = Int[Int(c) for c in d["chunks"]]
     length(shape) == length(chunks) ||
@@ -60,9 +61,10 @@ function _parse_zarray(bytes)::ZArrayMeta
     isz = parse(Int, rest[2:end])
     filters = get(d, "filters", nothing)
     filters === nothing || error(
-        "zarr reader does not support a filter pipeline yet (filters=$filters)")
+        "zarr reader does not support a filter pipeline yet (filters=$filters)"
+    )
     comp = get(d, "compressor", nothing)
-    compressor = comp === nothing ? nothing : Dict{String,Any}(comp)
+    compressor = comp === nothing ? nothing : Dict{String, Any}(comp)
     order = String(get(d, "order", "C"))
     order in ("C", "F") || error("unknown zarr order '$order' (expected C or F)")
     fv = get(d, "fill_value", 0.0)
@@ -118,16 +120,22 @@ function _select_form(select)
     select === nothing && return nothing
     if select isa AbstractDict
         has_axes, has_dims = haskey(select, "axes"), haskey(select, "dims")
-        has_axes && has_dims && throw(ArgumentError(
-            "select carries both \"axes\" and \"dims\"; it takes exactly one — " *
-            "positional `axes` or named `dims` (spec/prefetch.md §2.1)"))
+        has_axes && has_dims && throw(
+            ArgumentError(
+                "select carries both \"axes\" and \"dims\"; it takes exactly one — " *
+                    "positional `axes` or named `dims` (spec/prefetch.md §2.1)"
+            )
+        )
         has_axes && return (:axes, collect(select["axes"]))
         if has_dims
             named = select["dims"]
-            named isa AbstractDict || throw(ArgumentError(
-                "select[\"dims\"] must map dimension names to selectors, got " *
-                "$(typeof(named))"))
-            return (:dims, Dict{String,Any}(String(d) => _parse_axis(ax) for (d, ax) in named))
+            named isa AbstractDict || throw(
+                ArgumentError(
+                    "select[\"dims\"] must map dimension names to selectors, got " *
+                        "$(typeof(named))"
+                )
+            )
+            return (:dims, Dict{String, Any}(String(d) => _parse_axis(ax) for (d, ax) in named))
         end
         return nothing
     elseif select isa AbstractVector
@@ -153,28 +161,39 @@ _is_time_dim_named(d::AbstractString, units) =
 #     variable whose string LENGTH `d` is, if any, so that case says what it is;
 #   * a selector other than `"all"` on a time dimension is refused, exactly as for
 #     `axes`: choosing records is the Provider's job, not the reader's.
-function _check_named_selection(named::AbstractDict{String,<:Any},
-                                present::AbstractSet{String}, is_time::Function;
-                                consumed::Function = _ -> nothing)
+function _check_named_selection(
+        named::AbstractDict{String, <:Any},
+        present::AbstractSet{String}, is_time::Function;
+        consumed::Function = _ -> nothing
+    )
     have = sort!(collect(present))
     for d in sort!(collect(keys(named)))
         d in present && continue
         owner = consumed(d)
-        owner === nothing || throw(ArgumentError(
-            "select names dimension '$d', which is the string LENGTH of the char " *
-            "variable '$owner' and not an axis of any decoded field (a window on it " *
-            "would truncate every string); the fields of this read carry $have"))
-        throw(ArgumentError(
-            "select names dimension '$d', which no field of this read carries; the " *
-            "decoded fields and coordinates carry $have (a named window must name " *
-            "a dimension the read has — it never silently means nothing)"))
+        owner === nothing || throw(
+            ArgumentError(
+                "select names dimension '$d', which is the string LENGTH of the char " *
+                    "variable '$owner' and not an axis of any decoded field (a window on it " *
+                    "would truncate every string); the fields of this read carry $have"
+            )
+        )
+        throw(
+            ArgumentError(
+                "select names dimension '$d', which no field of this read carries; the " *
+                    "decoded fields and coordinates carry $have (a named window must name " *
+                    "a dimension the read has — it never silently means nothing)"
+            )
+        )
     end
     for d in sort!(collect(keys(named)))
         named[d][1] === :all && continue
-        is_time(d) && throw(ArgumentError(
-            "select asks for a subset of the time dimension '$d'; record selection " *
-            "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
-            "reader's — a time dimension may only be \"all\""))
+        is_time(d) && throw(
+            ArgumentError(
+                "select asks for a subset of the time dimension '$d'; record selection " *
+                    "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
+                    "reader's — a time dimension may only be \"all\""
+            )
+        )
     end
     return nothing
 end
@@ -218,7 +237,8 @@ function _resolve_axis(ax, dim_len::Int)::Vector{Int}
         for g in out
             (0 <= g < dim_len) || error(
                 "slice [$start, $stop) by $step reaches index $g, out of range " *
-                "for dimension length $dim_len")
+                    "for dimension length $dim_len"
+            )
         end
         return out
     end
@@ -238,7 +258,7 @@ function _needed_chunks(sel_indices, chunks)
         cl = chunks[d]
         per_dim[d] = sort!(collect(Set(g ÷ cl for g in sel_indices[d])))
     end
-    out = Vector{NTuple{ndim,Int}}()
+    out = Vector{NTuple{ndim, Int}}()
     for combo in Iterators.product(per_dim...)
         push!(out, combo)
     end
@@ -252,8 +272,9 @@ end
 # TiffImages/GeoTIFF pattern in readers.jl).
 _blosc_decompress(raw) = error(
     "the zarr reader needs the Blosc backend for blosc-compressed chunks: add " *
-    "`using Blosc` so the EarthSciIOBloscExt extension supplies the decode (kept " *
-    "a weakdep to keep a base EarthSciIO install light, mirroring the TiffImages path).")
+        "`using Blosc` so the EarthSciIOBloscExt extension supplies the decode (kept " *
+        "a weakdep to keep a base EarthSciIO install light, mirroring the TiffImages path)."
+)
 
 # The plain (non-Blosc) `zstd` codec decode lives in the `CodecZstd` weakdep
 # extension (`using CodecZstd`), mirroring the Blosc weakdep above. It is what
@@ -261,9 +282,10 @@ _blosc_decompress(raw) = error(
 # wasm/browser reader can decode where Blosc cannot.
 _zstd_decompress(raw) = error(
     "the zarr reader needs the CodecZstd backend for plain zstd-compressed " *
-    "chunks (the `wasm` output profile): add `using CodecZstd` so the " *
-    "EarthSciIOZstdExt extension supplies the decode (kept a weakdep to keep a " *
-    "base EarthSciIO install light, mirroring the Blosc path).")
+        "chunks (the `wasm` output profile): add `using CodecZstd` so the " *
+        "EarthSciIOZstdExt extension supplies the decode (kept a weakdep to keep a " *
+        "base EarthSciIO install light, mirroring the Blosc path)."
+)
 
 _decompress(m::ZArrayMeta, raw) = _decompress(m.compressor, raw)
 _decompress(::Nothing, raw) = raw
@@ -333,11 +355,11 @@ end
 # derived from `g ÷ chunks[d]` over the same `sel_indices`).
 function _pos_map(sel_indices, chunks)
     ndim = length(chunks)
-    posmap = [Dict{Int,Vector{Tuple{Int,Int}}}() for _ in 1:ndim]
+    posmap = [Dict{Int, Vector{Tuple{Int, Int}}}() for _ in 1:ndim]
     for d in 1:ndim
         cl = chunks[d]
         for (i, g) in enumerate(sel_indices[d])
-            push!(get!(posmap[d], g ÷ cl, Tuple{Int,Int}[]), (i, g % cl + 1))
+            push!(get!(posmap[d], g ÷ cl, Tuple{Int, Int}[]), (i, g % cl + 1))
         end
     end
     return posmap
@@ -345,7 +367,7 @@ end
 
 # Write decoded chunk `carr` (chunk id `ck`) into its cells of `out`, converting
 # to `OT`. Touches only the cells this chunk owns; leaves the rest alone.
-function _scatter_chunk!(out, carr, posmap, ck::NTuple{N,Int}, ::Type{OT}) where {N,OT}
+function _scatter_chunk!(out, carr, posmap, ck::NTuple{N, Int}, ::Type{OT}) where {N, OT}
     for combo in Iterators.product(ntuple(d -> posmap[d][ck[d]], Val(N))...)
         out[CartesianIndex(ntuple(d -> combo[d][1], Val(N)))] =
             convert(OT, carr[CartesianIndex(ntuple(d -> combo[d][2], Val(N)))])
@@ -443,11 +465,14 @@ These two ARE the reader's decode options: it takes no others, and it names them
 explicitly (rather than slurping the rest) so a loader's unrecognised
 `reader_options` key is refused by [`Provider`] at construction instead of being
 silently ignored — spec/registries.md §2.1."""
-function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
-                    variables = nothing, select = nothing)
+function read_store(
+        ::ZarrReader, cache::Cache, base_url::AbstractString;
+        variables = nothing, select = nothing
+    )
     (variables === nothing || isempty(variables)) && error(
         "the zarr reader requires an explicit list of variables (arrays); the " *
-        "store cannot be enumerated without consolidated metadata")
+            "store cannot be enumerated without consolidated metadata"
+    )
     base = rstrip(String(base_url), '/')
     form = _select_form(select)
 
@@ -458,13 +483,13 @@ function read_store(::ZarrReader, cache::Cache, base_url::AbstractString;
     sels = _zarr_selections(form, arrays)
 
     # Pass 2 — the intersecting chunk objects, one array at a time.
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     for (a, sel_indices) in zip(arrays, sels)
         vars[a.name] = a.meta isa ZArrayMeta ?
             _read_v2_chunks(cache, base, a, sel_indices) :
             _read_v3_chunks(cache, base, a, sel_indices)
     end
-    return NativeDataset(vars, Dict{String,NativeField}())
+    return NativeDataset(vars, Dict{String, NativeField}())
 end
 
 # --- v3 array read (the sharding codec) -------------------------------------
@@ -500,23 +525,24 @@ end
 # (written for v2) decode v3 inner chunks unchanged.
 _inner_zarray(m::ZV3Meta) = ZArrayMeta(
     m.shape, m.inner, m.byteorder, m.typechar, m.itemsize,
-    m.blosc ? Dict{String,Any}("id" => "blosc") :
-    m.zstd  ? Dict{String,Any}("id" => "zstd")  : nothing,
-    "C", m.fill_value, "/")
+    m.blosc ? Dict{String, Any}("id" => "blosc") :
+        m.zstd ? Dict{String, Any}("id" => "zstd") : nothing,
+    "C", m.fill_value, "/"
+)
 
 _v3_typecode(dt::AbstractString) =
     dt == "float64" ? ('f', 8) : dt == "float32" ? ('f', 4) :
-    dt == "int32"   ? ('i', 4) : dt == "int64"   ? ('i', 8) :
-    dt == "uint32"  ? ('u', 4) : dt == "uint64"  ? ('u', 8) :
-    dt == "uint8"   ? ('u', 1) :
+    dt == "int32" ? ('i', 4) : dt == "int64" ? ('i', 8) :
+    dt == "uint32" ? ('u', 4) : dt == "uint64" ? ('u', 8) :
+    dt == "uint8" ? ('u', 1) :
     error("unsupported zarr v3 data_type '$dt' (the Julia track supports f4/f8/i4/i8/u1/u4/u8)")
 
 function _parse_zarr_json(bytes)::ZV3Meta
     d = JSON.parse(String(bytes))
     Int(get(d, "zarr_format", 3)) == 3 ||
-        error("v3 parser got zarr_format $(get(d,"zarr_format",nothing))")
+        error("v3 parser got zarr_format $(get(d, "zarr_format", nothing))")
     get(d, "node_type", "array") == "array" ||
-        error("zarr.json is a $(get(d,"node_type",nothing)) node, not an array")
+        error("zarr.json is a $(get(d, "node_type", nothing)) node, not an array")
     shape = Int[Int(s) for s in d["shape"]]
     tc, isz = _v3_typecode(String(d["data_type"]))
 
@@ -552,8 +578,10 @@ function _parse_zarr_json(bytes)::ZV3Meta
         end
     end
 
-    has_crc = any(String(get(c, "name", "")) == "crc32c"
-                  for c in get(scfg, "index_codecs", Any[]))
+    has_crc = any(
+        String(get(c, "name", "")) == "crc32c"
+            for c in get(scfg, "index_codecs", Any[])
+    )
     index_end = String(get(scfg, "index_location", "end")) == "end"
 
     fv = get(d, "fill_value", 0.0)
@@ -579,8 +607,10 @@ function _parse_zarr_json(bytes)::ZV3Meta
     end
     length(dims) == ndim || (dims = String["dim_$(i)" for i in 0:(ndim - 1)])
 
-    return ZV3Meta(shape, shard, inner, ips, byteorder, tc, isz, blosc, zstd,
-                   fill_value, sep, has_crc, index_end, dims)
+    return ZV3Meta(
+        shape, shard, inner, ips, byteorder, tc, isz, blosc, zstd,
+        fill_value, sep, has_crc, index_end, dims
+    )
 end
 
 # Parse a shard's index into (offsets, nbytes) vectors (C-order over `ips`).
@@ -597,7 +627,7 @@ function _shard_index(m::ZV3Meta, shardbytes::Vector{UInt8})
     nbytes = Vector{UInt64}(undef, n_inner)
     for i in 1:n_inner
         offsets[i] = ltoh(words[2i - 1])
-        nbytes[i]  = ltoh(words[2i])
+        nbytes[i] = ltoh(words[2i])
     end
     return offsets, nbytes
 end
@@ -618,7 +648,7 @@ end
 # and its full shape.
 struct _ZarrArray
     name::String
-    meta::Union{ZArrayMeta,ZV3Meta}
+    meta::Union{ZArrayMeta, ZV3Meta}
     dims::Vector{String}
     shape::Vector{Int}
 end
@@ -645,17 +675,23 @@ function _zarr_selections(form, arrays::Vector{_ZarrArray})
     form === nothing && return [whole(a) for a in arrays]
     if form[1] === :axes
         spec = form[2]
-        return [length(spec) == length(a.shape) ?
+        return [
+            length(spec) == length(a.shape) ?
                 [_resolve_axis(_parse_axis(spec[d]), a.shape[d]) for d in eachindex(a.shape)] :
-                whole(a) for a in arrays]
+                whole(a) for a in arrays
+        ]
     end
     named = form[2]
     present = Set{String}(d for a in arrays for d in a.dims)
     # A Zarr store returns no coordinates, so a time dimension is known by its
     # name alone (`_is_time_dim_named` with no units).
     _check_named_selection(named, present, d -> _is_time_dim_named(d, nothing))
-    return [[haskey(named, d) ? _resolve_axis(named[d], a.shape[k]) : collect(0:(a.shape[k] - 1))
-             for (k, d) in enumerate(a.dims)] for a in arrays]
+    return [
+        [
+            haskey(named, d) ? _resolve_axis(named[d], a.shape[k]) : collect(0:(a.shape[k] - 1))
+                for (k, d) in enumerate(a.dims)
+        ] for a in arrays
+    ]
 end
 
 # --- v2 array read (the original path; metadata already fetched in pass 1) ----
@@ -679,7 +715,7 @@ function _read_v2_chunks(cache::Cache, base::AbstractString, a::_ZarrArray, sel_
         _scatter_chunk!(data, carr, posmap, ck, OT)
         # `raw`/`carr` are dead here: this chunk is reclaimable before the next fetch.
     end
-    return NativeField(data, dims, Dict{String,Any}())
+    return NativeField(data, dims, Dict{String, Any}())
 end
 
 # --- v3 array read (pass 2; the shard layout is described above) ------------
@@ -692,10 +728,10 @@ function _read_v3_chunks(cache::Cache, base::AbstractString, a::_ZarrArray, sel_
 
     # needed INNER chunks, grouped by the shard that contains them
     needed = _needed_chunks(sel_indices, m.inner)          # inner-chunk id tuples
-    by_shard = Dict{NTuple{ndim,Int},Vector{NTuple{ndim,Int}}}()
+    by_shard = Dict{NTuple{ndim, Int}, Vector{NTuple{ndim, Int}}}()
     for ic in needed
         sc = ntuple(d -> ic[d] ÷ m.ips[d], ndim)
-        push!(get!(by_shard, sc, NTuple{ndim,Int}[]), ic)
+        push!(get!(by_shard, sc, NTuple{ndim, Int}[]), ic)
     end
 
     # Same chunk-driven scatter as the v2 path, with the INNER chunk as the unit:
@@ -723,7 +759,7 @@ function _read_v3_chunks(cache::Cache, base::AbstractString, a::_ZarrArray, sel_
         shardbytes = UInt8[]   # drop this shard before fetching the next one
     end
 
-    return NativeField(data, m.dims, Dict{String,Any}())
+    return NativeField(data, m.dims, Dict{String, Any}())
 end
 
 """
@@ -733,8 +769,10 @@ The full (dims-order) shape of array `var` in the Zarr store at `base_url`,
 learned by fetching ONLY that array's metadata object (v3 `zarr.json` or v2
 `.zarray`) — NEVER a chunk/shard. A lightweight honour/refuse probe for
 projection-pushdown decisions."""
-function array_shape(::ZarrReader, cache::Cache, base_url::AbstractString,
-                     var::AbstractString)
+function array_shape(
+        ::ZarrReader, cache::Cache, base_url::AbstractString,
+        var::AbstractString
+    )
     base = rstrip(String(base_url), '/')
     arr = String(var)
     # v2 `.zarray` first (see `read_store`): an all-v2 store keeps the single-fetch

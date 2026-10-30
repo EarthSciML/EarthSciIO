@@ -34,9 +34,7 @@ def test_explicit_arg_overrides_env(monkeypatch):
 def test_empty_env_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("EARTHSCIDATADIR", "")
     monkeypatch.setenv("USER", "bob")
-    assert config.resolve_cache_root() == pathlib.Path(
-        "/scratch.local/bob/earthsci-cache"
-    )
+    assert config.resolve_cache_root() == pathlib.Path("/scratch.local/bob/earthsci-cache")
 
 
 def test_env_offline_truthy_and_falsy(monkeypatch):

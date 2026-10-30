@@ -15,7 +15,6 @@ from __future__ import annotations
 import datetime as _dt
 import json
 from dataclasses import dataclass
-from typing import Optional
 
 MANIFEST_SCHEMA_TAG = "earthsciio/manifest/v1"
 
@@ -28,10 +27,10 @@ class Manifest:
     sha256_content: str
     bytes: int
     fetched_at: str
-    etag: Optional[str] = None
-    last_modified: Optional[str] = None
-    source_loader: Optional[str] = None
-    auth_realm: Optional[str] = None
+    etag: str | None = None
+    last_modified: str | None = None
+    source_loader: str | None = None
+    auth_realm: str | None = None
     schema: str = MANIFEST_SCHEMA_TAG
 
     def to_dict(self) -> dict:
@@ -53,7 +52,7 @@ class Manifest:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, obj: dict) -> "Manifest":
+    def from_dict(cls, obj: dict) -> Manifest:
         return cls(
             url=obj["url"],
             sha256_content=obj["sha256_content"],
@@ -67,7 +66,7 @@ class Manifest:
         )
 
     @classmethod
-    def from_json(cls, text: str) -> "Manifest":
+    def from_json(cls, text: str) -> Manifest:
         return cls.from_dict(json.loads(text))
 
 

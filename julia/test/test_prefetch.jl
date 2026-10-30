@@ -26,14 +26,18 @@ _slot_done(g, k) = lock(g.lock) do
 end
 
 _epochs(order, n) = order === :forward ? collect(1:n) :
-                    order === :reverse ? collect(n:-1:1) : order
+    order === :reverse ? collect(n:-1:1) : order
 
 @testset "PrefetchGroup — the `prefetch-equivalence` scenario (§3.5)" begin
     sc = _scenario("prefetch-equivalence")
     cache = Cache(LocalStore(joinpath(CORPUS, "cache")); offline = true, verify = true)
-    members() = Dict(String(m["key"]) => _scenario_provider(cache, sc["sources"][m["source"]],
-                                                            m["records_per_sample"])
-                     for m in sc["members"])
+    members() = Dict(
+        String(m["key"]) => _scenario_provider(
+            cache, sc["sources"][m["source"]],
+            m["records_per_sample"]
+        )
+            for m in sc["members"]
+    )
     B = Float64.(sc["expect"]["boundaries_s"])
     n = length(B)
     anchors = Dict(k => Float64.(v) for (k, v) in sc["expect"]["anchors_s"])
@@ -47,13 +51,15 @@ _epochs(order, n) = order === :forward ? collect(1:n) :
     for order in orders, depth in sc["depth"], workers in sc["workers"], mb in sc["max_bytes"]
         label = "order=$(order isa Symbol ? order : "explicit") depth=$depth workers=$workers max_bytes=$mb"
         @testset "$label" begin
-            g = PrefetchGroup(members(); depth = depth, workers = workers, max_bytes = mb,
-                              _decode_hook = _JITTER)
+            g = PrefetchGroup(
+                members(); depth = depth, workers = workers, max_bytes = mb,
+                _decode_hook = _JITTER
+            )
             failures = String[]
             try
                 @test boundaries(g) == B
                 start!(g, order)
-                prev = Dict{String,Float64}()
+                prev = Dict{String, Float64}()
                 seq = _epochs(order, n)
                 for k in seq
                     ep = take!(g, k)
@@ -196,7 +202,7 @@ end
     mixed = _corpus_case("named-window-mixed-rank")["resolved_url"]
 
     # Construction errors.
-    @test_throws ArgumentError PrefetchGroup(Dict{String,Provider}())
+    @test_throws ArgumentError PrefetchGroup(Dict{String, Provider}())
     @test_throws ArgumentError PrefetchGroup(Dict("C" => const_provider(cache, mixed; format = "netcdf")))
     @test_throws ArgumentError PrefetchGroup(Dict("x" => 1))
     @test_throws ArgumentError PrefetchGroup(Dict(:Q => q(), "Q" => q()))
@@ -206,8 +212,10 @@ end
     @test_throws ArgumentError PrefetchGroup(Dict("Q" => q()); fetch_ahead = -1)
     # every window must pass with_window's preconditions for every member
     @test_throws ArgumentError PrefetchGroup(Dict("Q" => q()); windows = [DimWindow("time" => "all")])
-    @test_throws ArgumentError PrefetchGroup(Dict("Q" => with_window(q(), DimWindow()));
-                                             windows = [DimWindow("lat" => (0, 1))])
+    @test_throws ArgumentError PrefetchGroup(
+        Dict("Q" => with_window(q(), DimWindow()));
+        windows = [DimWindow("lat" => (0, 1))]
+    )
 
     g = PrefetchGroup(Dict(:Q => q()); depth = 2, workers = 2)    # keys taken as strings
     try
@@ -309,8 +317,10 @@ end
     decode = 0.02
     hook = (key, t) -> Libc.systemsleep(decode)
     drive(compute) = begin
-        g = PrefetchGroup(Dict("Q" => _scenario_provider(cache, src, 1)); depth = 2,
-                          workers = 1, _decode_hook = hook)
+        g = PrefetchGroup(
+            Dict("Q" => _scenario_provider(cache, src, 1)); depth = 2,
+            workers = 1, _decode_hook = hook
+        )
         try
             start!(g, :forward)
             for k in eachindex(boundaries(g))

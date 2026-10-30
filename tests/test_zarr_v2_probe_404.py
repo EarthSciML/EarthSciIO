@@ -28,8 +28,8 @@ import pytest
 numcodecs = pytest.importorskip("numcodecs")
 pytest.importorskip("zarr")
 
-from earthsciio import Cache, DataSource, Provider
-from earthsciio.errors import FetchError, TransportError
+from earthsciio import Cache, DataSource, Provider  # noqa: E402
+from earthsciio.errors import FetchError, TransportError  # noqa: E402
 
 
 def _blosc():
@@ -75,12 +75,27 @@ def _write_v2_store(root) -> str:
     arr_dir = root / "mini.zarr" / "field"
     arr_dir.mkdir(parents=True)
     shape, chunks = (6,), (3,)
-    (arr_dir / ".zarray").write_text(json.dumps({
-        "zarr_format": 2, "shape": list(shape), "chunks": list(chunks), "dtype": "<f8",
-        "compressor": {"id": "blosc", "cname": "lz4", "clevel": 5, "shuffle": 1,
-                       "blocksize": 0},
-        "fill_value": 0.0, "order": "C", "filters": None, "dimension_separator": None,
-    }))
+    (arr_dir / ".zarray").write_text(
+        json.dumps(
+            {
+                "zarr_format": 2,
+                "shape": list(shape),
+                "chunks": list(chunks),
+                "dtype": "<f8",
+                "compressor": {
+                    "id": "blosc",
+                    "cname": "lz4",
+                    "clevel": 5,
+                    "shuffle": 1,
+                    "blocksize": 0,
+                },
+                "fill_value": 0.0,
+                "order": "C",
+                "filters": None,
+                "dimension_separator": None,
+            }
+        )
+    )
     (arr_dir / ".zattrs").write_text(json.dumps({"_ARRAY_DIMENSIONS": ["i"]}))
     data = np.arange(6, dtype="<f8")
     for c in range(2):
@@ -131,9 +146,9 @@ def test_a_transient_failure_is_not_reported_as_absence(tmp_path, monkeypatch):
         return real_fetch(self, url, *a, **kw)
 
     monkeypatch.setattr(Cache, "fetch", flaky)
-    store = zarr_backend._cache_store(cache, base) if hasattr(
-        zarr_backend, "_cache_store"
-    ) else None
+    store = (
+        zarr_backend._cache_store(cache, base) if hasattr(zarr_backend, "_cache_store") else None
+    )
     if store is None:
         loader = DataSource(name="mini", format="zarr", url=base, variables=["field"])
         with pytest.raises(FetchError):

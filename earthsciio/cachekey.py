@@ -16,10 +16,9 @@ Rules (normative, do not "improve"):
 from __future__ import annotations
 
 import hashlib
-from typing import Optional, Tuple
 
 
-def cache_key(resolved_url: str, byte_range: Optional[Tuple[int, int]] = None) -> str:
+def cache_key(resolved_url: str, byte_range: tuple[int, int] | None = None) -> str:
     """Return the lowercase-hex sha256 of the resolved URL.
 
     ``byte_range=(a, b)`` appends ``#bytes=a-b`` before hashing so a byte-slice
@@ -32,7 +31,7 @@ def cache_key(resolved_url: str, byte_range: Optional[Tuple[int, int]] = None) -
     return hashlib.sha256(keyed.encode("utf-8")).hexdigest()
 
 
-def range_keyed_url(resolved_url: str, byte_range: Optional[Tuple[int, int]] = None) -> str:
+def range_keyed_url(resolved_url: str, byte_range: tuple[int, int] | None = None) -> str:
     """The exact string that gets hashed (URL plus any ``#bytes=`` fragment)."""
     if byte_range is None:
         return resolved_url

@@ -18,7 +18,11 @@ use time::Duration;
 
 fn hourly() -> Arc<Provider> {
     let sc = read_json("scenarios/prefetch-equivalence.json");
-    Arc::new(scenario_provider(&sc["sources"]["hourly"], 1, corpus_cache()))
+    Arc::new(scenario_provider(
+        &sc["sources"]["hourly"],
+        1,
+        corpus_cache(),
+    ))
 }
 
 fn detail(r: earthsciio::Result<impl std::fmt::Debug>) -> String {
@@ -29,36 +33,74 @@ fn detail(r: earthsciio::Result<impl std::fmt::Debug>) -> String {
 }
 
 fn group() -> PrefetchGroup {
-    PrefetchGroup::builder().member("Q", hourly()).build().unwrap()
+    PrefetchGroup::builder()
+        .member("Q", hourly())
+        .build()
+        .unwrap()
 }
 
 #[test]
 fn construction_refuses_what_it_cannot_schedule() {
     assert!(detail(PrefetchGroup::builder().build()).contains("at least one member"));
-    assert!(detail(PrefetchGroup::builder().member("Q", hourly()).depth(0).build()).contains("depth"));
-    assert!(detail(PrefetchGroup::builder().member("Q", hourly()).workers(0).build()).contains("workers"));
-    let twice = PrefetchGroup::builder().member("Q", hourly()).member("Q", hourly()).build();
+    assert!(detail(
+        PrefetchGroup::builder()
+            .member("Q", hourly())
+            .depth(0)
+            .build()
+    )
+    .contains("depth"));
+    assert!(detail(
+        PrefetchGroup::builder()
+            .member("Q", hourly())
+            .workers(0)
+            .build()
+    )
+    .contains("workers"));
+    let twice = PrefetchGroup::builder()
+        .member("Q", hourly())
+        .member("Q", hourly())
+        .build();
     assert!(detail(twice).contains("twice"));
 
     let url = "https://data.earthsci.dev/geosfp/mini/GEOSFP.20240101.A3mixed.nc";
-    let constant = Provider::new(DataSource::new("geosfp", "netcdf", url), corpus_cache(), None).unwrap();
-    let msg = detail(PrefetchGroup::builder().member("C", Arc::new(constant)).build());
+    let constant = Provider::new(
+        DataSource::new("geosfp", "netcdf", url),
+        corpus_cache(),
+        None,
+    )
+    .unwrap();
+    let msg = detail(
+        PrefetchGroup::builder()
+            .member("C", Arc::new(constant))
+            .build(),
+    );
     assert!(msg.contains("CONST"), "{msg}");
 
     let open_ended = SourceTemporal::new(ts(1_704_067_200), Duration::hours(1), Duration::hours(4));
     let loader = DataSource::new("h", "netcdf", "https://x/[year].nc").temporal(open_ended);
     let unbounded = Provider::new(loader, corpus_cache(), None).unwrap();
-    let msg = detail(PrefetchGroup::builder().member("U", Arc::new(unbounded)).build());
+    let msg = detail(
+        PrefetchGroup::builder()
+            .member("U", Arc::new(unbounded))
+            .build(),
+    );
     assert!(msg.contains("schedule"), "{msg}");
 
     // A window a member cannot take is refused at construction, with
     // with_window's own error.
-    let windowed = Arc::new(hourly().with_window(DimWindow::new().range("lat", 0, 1)).unwrap());
+    let windowed = Arc::new(
+        hourly()
+            .with_window(DimWindow::new().range("lat", 0, 1))
+            .unwrap(),
+    );
     let r = PrefetchGroup::builder()
         .member("W", windowed)
         .windows([DimWindow::new().range("lon", 0, 1)])
         .build();
-    assert!(matches!(r, Err(Error::Format { .. })), "a baked select does not compose");
+    assert!(
+        matches!(r, Err(Error::Format { .. })),
+        "a baked select does not compose"
+    );
 }
 
 #[test]
@@ -70,9 +112,16 @@ fn take_refuses_every_epoch_but_the_next_and_consumes_nothing() {
 
     g.start(Order::Forward, None).unwrap();
     let msg = detail(g.take(3));
-    assert!(msg.contains("next epoch in the current order is 0"), "{msg}");
+    assert!(
+        msg.contains("next epoch in the current order is 0"),
+        "{msg}"
+    );
     assert!(!g.ready(3), "ready reports only the next entry");
-    assert_eq!(g.take(0).unwrap().epoch(), 0, "the refused take consumed nothing");
+    assert_eq!(
+        g.take(0).unwrap().epoch(),
+        0,
+        "the refused take consumed nothing"
+    );
     for k in 1..n {
         g.take(k).unwrap();
     }
@@ -88,7 +137,10 @@ fn take_refuses_every_epoch_but_the_next_and_consumes_nothing() {
     let first = g.take(4).unwrap();
     let again = g.take(4).unwrap();
     assert!(first.get("Q").unwrap().changed && !again.get("Q").unwrap().changed);
-    assert!(Arc::ptr_eq(&first.get("Q").unwrap().data, &again.get("Q").unwrap().data), "one sample, shared");
+    assert!(
+        Arc::ptr_eq(&first.get("Q").unwrap().data, &again.get("Q").unwrap().data),
+        "one sample, shared"
+    );
     assert_eq!(g.take(2).unwrap().epoch(), 2);
 }
 
@@ -105,7 +157,8 @@ fn start_validates_before_dropping_the_running_order() {
     assert_eq!(g.take(1).unwrap().epoch(), 1);
 
     // `from` trims to the first entry equal to it.
-    g.start(Order::Explicit(vec![3, 1, 4, 1, 5]), Some(1)).unwrap();
+    g.start(Order::Explicit(vec![3, 1, 4, 1, 5]), Some(1))
+        .unwrap();
     for k in [1, 4, 1, 5] {
         assert_eq!(g.take(k).unwrap().epoch(), k);
     }
@@ -137,7 +190,10 @@ fn a_transform_runs_on_the_worker_and_its_panic_is_raised_at_take() {
         .unwrap();
     g.start(Order::Forward, None).unwrap();
     let msg = detail(g.take(0));
-    assert!(msg.contains("panicked") && msg.contains("transform refused"), "{msg}");
+    assert!(
+        msg.contains("panicked") && msg.contains("transform refused"),
+        "{msg}"
+    );
     assert!(detail(g.take(1)).contains("start again"));
 }
 
@@ -186,7 +242,10 @@ fn waited_s_falls_to_about_zero_when_compute_exceeds_decode() {
     };
     let busy = run(StdDuration::ZERO);
     let overlapped = run(StdDuration::from_millis(90));
-    assert!(busy.waited_s > 0.12, "back-to-back takes wait on every decode: {busy:?}");
+    assert!(
+        busy.waited_s > 0.12,
+        "back-to-back takes wait on every decode: {busy:?}"
+    );
     assert!(
         overlapped.waited_s < 0.06,
         "only the first epoch should be waited for: {overlapped:?}"

@@ -222,7 +222,9 @@ pub fn write_all_to_store<S>(store: Arc<S>, base_url: &str, schema: &OutputSchem
 where
     S: zarrs::storage::ReadableWritableStorageTraits + 'static,
 {
-    use super::zarr_stream::{Region, Role, StreamDType, StreamSchema, StreamVar, TimeMode, ZarrStreamWriter};
+    use super::zarr_stream::{
+        Region, Role, StreamDType, StreamSchema, StreamVar, TimeMode, ZarrStreamWriter,
+    };
 
     let _ = profile(&schema.profile)?;
     let dim_len: BTreeMap<&str, usize> =
@@ -233,19 +235,25 @@ where
     // carries no data, so this check stays here).
     let mut layouts = Vec::with_capacity(schema.vars.len());
     for v in &schema.vars {
-        let ti = v.dims.iter().position(|d| d == &schema.time_dim).ok_or_else(|| {
-            err(format!("streaming var '{}' must include the time dim '{}'", v.name, schema.time_dim))
-        })?;
-        let shape: Vec<usize> = v
+        let ti = v
             .dims
             .iter()
-            .map(|d| {
-                dim_len
-                    .get(d.as_str())
-                    .copied()
-                    .ok_or_else(|| err(format!("var '{}' dim '{d}' not in schema dims", v.name)))
-            })
-            .collect::<Result<_>>()?;
+            .position(|d| d == &schema.time_dim)
+            .ok_or_else(|| {
+                err(format!(
+                    "streaming var '{}' must include the time dim '{}'",
+                    v.name, schema.time_dim
+                ))
+            })?;
+        let shape: Vec<usize> =
+            v.dims
+                .iter()
+                .map(|d| {
+                    dim_len.get(d.as_str()).copied().ok_or_else(|| {
+                        err(format!("var '{}' dim '{d}' not in schema dims", v.name))
+                    })
+                })
+                .collect::<Result<_>>()?;
         let expect: usize = shape.iter().product();
         if v.data.len() != expect {
             return Err(err(format!(
@@ -297,9 +305,13 @@ where
             )));
         }
         if let Some(t) = tv.iter().find(|t| t.is_nan()) {
-            return Err(err(format!("time coordinate '{}' holds {t}", schema.time_dim)));
+            return Err(err(format!(
+                "time coordinate '{}' holds {t}",
+                schema.time_dim
+            )));
         }
-        if let Some(i) = (1..tv.len()).find(|&i| !(tv[i] > tv[i - 1])) {
+        // NaN was rejected above, so `<=` is the exact negation of `>` here.
+        if let Some(i) = (1..tv.len()).find(|&i| tv[i] <= tv[i - 1]) {
             return Err(err(format!(
                 "time coordinate '{}' must be strictly increasing: value {i} = {} is not after value {} = {}",
                 schema.time_dim,
@@ -391,12 +403,11 @@ pub(super) fn set_json<S>(store: &S, key: &str, value: &Value) -> Result<()>
 where
     S: zarrs::storage::WritableStorageTraits,
 {
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|e| err(format!("serialize {key}: {e}")))?;
+    let bytes =
+        serde_json::to_vec_pretty(value).map_err(|e| err(format!("serialize {key}: {e}")))?;
     let store_key = zarrs::storage::StoreKey::new(key)
         .map_err(|e| err(format!("invalid store key '{key}': {e}")))?;
     store
         .set(&store_key, zarrs::storage::Bytes::from(bytes))
         .map_err(|e| err(format!("write {key}: {e}")))
 }
-

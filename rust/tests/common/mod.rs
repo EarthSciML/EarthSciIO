@@ -76,7 +76,11 @@ pub fn scenario_provider(src: &Value, rps: u32, cache: Arc<Cache>) -> Provider {
         .iter()
         .map(|v| v.as_f64().unwrap())
         .collect();
-    assert_eq!(p.refresh_times(), want, "refresh_times_s of the scenario source");
+    assert_eq!(
+        p.refresh_times(),
+        want,
+        "refresh_times_s of the scenario source"
+    );
     p
 }
 
@@ -138,7 +142,11 @@ pub fn assert_ds_bitwise(ctx: &str, got: &NativeDataset, want: &NativeDataset) {
         k.sort();
         k
     };
-    assert_eq!(keys(&got.variables), keys(&want.variables), "{ctx}: variable names");
+    assert_eq!(
+        keys(&got.variables),
+        keys(&want.variables),
+        "{ctx}: variable names"
+    );
     for (name, f) in &want.variables {
         assert_field_bitwise(&format!("{ctx}/{name}"), &got.variables[name], f);
     }
@@ -184,7 +192,9 @@ fn slice_field(f: &NativeField, window: &BTreeMap<String, AxisSelect>) -> Native
         .map(|(d, &len)| match window.get(d) {
             None | Some(AxisSelect::All) => (0..len).collect(),
             Some(AxisSelect::Indices(v)) => v.clone(),
-            Some(AxisSelect::Range { start, stop, step }) => (*start..*stop).step_by(*step).collect(),
+            Some(AxisSelect::Range { start, stop, step }) => {
+                (*start..*stop).step_by(*step).collect()
+            }
         })
         .collect();
     let data = match &f.data {

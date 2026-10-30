@@ -30,13 +30,13 @@ import os
 import pathlib
 import uuid
 import warnings
-from typing import Optional
 
 from ..config import CACHE_FORMAT_VERSION, resolve_cache_root
 from ..manifest import Manifest
 
 try:
     import fcntl  # POSIX advisory locks
+
     _HAVE_FCNTL = True
 except ImportError:  # pragma: no cover - non-POSIX fallback
     _HAVE_FCNTL = False
@@ -56,9 +56,9 @@ class _FlockLock:
 
     def __init__(self, lock_path: pathlib.Path) -> None:
         self._lock_path = lock_path
-        self._fd: Optional[int] = None
+        self._fd: int | None = None
 
-    def __enter__(self) -> "_FlockLock":
+    def __enter__(self) -> _FlockLock:
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR, 0o644)
         if _HAVE_FCNTL:
@@ -67,6 +67,7 @@ class _FlockLock:
             warnings.warn(
                 "fcntl unavailable; per-blob locking is a no-op (single-process only)",
                 RuntimeWarning,
+                stacklevel=2,
             )
         return self
 
@@ -90,7 +91,7 @@ class LocalStore:
 
     def __init__(
         self,
-        root: Optional[os.PathLike] = None,
+        root: os.PathLike | None = None,
         version: str = CACHE_FORMAT_VERSION,
     ) -> None:
         self.root = resolve_cache_root(root)
@@ -115,7 +116,7 @@ class LocalStore:
         return self.locks_dir / f"{key}.lock"
 
     # -- blob ---------------------------------------------------------------
-    def get_blob(self, key: str) -> Optional[pathlib.Path]:
+    def get_blob(self, key: str) -> pathlib.Path | None:
         """Path to the cached blob, or ``None`` on a miss.
 
         Looks up by ``<key>`` (glob ``<key>*``), so a blob stored under any
@@ -130,9 +131,7 @@ class LocalStore:
     def exists(self, key: str) -> bool:
         return self.get_blob(key) is not None
 
-    def put_blob(
-        self, key: str, staged: os.PathLike, ext: str = "bin"
-    ) -> pathlib.Path:
+    def put_blob(self, key: str, staged: os.PathLike, ext: str = "bin") -> pathlib.Path:
         """Atomically commit a staged file as the blob for ``key``; return its path.
 
         ``ext`` is the human-debug suffix (``""`` ⇒ store under a bare key, no
@@ -152,7 +151,7 @@ class LocalStore:
         return target
 
     # -- manifest -----------------------------------------------------------
-    def get_meta(self, key: str) -> Optional[Manifest]:
+    def get_meta(self, key: str) -> Manifest | None:
         path = self._meta_path(key)
         if not path.is_file():
             return None

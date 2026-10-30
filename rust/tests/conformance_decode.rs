@@ -45,7 +45,11 @@ fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
         reader = reader.member_glob(g);
         configured = true;
     }
-    if dec.get("skip_header_row").and_then(Value::as_bool).unwrap_or(false) {
+    if dec
+        .get("skip_header_row")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         reader = reader.skip_header_row(true);
         configured = true;
     }
@@ -133,7 +137,12 @@ fn decodes_every_corpus_case_to_match_expected() {
                 .collect();
             let sel = parse_selection(&case);
             reader
-                .read_store(cache.clone(), case["resolved_url"].as_str().unwrap(), &vars, &sel)
+                .read_store(
+                    cache.clone(),
+                    case["resolved_url"].as_str().unwrap(),
+                    &vars,
+                    &sel,
+                )
                 .unwrap_or_else(|e| panic!("store decode failed for {id}: {e}"))
         } else {
             // Resolve the blob offline (reuses the Python-cached bytes), then decode.
@@ -153,7 +162,10 @@ fn decodes_every_corpus_case_to_match_expected() {
                 // model wants numeric; both reach the reader the way a DOCUMENT
                 // delivers them — `Reader::configured`, not a bespoke builder.
                 let options = declared_options(&case, &["member", "numeric_columns"]);
-                match reader.configured(&options).expect("configured shapefile reader") {
+                match reader
+                    .configured(&options)
+                    .expect("configured shapefile reader")
+                {
                     Some(configured) => configured,
                     None => reader,
                 }
@@ -162,7 +174,10 @@ fn decodes_every_corpus_case_to_match_expected() {
                 // an integer measurement) and the two null gates, the same way.
                 let options =
                     declared_options(&case, &["float_columns", "null_int", "null_string"]);
-                match reader.configured(&options).expect("configured parquet reader") {
+                match reader
+                    .configured(&options)
+                    .expect("configured parquet reader")
+                {
                     Some(configured) => configured,
                     None => reader,
                 }
@@ -232,10 +247,9 @@ fn decodes_every_corpus_case_to_match_expected() {
 #[test]
 fn declared_reader_options_decode_the_zip_case_through_the_provider() {
     let corpus = corpus_dir();
-    let case: Value = serde_json::from_slice(
-        &fs::read(corpus.join("cases/ff10-zip-egu-glob.json")).unwrap(),
-    )
-    .unwrap();
+    let case: Value =
+        serde_json::from_slice(&fs::read(corpus.join("cases/ff10-zip-egu-glob.json")).unwrap())
+            .unwrap();
     let cache = Arc::new(
         Cache::builder()
             .data_dir(corpus.join("cache"))
@@ -253,7 +267,11 @@ fn declared_reader_options_decode_the_zip_case_through_the_provider() {
             options.insert(k.to_string(), dec[k].clone());
         }
     }
-    assert_eq!(options.len(), 3, "the zip case pins kind + glob + header row");
+    assert_eq!(
+        options.len(),
+        3,
+        "the zip case pins kind + glob + header row"
+    );
 
     let loader = earthsciio::DataSource::new(
         case["loader"].as_str().unwrap(),
@@ -281,7 +299,8 @@ fn declared_reader_options_decode_the_zip_case_through_the_provider() {
 
     // Without the declared options the same loader hits the header line as a
     // data row — i.e. the options are load-bearing, not decoration.
-    let bare = earthsciio::DataSource::new("nei2016", "ff10", case["resolved_url"].as_str().unwrap());
+    let bare =
+        earthsciio::DataSource::new("nei2016", "ff10", case["resolved_url"].as_str().unwrap());
     let mut bare = earthsciio::Provider::new(
         bare,
         Arc::new(
@@ -294,7 +313,10 @@ fn declared_reader_options_decode_the_zip_case_through_the_provider() {
         None,
     )
     .expect("provider");
-    assert!(bare.materialize().is_err(), "no options ⇒ no member selection");
+    assert!(
+        bare.materialize().is_err(),
+        "no options ⇒ no member selection"
+    );
 }
 
 fn compare_field(id: &str, name: &str, got: &NativeField, exp: &Value) {
@@ -453,10 +475,17 @@ fn netcdf_projection_rejects_an_absent_variable_and_keeps_coords() {
     assert!(one.coords.contains_key("time"));
 
     let err = reader
-        .read_native(&blob, &["t2m".to_string(), "nope".to_string()], &Selection::All)
+        .read_native(
+            &blob,
+            &["t2m".to_string(), "nope".to_string()],
+            &Selection::All,
+        )
         .expect_err("an absent variable must be an error");
     let msg = err.to_string();
-    assert!(msg.contains("nope"), "error must name the absent variable: {msg}");
+    assert!(
+        msg.contains("nope"),
+        "error must name the absent variable: {msg}"
+    );
     assert!(msg.contains("sp"), "error must list what IS present: {msg}");
 }
 
@@ -476,7 +505,10 @@ fn netcdf_select_windows_the_decode_and_slices_the_coords() {
     let blob = corpus.join(case["blob_path"].as_str().unwrap());
     let reader = FormatRegistry::with_builtins().get("netcdf").unwrap();
     assert!(reader.supports_selection());
-    assert!(!reader.store_backed(), "the fetch is unchanged; only the decode shrinks");
+    assert!(
+        !reader.store_backed(),
+        "the fetch is unchanged; only the decode shrinks"
+    );
 
     let full = reader.read_native(&blob, &[], &Selection::All).unwrap();
     let full_t2m = to_opt_f64(&full.variables["t2m"].data);
@@ -484,7 +516,11 @@ fn netcdf_select_windows_the_decode_and_slices_the_coords() {
     // time all, latitude [1,3), longitude {0,2}
     let sel = Selection::Orthogonal(vec![
         AxisSelect::All,
-        AxisSelect::Range { start: 1, stop: 3, step: 1 },
+        AxisSelect::Range {
+            start: 1,
+            stop: 3,
+            step: 1,
+        },
         AxisSelect::Indices(vec![0, 2]),
     ]);
     let w = reader.read_native(&blob, &[], &sel).unwrap();
@@ -558,7 +594,10 @@ fn netcdf_select_refuses_a_time_subset_and_a_rank_mismatch() {
         AxisSelect::All,
         AxisSelect::All,
     ]);
-    let err = reader.read_native(&blob, &[], &time_sub).unwrap_err().to_string();
+    let err = reader
+        .read_native(&blob, &[], &time_sub)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("time"), "{err}");
 
     let wrong_rank = Selection::Orthogonal(vec![AxisSelect::All, AxisSelect::All]);
@@ -590,8 +629,16 @@ fn netcdf_select_edges_match_the_shared_vocabulary() {
     for axes in [
         vec![
             AxisSelect::All,
-            AxisSelect::Range { start: 0, stop: 3, step: 1 },
-            AxisSelect::Range { start: 0, stop: 3, step: 1 },
+            AxisSelect::Range {
+                start: 0,
+                stop: 3,
+                step: 1,
+            },
+            AxisSelect::Range {
+                start: 0,
+                stop: 3,
+                step: 1,
+            },
         ],
         vec![
             AxisSelect::All,
@@ -616,7 +663,11 @@ fn netcdf_select_edges_match_the_shared_vocabulary() {
     // length 1, not squeezed away (a track that squeezed would diverge in rank).
     for axis in [
         AxisSelect::Indices(vec![1]),
-        AxisSelect::Range { start: 1, stop: 2, step: 1 },
+        AxisSelect::Range {
+            start: 1,
+            stop: 2,
+            step: 1,
+        },
     ] {
         let got = reader
             .read_native(
@@ -626,7 +677,10 @@ fn netcdf_select_edges_match_the_shared_vocabulary() {
             )
             .unwrap();
         assert_eq!(got.variables["t2m"].shape, vec![2, 1, 3]);
-        assert_eq!(got.variables["t2m"].dims, vec!["time", "latitude", "longitude"]);
+        assert_eq!(
+            got.variables["t2m"].dims,
+            vec!["time", "latitude", "longitude"]
+        );
         assert_eq!(got.coords["latitude"].field.shape, vec![1]);
     }
 
@@ -636,8 +690,16 @@ fn netcdf_select_edges_match_the_shared_vocabulary() {
     // contradicts its own data.
     for axis in [
         AxisSelect::Indices(vec![]),
-        AxisSelect::Range { start: 1, stop: 1, step: 1 },
-        AxisSelect::Range { start: 2, stop: 0, step: 1 },
+        AxisSelect::Range {
+            start: 1,
+            stop: 1,
+            step: 1,
+        },
+        AxisSelect::Range {
+            start: 2,
+            stop: 0,
+            step: 1,
+        },
     ] {
         let got = reader
             .read_native(
@@ -662,7 +724,11 @@ fn netcdf_select_edges_match_the_shared_vocabulary() {
     // error, never a silent clamp (which would have shipped `shape = [2, 98, 3]`
     // beside 12 values).
     for axis in [
-        AxisSelect::Range { start: 1, stop: 99, step: 1 },
+        AxisSelect::Range {
+            start: 1,
+            stop: 99,
+            step: 1,
+        },
         AxisSelect::Indices(vec![5]),
     ] {
         let err = reader

@@ -31,8 +31,8 @@ import numpy as np
 import pytest
 
 from earthsciio import (
-    CacheMiss,
     Cache,
+    CacheMiss,
     DataSource,
     DimWindow,
     EpochSample,
@@ -72,7 +72,9 @@ def _provider(source: dict, rps, cache, name="scenario") -> Provider:
     """A DISCRETE provider over a scenario source (its strftime URL template)."""
     return Provider(
         DataSource(
-            name, source["format"], source["url_template"]["strftime"],
+            name,
+            source["format"],
+            source["url_template"]["strftime"],
             variables=list(source["variables"]),
             temporal=SourceTemporal(
                 start=_iso(source["start"]),
@@ -128,8 +130,9 @@ def _sliced_by_name(ds, window):
                 data = np.take(data, _indices(dims[dim], data.shape[axis]), axis=axis)
         return NativeField(data, f.dims, f.attrs)
 
-    return NativeDataset({n: cut(f) for n, f in ds.variables.items()},
-                         {n: cut(f) for n, f in ds.coords.items()})
+    return NativeDataset(
+        {n: cut(f) for n, f in ds.variables.items()}, {n: cut(f) for n, f in ds.coords.items()}
+    )
 
 
 def _assert_equal_values(a, b, label=""):
@@ -138,8 +141,9 @@ def _assert_equal_values(a, b, label=""):
         for name, fa in getattr(a, group).items():
             fb = getattr(b, group)[name]
             assert fa.dims == fb.dims, f"{label} {name}"
-            assert np.array_equal(np.asarray(fa.data), np.asarray(fb.data),
-                                  equal_nan=True), f"{label} {name}"
+            assert np.array_equal(np.asarray(fa.data), np.asarray(fb.data), equal_nan=True), (
+                f"{label} {name}"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -148,13 +152,19 @@ def _assert_equal_values(a, b, label=""):
 
 
 def _buffers(p):
-    return (p._current, p._current_anchor, p._current_file,
-            p._current_file_anchor, list(p._files.items()))
+    return (
+        p._current,
+        p._current_anchor,
+        p._current_file,
+        p._current_file_anchor,
+        list(p._files.items()),
+    )
 
 
 def _same_buffers(before, after):
-    return all(x is y for x, y in zip(before[:4], after[:4])) and \
-        [(k, id(v)) for k, v in before[4]] == [(k, id(v)) for k, v in after[4]]
+    return all(x is y for x, y in zip(before[:4], after[:4])) and [
+        (k, id(v)) for k, v in before[4]
+    ] == [(k, id(v)) for k, v in after[4]]
 
 
 @pytest.mark.parametrize("rps", [1, 2])
@@ -255,8 +265,10 @@ def test_with_window_errors_are_raised_before_any_io(cache):
         p.with_window({"axes": ["all", "all", "all"]})
     with pytest.raises(TypeError):
         p.with_window({"lat": (0, 1)})
-    baked = Provider(DataSource("h", "netcdf", "https://x/a.nc",
-                                reader_kwargs={"select": {"axes": ["all"]}}), _NoIO())
+    baked = Provider(
+        DataSource("h", "netcdf", "https://x/a.nc", reader_kwargs={"select": {"axes": ["all"]}}),
+        _NoIO(),
+    )
     with pytest.raises(ValueError, match="already bakes a select"):
         baked.with_window(DimWindow({"lat": [0]}))
     csv = Provider(DataSource("o", "csv", "https://x/a.csv"), _NoIO())
@@ -296,8 +308,9 @@ def test_sample_windows_at_of_nothing_fetches_nothing():
 
 def test_multi_window_scenario_const(cache):
     sc = _scenario("multi-window")["const"]
-    p = Provider(DataSource("mixed", sc["format"], sc["url"],
-                            variables=list(sc["variables"])), cache)
+    p = Provider(
+        DataSource("mixed", sc["format"], sc["url"], variables=list(sc["variables"])), cache
+    )
     t = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
     full = p.materialize()
     windows = sc["windows"]
@@ -348,9 +361,12 @@ def test_sample_windows_at_bounds_checks_a_window_the_union_widened(cache):
 
 
 def _members(sc, cache):
-    return {m["key"]: _provider(sc["sources"][m["source"]], m["records_per_sample"], cache,
-                                name=m["key"])
-            for m in sc["members"]}
+    return {
+        m["key"]: _provider(
+            sc["sources"][m["source"]], m["records_per_sample"], cache, name=m["key"]
+        )
+        for m in sc["members"]
+    }
 
 
 def _order_list(order, n):
@@ -415,8 +431,9 @@ def test_prefetch_equivalence_grid(cache, equivalence, oi, depth, workers, max_b
     order = _order_list(order_spec, n)
     want = _sync_sequence(sc, cache, order)
     members = _members(sc, cache)
-    with PrefetchGroup(members, depth=depth, workers=workers, max_bytes=max_bytes,
-                       _decode_latency=_latency) as g:
+    with PrefetchGroup(
+        members, depth=depth, workers=workers, max_bytes=max_bytes, _decode_latency=_latency
+    ) as g:
         g.start(order_spec)
         prev = {}
         for i, k in enumerate(order):
@@ -437,8 +454,9 @@ def test_prefetch_equivalence_grid(cache, equivalence, oi, depth, workers, max_b
     if max_bytes is not None:
         # every slot is bigger than one byte: each was decoded alone, oversize
         assert st["oversize_epochs"] == len(order)
-        biggest = max(sum(_dataset_nbytes(want[key][i]) for key in members)
-                      for i in range(len(order)))
+        biggest = max(
+            sum(_dataset_nbytes(want[key][i]) for key in members) for i in range(len(order))
+        )
         assert 0 < st["peak_bytes"] <= biggest
     else:
         assert st["oversize_epochs"] == 0
@@ -449,16 +467,18 @@ def test_prefetch_equivalence_with_windows(cache, equivalence):
     windows = sc["windows"]
     members = _members(sc, cache)
     B = [_utc(s) for s in sc["expect"]["boundaries_s"]]
-    with PrefetchGroup(members, depth=2, workers=4, windows=windows,
-                       _decode_latency=_latency) as g:
+    with PrefetchGroup(members, depth=2, workers=4, windows=windows, _decode_latency=_latency) as g:
         g.start("forward")
         for k in range(len(B)):
             ep = g.take(k)
             for key, p in members.items():
                 assert isinstance(ep[key].data, list) and len(ep[key].data) == len(windows)
                 for i, w in enumerate(windows):
-                    assert_bitwise(ep[key].data[i], p.with_window(w).sample_at(B[k]),
-                                   f"epoch {k} {key} window {i}")
+                    assert_bitwise(
+                        ep[key].data[i],
+                        p.with_window(w).sample_at(B[k]),
+                        f"epoch {k} {key} window {i}",
+                    )
 
 
 def test_prefetch_a_coarse_member_is_decoded_once_per_anchor(cache, equivalence):
@@ -469,6 +489,7 @@ def test_prefetch_a_coarse_member_is_decoded_once_per_anchor(cache, equivalence)
     m = _members(sc, cache)
     with PrefetchGroup({"PS": m["PS"], "Q1": m["Q1"]}, depth=1) as g:
         g.start("forward")
+        last = None
         for k in range(len(g.boundaries())):
             ep = g.take(k)
             if not ep["PS"].changed:
@@ -528,15 +549,15 @@ def _wait_until(cond, timeout=5.0):
 
 @pytest.mark.parametrize("depth", [1, 3])
 @pytest.mark.parametrize("workers", [1, 4])
-def test_prefetch_errors_cachemiss_at_its_take_and_not_before(cache, errors_scenario,
-                                                              depth, workers):
+def test_prefetch_errors_cachemiss_at_its_take_and_not_before(
+    cache, errors_scenario, depth, workers
+):
     sc = errors_scenario
     assert depth in sc["depth"] and workers in sc["workers"]
     miss = sc["missing_from"]
     member = _provider(sc["source"], sc["records_per_sample"], cache)
     ref = _provider(sc["source"], sc["records_per_sample"], cache)
-    with PrefetchGroup({"Q": member}, depth=depth, workers=workers,
-                       _decode_latency=_latency) as g:
+    with PrefetchGroup({"Q": member}, depth=depth, workers=workers, _decode_latency=_latency) as g:
         B = g.boundaries()
         assert [int(b.timestamp()) for b in B] == sc["source"]["refresh_times_s"]
         g.start("forward")
@@ -575,7 +596,7 @@ def test_prefetch_errors_cancel_then_start_from_reproduces_the_sequence(cache, e
             g.take(cut)
         assert g.ready(cut) is False
         g.start("forward", from_=cut)
-        first = True
+        first, prev = True, None
         for k in range(cut, miss):
             s = g.take(k)["Q"]
             assert s.changed  # hourly: every anchor is new, the first after start too
@@ -602,8 +623,12 @@ def test_prefetch_multi_member_failure_raises_the_first_by_key(cache, errors_sce
     cold = Cache(root=tmp_path / "empty", offline=True)
     good = _provider(sc["source"], 1, cache)
     bad_b = _provider(sc["source"], 1, cold, name="b")
-    bad_a = Provider(DataSource("a", "netcdf", "https://data.earthsci.dev/none/%H.nc",
-                                temporal=good.loader.temporal), cold)
+    bad_a = Provider(
+        DataSource(
+            "a", "netcdf", "https://data.earthsci.dev/none/%H.nc", temporal=good.loader.temporal
+        ),
+        cold,
+    )
     with PrefetchGroup({"z": good, "b": bad_b, "a": bad_a}, depth=2, workers=3) as g:
         g.start("forward")
         with pytest.raises(CacheMiss) as info:
@@ -661,16 +686,19 @@ def test_prefetch_take_errors(cache, equivalence):
     g.close()  # idempotent
 
 
-@pytest.mark.parametrize("order,from_,exc,msg", [
-    ([], None, ValueError, "at least one epoch"),
-    ([0, 12], None, ValueError, r"\[12\] are out of range"),
-    ([-1], None, ValueError, "out of range"),
-    ("sideways", None, ValueError, "forward"),
-    ([0.5], None, TypeError, "epoch"),
-    ([True], None, TypeError, "epoch"),
-    ("forward", 12, ValueError, "from_=12 is not an epoch"),
-    ([3, 1, 4], 2, ValueError, "from_=2 is not an epoch"),
-])
+@pytest.mark.parametrize(
+    "order,from_,exc,msg",
+    [
+        ([], None, ValueError, "at least one epoch"),
+        ([0, 12], None, ValueError, r"\[12\] are out of range"),
+        ([-1], None, ValueError, "out of range"),
+        ("sideways", None, ValueError, "forward"),
+        ([0.5], None, TypeError, "epoch"),
+        ([True], None, TypeError, "epoch"),
+        ("forward", 12, ValueError, "from_=12 is not an epoch"),
+        ([3, 1, 4], 2, ValueError, "from_=2 is not an epoch"),
+    ],
+)
 def test_prefetch_bad_orders_are_refused_at_start(cache, equivalence, order, from_, exc, msg):
     with PrefetchGroup(_members(equivalence, cache)) as g:
         g.start([5, 6])
@@ -686,8 +714,9 @@ def test_prefetch_start_from_trims_to_the_first_occurrence(cache, equivalence):
 
 
 def test_prefetch_start_cancels_work_in_flight(cache, equivalence):
-    with PrefetchGroup(_members(equivalence, cache), depth=3, workers=2,
-                       _decode_latency=lambda: 0.02) as g:
+    with PrefetchGroup(
+        _members(equivalence, cache), depth=3, workers=2, _decode_latency=lambda: 0.02
+    ) as g:
         g.start("forward")
         g.start("reverse")  # while the forward decodes are queued or running
         assert g.take(11).epoch == 11
@@ -695,21 +724,31 @@ def test_prefetch_start_cancels_work_in_flight(cache, equivalence):
         assert not g._futures or all(f.done() for f in list(g._futures))
 
 
-@pytest.mark.parametrize("bad,exc,msg", [
-    ({}, ValueError, "non-empty"),
-    ({"c": "const"}, ValueError, "CONST"),
-    ({"u": "unbounded"}, ValueError, "no enumerable schedule"),
-    ({"q": "provider", "_": {"depth": 0}}, ValueError, "depth must be >= 1"),
-    ({"q": "provider", "_": {"workers": 0}}, ValueError, "workers must be >= 1"),
-    ({"q": "provider", "_": {"max_bytes": -1}}, ValueError, "max_bytes"),
-    ({"q": "provider", "_": {"fetch_ahead": -1}}, ValueError, "fetch_ahead"),
-    ({"q": "provider", "_": {"executor": "gpu"}}, ValueError, "executor"),
-    ({"q": "provider", "_": {"windows": [DimWindow({"time": [0]})]}}, ValueError, "time"),
-    ({"q": "windowed", "_": {"windows": [DimWindow({"lat": [0]})]}}, ValueError, "already bakes"),
-    ({"q": "lambda-url", "_": {"executor": "process"}}, TypeError, "must pickle"),
-    ({"q": "provider", "_": {"executor": "process", "transform": lambda k, d: d}},
-     TypeError, "must pickle"),
-])
+@pytest.mark.parametrize(
+    "bad,exc,msg",
+    [
+        ({}, ValueError, "non-empty"),
+        ({"c": "const"}, ValueError, "CONST"),
+        ({"u": "unbounded"}, ValueError, "no enumerable schedule"),
+        ({"q": "provider", "_": {"depth": 0}}, ValueError, "depth must be >= 1"),
+        ({"q": "provider", "_": {"workers": 0}}, ValueError, "workers must be >= 1"),
+        ({"q": "provider", "_": {"max_bytes": -1}}, ValueError, "max_bytes"),
+        ({"q": "provider", "_": {"fetch_ahead": -1}}, ValueError, "fetch_ahead"),
+        ({"q": "provider", "_": {"executor": "gpu"}}, ValueError, "executor"),
+        ({"q": "provider", "_": {"windows": [DimWindow({"time": [0]})]}}, ValueError, "time"),
+        (
+            {"q": "windowed", "_": {"windows": [DimWindow({"lat": [0]})]}},
+            ValueError,
+            "already bakes",
+        ),
+        ({"q": "lambda-url", "_": {"executor": "process"}}, TypeError, "must pickle"),
+        (
+            {"q": "provider", "_": {"executor": "process", "transform": lambda k, d: d}},
+            TypeError,
+            "must pickle",
+        ),
+    ],
+)
 def test_prefetch_construction_errors(cache, bad, exc, msg):
     src = _scenario("prefetch-equivalence")["sources"]["hourly"]
     kwargs = dict(bad.pop("_", {}))
@@ -746,16 +785,16 @@ def test_prefetch_hides_decode_behind_compute(cache, equivalence):
     compute, latency = 0.08, 0.015
     members = _members(equivalence, cache)
     n = len(equivalence["expect"]["boundaries_s"])
-    with PrefetchGroup(members, depth=2, workers=1,
-                       _decode_latency=lambda: latency) as g:
+    with PrefetchGroup(members, depth=2, workers=1, _decode_latency=lambda: latency) as g:
         g.start("forward")
         assert _wait_until(lambda: g.ready(0))
         for k in range(n):
             g.take(k)
             time.sleep(compute)
         hidden = g.stats()
-    with PrefetchGroup(_members(equivalence, cache), depth=2, workers=1,
-                       _decode_latency=lambda: latency) as g:
+    with PrefetchGroup(
+        _members(equivalence, cache), depth=2, workers=1, _decode_latency=lambda: latency
+    ) as g:
         g.start("forward")
         for k in range(n):
             g.take(k)
@@ -806,8 +845,9 @@ def test_prefetch_max_bytes_bounds_the_held_slots(cache, equivalence):
     probe = _members(sc, cache)
     slot = sum(_dataset_nbytes(p.sample_at(B[0])) for p in probe.values())
     budget = int(2.5 * slot)
-    with PrefetchGroup(_members(sc, cache), depth=3, workers=2, max_bytes=budget,
-                       _decode_latency=_latency) as g:
+    with PrefetchGroup(
+        _members(sc, cache), depth=3, workers=2, max_bytes=budget, _decode_latency=_latency
+    ) as g:
         g.start("forward")
         for k in range(len(B)):
             ep = g.take(k)
@@ -829,8 +869,7 @@ def _file_source(tmp_path, end="2024-01-01T16:00:00Z"):
         if f["in_corpus"]:
             blob = next(b for b in _scenario("prefetch-errors")["blobs"] if b["url"] == f["url"])
             (d / f["url"].rsplit("/", 1)[1]).write_bytes((CORPUS / blob["blob_path"]).read_bytes())
-    return dict(src, end=end,
-                url_template={"strftime": f"file://{d}/geosfp-hourly.%Y%m%d_%H%M.nc"})
+    return dict(src, end=end, url_template={"strftime": f"file://{d}/geosfp-hourly.%Y%m%d_%H%M.nc"})
 
 
 def test_prefetch_fetch_ahead_downloads_without_decoding_and_drops_errors(tmp_path):
@@ -851,11 +890,12 @@ def test_prefetch_fetch_ahead_downloads_without_decoding_and_drops_errors(tmp_pa
     # depth 1 and a slow head decode: positions 1-2 (epochs 4 and 8, two other
     # files) are past the decode window, inside fetch_ahead=3; position 3
     # (epoch 12) names a file that does not exist.
-    with PrefetchGroup({"Q": member}, depth=1, fetch_ahead=3, workers=1,
-                       _decode_latency=lambda: 0.3) as g:
+    with PrefetchGroup(
+        {"Q": member}, depth=1, fetch_ahead=3, workers=1, _decode_latency=lambda: 0.3
+    ) as g:
         g.start([0, 4, 8, 12])
         for k in (4, 8):
-            assert _wait_until(lambda: online.store.get_blob(cache_key(urls[k])) is not None)
+            assert _wait_until(lambda k=k: online.store.get_blob(cache_key(urls[k])) is not None)
         assert not decoded  # warmed while the head decode is still sleeping
         assert g.take(0)["Q"].anchor == _utc(src["refresh_times_s"][0])
         assert g.take(4) and g.take(8)
@@ -877,7 +917,7 @@ def test_netcdf_decodes_take_the_process_wide_lock(cache):
     reader = NetCDFReader()
     for call in (lambda: reader.read_native(path), lambda: reader.dim_length(path, "lat")):
         done = threading.Event()
-        worker = threading.Thread(target=lambda: (call(), done.set()))
+        worker = threading.Thread(target=lambda call=call, done=done: (call(), done.set()))
         with _NETCDF_LOCK:
             worker.start()
             assert not done.wait(0.2), "decoded while another thread held the lock"
@@ -911,6 +951,7 @@ def test_prefetch_fetch_ahead_url_errors_are_dropped(tmp_path):
 def test_prefetch_a_worker_exception_reaches_take(cache, equivalence):
     """Whatever escapes a thread worker — even a BaseException from the test
     latency hook — is stored and raised by take, never left to hang it."""
+
     class Stop(BaseException):
         pass
 
@@ -926,8 +967,12 @@ def test_prefetch_a_worker_exception_reaches_take(cache, equivalence):
 def test_prefetch_transform_results_are_read_only(cache, equivalence):
     def double(key, ds):
         from earthsciio import NativeDataset, NativeField
+
         return NativeDataset(
-            {n: NativeField(np.asarray(f.data) * 2, f.dims, f.attrs) for n, f in ds.variables.items()},
+            {
+                n: NativeField(np.asarray(f.data) * 2, f.dims, f.attrs)
+                for n, f in ds.variables.items()
+            },
             dict(ds.coords),
         )
 

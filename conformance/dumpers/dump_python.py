@@ -45,7 +45,7 @@ import math
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -74,7 +74,7 @@ def _dtype_str(arr: np.ndarray) -> str:
     raise TypeError(f"unexpected numeric dtype {arr.dtype}")
 
 
-def _encode_field(field: Any) -> Dict[str, Any]:
+def _encode_field(field: Any) -> dict[str, Any]:
     """Encode a :class:`earthsciio.native.NativeField` to the dump schema.
 
     Numeric arrays flatten row-major with ``null`` for NaN; string columns become
@@ -94,16 +94,11 @@ def _encode_field(field: Any) -> Dict[str, Any]:
             # before. `shape` is the field's own, so a SCALAR string (a `char
             # label(strlen)` on a private dimension) keeps `shape == []` while its
             # one value still flattens to a one-element `data` list.
-            values = [
-                v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                for v in flat.tolist()
-            ]
+            values = [v.decode("utf-8") if isinstance(v, bytes) else str(v) for v in flat.tolist()]
             enc = {"dtype": "string", "dims": dims, "shape": shape, "data": values}
             return _with_fill_value(enc, field)
         if np.issubdtype(flat.dtype, np.floating):
-            values: List[Any] = [
-                None if (math.isnan(x)) else float(x) for x in flat.tolist()
-            ]
+            values: list[Any] = [None if (math.isnan(x)) else float(x) for x in flat.tolist()]
         elif flat.dtype == np.bool_:
             values = [bool(x) for x in flat.tolist()]
         else:
@@ -116,7 +111,7 @@ def _encode_field(field: Any) -> Dict[str, Any]:
     return _with_fill_value(enc, field)
 
 
-def _with_fill_value(enc: Dict[str, Any], field: Any) -> Dict[str, Any]:
+def _with_fill_value(enc: dict[str, Any], field: Any) -> dict[str, Any]:
     """Carry a surviving fill/missing sentinel into the dump under ONE key.
 
     ``spec/conformance.md`` §3 pins where each track reports it: Rust has a
@@ -132,7 +127,7 @@ def _with_fill_value(enc: Dict[str, Any], field: Any) -> Dict[str, Any]:
     return enc
 
 
-def _encode_coord(field: Any) -> Dict[str, Any]:
+def _encode_coord(field: Any) -> dict[str, Any]:
     """A coord is a field plus the CF ``units``/``calendar`` it carries (if any)."""
     enc = _encode_field(field)
     for k in ("units", "calendar"):
@@ -141,7 +136,7 @@ def _encode_coord(field: Any) -> Dict[str, Any]:
     return enc
 
 
-def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
+def dump_case(case: dict[str, Any]) -> dict[str, Any]:
     """Run the Python Provider over one corpus case and encode its native arrays.
 
     Skips (without error) a case whose ``format`` has no registered reader, so the
@@ -168,8 +163,7 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
             "format": fmt,
             "status": "skipped",
             "reason": (
-                f"the '{fmt}' reader needs {', '.join(missing)}, not installed "
-                f"in this environment"
+                f"the '{fmt}' reader needs {', '.join(missing)}, not installed in this environment"
             ),
         }
 
@@ -178,8 +172,8 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
     # the blob against the manifest on read).
     cache = Cache(root=CORPUS / "cache", offline=True, verify=True)
 
-    reader_kwargs: Dict[str, Any] = {}
-    variables: List[str] = []
+    reader_kwargs: dict[str, Any] = {}
+    variables: list[str] = []
     if fmt == "csv":
         # numeric_columns is REQUIRED by the loader spec (digit-only text columns
         # like location_id must stay strings); the corpus case pins the list.
@@ -254,7 +248,7 @@ def dump_case(case: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def selected_ids() -> Optional[set]:
+def selected_ids() -> set | None:
     """The case ids ``$ESIO_CONFORMANCE_CASES`` restricts this run to, or ``None``.
 
     A comma-separated list. Every dumper and :mod:`conformance.crosscheck` honour
@@ -271,10 +265,10 @@ def selected_ids() -> Optional[set]:
     return {c.strip() for c in raw.split(",") if c.strip()}
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     index = json.loads((CORPUS / "cases.json").read_text())
     only = selected_ids()
-    cases: Dict[str, Any] = {}
+    cases: dict[str, Any] = {}
     for entry in index["cases"]:
         case = json.loads((CORPUS / entry["file"]).read_text())
         if only is not None and case["id"] not in only:

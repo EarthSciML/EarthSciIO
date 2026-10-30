@@ -159,8 +159,13 @@ def test_the_mapping_is_a_total_function_of_the_arrow_type():
     assert _pq_target_dtype(pa.string(), True) == "float64"
     assert _pq_target_dtype(pa.int64(), True) == "float64"
     assert _pq_target_dtype(pa.string(), False) == "string"
-    for typ in (pa.list_(pa.int32()), pa.binary(), pa.large_binary(),
-                pa.struct([("a", pa.int32())]), pa.month_day_nano_interval()):
+    for typ in (
+        pa.list_(pa.int32()),
+        pa.binary(),
+        pa.large_binary(),
+        pa.struct([("a", pa.int32())]),
+        pa.month_day_nano_interval(),
+    ):
         assert _pq_target_dtype(typ, False) is None, typ
         assert _pq_target_dtype(typ, True) is None, typ
 
@@ -175,7 +180,7 @@ def test_the_mapping_is_a_total_function_of_the_arrow_type():
 
 def test_a_uint64_too_large_for_int64_is_an_error(tmp_path):
     """Refuse rather than wrap: a wraparound would be a negative ID."""
-    path = write(tmp_path, pa.table({"u": pa.array([1, 2 ** 63], type=pa.uint64())}))
+    path = write(tmp_path, pa.table({"u": pa.array([1, 2**63], type=pa.uint64())}))
     with pytest.raises(ValueError) as err:
         read(path)
     assert "'u'" in str(err.value) and "row 1" in str(err.value)
@@ -194,12 +199,12 @@ def test_float_columns_reads_a_uint64_beyond_int64_max(tmp_path):
     """
     path = write(
         tmp_path,
-        pa.table({"u": pa.array([1, 2 ** 64 - 1, None], type=pa.uint64())}),
+        pa.table({"u": pa.array([1, 2**64 - 1, None], type=pa.uint64())}),
     )
     ds = read(path, float_columns=["u"])
     assert ds.variables["u"].data.dtype == np.dtype("float64")
     assert ds.variables["u"].data[0] == 1.0
-    assert ds.variables["u"].data[1] == float(2 ** 64 - 1)
+    assert ds.variables["u"].data[1] == float(2**64 - 1)
     assert np.isnan(ds.variables["u"].data[2])
     # No surviving sentinel: a float carries its missing values itself.
     assert "fill_value" not in ds.variables["u"].attrs
@@ -209,7 +214,7 @@ def test_an_int32_column_that_cannot_hold_its_sentinel_is_an_error(tmp_path):
     """A declared ``null_int`` still has to fit the column's native width."""
     path = write(tmp_path, pa.table({"i": pa.array([1, None], type=pa.int32())}))
     with pytest.raises(ValueError) as err:
-        read(path, null_int=2 ** 40)
+        read(path, null_int=2**40)
     assert "int32" in str(err.value)
 
 
@@ -455,9 +460,7 @@ def test_projection_never_reads_the_column_chunks_it_skips(tmp_path):
 
     rg = pq.ParquetFile(path).metadata.row_group(0)
     chunk = next(
-        rg.column(i)
-        for i in range(rg.num_columns)
-        if rg.column(i).path_in_schema == "poison"
+        rg.column(i) for i in range(rg.num_columns) if rg.column(i).path_in_schema == "poison"
     )
     start = chunk.dictionary_page_offset or chunk.data_page_offset
     length = chunk.total_compressed_size
@@ -536,9 +539,7 @@ def test_a_table_spanning_many_row_groups_concatenates_in_row_order(tmp_path):
 @pytest.mark.parametrize("codec", ["none", "snappy", "gzip", "zstd", "lz4"])
 def test_the_compression_codecs_decode(tmp_path, codec):
     """Compression is transparent to the contract."""
-    table = pa.table(
-        {"i": pa.array([1, 2, 3], type=pa.int64()), "s": pa.array(["a", "b", "c"])}
-    )
+    table = pa.table({"i": pa.array([1, 2, 3], type=pa.int64()), "s": pa.array(["a", "b", "c"])})
     ds = read(write(tmp_path, table, name=f"{codec}.parquet", compression=codec))
     assert list(ds["i"].data) == [1, 2, 3]
     assert ds["s"].data == ["a", "b", "c"]
@@ -570,13 +571,14 @@ def test_the_registry_serves_the_reader_and_screens_its_options():
         name="moves",
         url="file:///t.parquet",
         format="parquet",
-        reader_kwargs={"float_columns": ["meanBaseRate"], "null_int": -1,
-                       "null_string": ""},
+        reader_kwargs={"float_columns": ["meanBaseRate"], "null_int": -1, "null_string": ""},
     )
     check_reader_options(reader, ok)
 
     bad = DataSource(
-        name="moves", url="file:///t.parquet", format="parquet",
+        name="moves",
+        url="file:///t.parquet",
+        format="parquet",
         reader_kwargs={"member_glob": "*"},
     )
     with pytest.raises(Exception) as err:

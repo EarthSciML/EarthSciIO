@@ -41,17 +41,17 @@ from __future__ import annotations
 
 import os
 import posixpath
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..errors import Unsupported
 
 __all__ = [
-    "S3Transport",
-    "S3Store",
     "S3ObjectStore",
-    "s3_https_url",
-    "resolve_region",
+    "S3Store",
+    "S3Transport",
     "parse_s3_url",
+    "resolve_region",
+    "s3_https_url",
 ]
 
 _TRACKING = "esio-cloud"
@@ -60,19 +60,15 @@ _TRACKING = "esio-cloud"
 DEFAULT_REGION = "us-east-2"
 
 
-def resolve_region(region: Optional[str] = None) -> str:
+def resolve_region(region: str | None = None) -> str:
     """Resolve the S3 region: explicit arg → ``$EARTHSCI_S3_REGION`` →
     ``$AWS_REGION`` → :data:`DEFAULT_REGION`."""
     if region:
         return region
-    return (
-        os.environ.get("EARTHSCI_S3_REGION")
-        or os.environ.get("AWS_REGION")
-        or DEFAULT_REGION
-    )
+    return os.environ.get("EARTHSCI_S3_REGION") or os.environ.get("AWS_REGION") or DEFAULT_REGION
 
 
-def s3_https_url(s3_url: str, region: Optional[str] = None) -> str:
+def s3_https_url(s3_url: str, region: str | None = None) -> str:
     """Rewrite ``s3://<bucket>/<key…>`` to regional virtual-hosted HTTPS.
 
     ``s3://inmap-model/isrm_v1.2.1.zarr/PrimaryPM25/.zarray`` →
@@ -80,7 +76,7 @@ def s3_https_url(s3_url: str, region: Optional[str] = None) -> str:
     """
     if not s3_url.startswith("s3://"):
         raise ValueError(f"not an s3:// URL: {s3_url!r}")
-    rest = s3_url[len("s3://"):]
+    rest = s3_url[len("s3://") :]
     bucket, sep, key = rest.partition("/")
     if not bucket:
         raise ValueError(f"s3:// URL has an empty bucket: {s3_url!r}")
@@ -126,8 +122,8 @@ class S3ObjectStore:
         self,
         base_url: str,
         *,
-        fs: Optional[Any] = None,
-        anon: Optional[bool] = None,
+        fs: Any | None = None,
+        anon: bool | None = None,
     ) -> None:
         self.bucket, self.prefix = parse_s3_url(base_url)
         self.base_url = base_url.rstrip("/")
@@ -143,7 +139,7 @@ class S3ObjectStore:
         if self._fs is None:
             import s3fs  # lazy: optional ``s3`` extra
 
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             if self._anon is not None:
                 kwargs["anon"] = self._anon
             self._fs = s3fs.S3FileSystem(**kwargs)
@@ -157,7 +153,7 @@ class S3ObjectStore:
     def exists(self, key: str) -> bool:
         return bool(self.fs.exists(self._path(key)))
 
-    def get_bytes(self, key: str) -> Optional[bytes]:
+    def get_bytes(self, key: str) -> bytes | None:
         """The object's bytes, or ``None`` if it is absent (a clean miss)."""
         path = self._path(key)
         if not self.fs.exists(path):
@@ -187,7 +183,7 @@ class S3Transport:
     NAME = "s3"
     SCHEMES = ("s3",)
 
-    def __init__(self, region: Optional[str] = None, http: Optional[Any] = None) -> None:
+    def __init__(self, region: str | None = None, http: Any | None = None) -> None:
         # The region is resolved lazily at fetch time (so an env var set after
         # construction still applies) unless pinned here.
         self._region = region
@@ -200,15 +196,15 @@ class S3Transport:
             self._http = HttpTransport()
         return self._http
 
-    def schemes(self) -> List[str]:
+    def schemes(self) -> list[str]:
         return list(self.SCHEMES)
 
     def fetch(
         self,
         resolved_url: str,
         dest: Any,
-        conditional: Optional[Dict[str, Any]] = None,
-        auth: Optional[Any] = None,
+        conditional: dict[str, Any] | None = None,
+        auth: Any | None = None,
     ) -> Any:
         """Rewrite ``resolved_url`` to regional HTTPS and delegate the GET."""
         https_url = s3_https_url(resolved_url, self._region)

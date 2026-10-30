@@ -168,7 +168,7 @@ def test_unchanged_source_is_served_from_the_warm_entry(cache_root, tmp_path, fe
 
 
 def test_deleted_source_behind_a_warm_entry_is_an_error(cache_root, tmp_path):
-    """"Pointed at a directory that does not exist ... nothing was read at all."
+    """ "Pointed at a directory that does not exist ... nothing was read at all."
 
     Absence must be loud, not a warm stale serve.
     """
@@ -268,9 +268,7 @@ def test_the_opt_out_restores_the_stale_serve(cache_root, tmp_path, fetches):
     assert fetches["n"] == 1
 
 
-def test_the_env_knob_only_switches_off_on_an_explicit_denial(
-    cache_root, tmp_path, monkeypatch
-):
+def test_the_env_knob_only_switches_off_on_an_explicit_denial(cache_root, tmp_path, monkeypatch):
     """``EARTHSCI_REVALIDATE_FILE`` is honoured, and a typo leaves it ON."""
     assert env_revalidate_file() is True  # unset ⇒ on
     for off in ("0", "false", "NO", " off "):

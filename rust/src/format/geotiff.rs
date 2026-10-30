@@ -66,8 +66,8 @@ impl Reader for GeoTiffReader {
         _select: &Selection,
     ) -> Result<NativeDataset> {
         // Selection::All is the only variant today; the whole raster is read.
-        let file =
-            std::fs::File::open(blob_path).map_err(|e| Error::io(Some(blob_path.to_path_buf()), e))?;
+        let file = std::fs::File::open(blob_path)
+            .map_err(|e| Error::io(Some(blob_path.to_path_buf()), e))?;
         decode(file, variables)
     }
 }
@@ -80,7 +80,9 @@ fn decode<R: std::io::Read + std::io::Seek>(
     let mut dec = Decoder::new(reader).map_err(tiff_err)?;
     let (width, height) = dec.dimensions().map_err(tiff_err)?;
     let (w, h) = (width as usize, height as usize);
-    let ncell = w.checked_mul(h).ok_or_else(|| fmt_err("raster dimensions overflow"))?;
+    let ncell = w
+        .checked_mul(h)
+        .ok_or_else(|| fmt_err("raster dimensions overflow"))?;
     if ncell == 0 {
         return Err(fmt_err("empty raster (zero width or height)"));
     }
@@ -134,7 +136,11 @@ fn decode<R: std::io::Read + std::io::Seek>(
         .ok()
         .and_then(|raw| raw.trim().trim_matches('\0').trim().parse::<f64>().ok())
         .filter(|v| !v.is_nan());
-    let (ydim, xdim) = if geographic { ("lat", "lon") } else { ("y", "x") };
+    let (ydim, xdim) = if geographic {
+        ("lat", "lon")
+    } else {
+        ("y", "x")
+    };
 
     let axes = match (scale.as_deref(), tie.as_deref()) {
         (Some(s), Some(t)) if s.len() >= 2 && t.len() >= 6 => {
@@ -239,7 +245,10 @@ fn to_f64(res: DecodingResult) -> Result<Vec<f64>> {
 /// GeoKeyDirectoryTag. Returns `None` if the tag or key is absent. Layout: a
 /// `u16` header `[version, revA, revB, numKeys]` then `numKeys` 4-tuples
 /// `[keyId, tagLocation, count, valueOrOffset]` (OGC GeoTIFF 1.1 §B).
-fn geokey_value<R: std::io::Read + std::io::Seek>(dec: &mut Decoder<R>, key_id: u16) -> Option<u16> {
+fn geokey_value<R: std::io::Read + std::io::Seek>(
+    dec: &mut Decoder<R>,
+    key_id: u16,
+) -> Option<u16> {
     let dir = dec.get_tag_u16_vec(Tag::Unknown(GEO_KEY_DIRECTORY)).ok()?;
     if dir.len() < 4 {
         return None;
@@ -369,7 +378,11 @@ mod tests {
             _ => panic!("expected f64 band"),
         };
         assert_eq!(band[0], 10.0);
-        assert!(band[1].is_nan(), "the sentinel cell must be NaN, got {}", band[1]);
+        assert!(
+            band[1].is_nan(),
+            "the sentinel cell must be NaN, got {}",
+            band[1]
+        );
         assert_eq!(band[2], 30.0);
         assert_eq!(band[3], 40.0);
     }
@@ -379,7 +392,13 @@ mod tests {
     #[test]
     fn without_the_tag_no_value_is_remapped() {
         let data = [10.0f32, -9999.0, 30.0, 40.0];
-        let bytes = encode_geographic(2, 2, &data, [0.5, 0.25, 0.0], [0.0, 0.0, 0.0, -121.5, 40.0, 0.0]);
+        let bytes = encode_geographic(
+            2,
+            2,
+            &data,
+            [0.5, 0.25, 0.0],
+            [0.0, 0.0, 0.0, -121.5, 40.0, 0.0],
+        );
         let ds = decode(Cursor::new(bytes), &[]).expect("decode");
         let band = match &ds.variables.get("Band1").expect("Band1").data {
             ArrayData::F64(v) => v.clone(),
@@ -393,13 +412,21 @@ mod tests {
     fn decodes_band_grid_and_geographic_axes() {
         // 3 lon × 2 lat, row 0 = north. Row-major values.
         let data = [10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0];
-        let bytes = encode_geographic(3, 2, &data, [0.1, 0.2, 0.0], [0.0, 0.0, 0.0, 100.0, 50.0, 0.0]);
+        let bytes = encode_geographic(
+            3,
+            2,
+            &data,
+            [0.1, 0.2, 0.0],
+            [0.0, 0.0, 0.0, 100.0, 50.0, 0.0],
+        );
         let ds = decode(Cursor::new(bytes), &[]).expect("decode");
 
         let band = ds.variables.get("Band1").expect("Band1");
         assert_eq!(band.dims, vec!["lat".to_string(), "lon".to_string()]);
         assert_eq!(band.shape, vec![2, 3]);
-        let ArrayData::F64(v) = &band.data else { panic!("f64 band") };
+        let ArrayData::F64(v) = &band.data else {
+            panic!("f64 band")
+        };
         assert_eq!(v, &[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
 
         // Cell-center axes from the tiepoint: lon east-increasing, lat north-down.

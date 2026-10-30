@@ -58,27 +58,27 @@ pub use parquet::ParquetReader;
 pub use shapefile::ShapefileReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use zarr::ZarrReader;
-#[cfg(not(target_arch = "wasm32"))]
-pub use zarr_write::write_zarr_v3;
-pub use zarr_stream::{
-    read_blob, read_output_manifest, read_record, read_static, schema_fingerprint, BlobScope,
-    CommitReceipt, CommitToken, RecordArrays, Region, Role, StreamDType, StreamSchema, StreamVar,
-    TimeMode, TypedArray, TypedVec, ZarrStreamWriter,
-};
-pub use zarr_write::{
-    write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
-    ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
-};
-#[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
-pub(crate) use zarr_object_store::{resolve_backend, runtime};
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use zarr_object_store::{
     array_shape_object_store, read_store_options, read_zarr_object_store,
     read_zarr_object_store_with_options, store_options_from_env, write_zarr_object_store,
     write_zarr_object_store_with_options,
 };
+#[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
+pub(crate) use zarr_object_store::{resolve_backend, runtime};
 #[cfg(all(target_arch = "wasm32", feature = "opfs"))]
 pub use zarr_opfs::{read_zarr_opfs_array, write_zarr_opfs, OpfsStore};
+pub use zarr_stream::{
+    read_blob, read_output_manifest, read_record, read_static, schema_fingerprint, BlobScope,
+    CommitReceipt, CommitToken, RecordArrays, Region, Role, StreamDType, StreamSchema, StreamVar,
+    TimeMode, TypedArray, TypedVec, ZarrStreamWriter,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use zarr_write::write_zarr_v3;
+pub use zarr_write::{
+    write_all_to_store, BloscProfile, CodecProfile, OutputSchema, WriteCoord, WriteVar,
+    ZstdProfile, BLOSC_CHECKPOINT, BLOSC_DIAGNOSTIC, ZSTD_WASM,
+};
 
 use std::collections::{BTreeMap, HashMap};
 #[cfg(not(target_arch = "wasm32"))]
@@ -353,7 +353,14 @@ impl NativeDataset {
                 .iter()
                 .map(|(k, c)| {
                     let field = c.field.take_by_name(picks);
-                    (k.clone(), Coord { field, units: c.units.clone(), calendar: c.calendar.clone() })
+                    (
+                        k.clone(),
+                        Coord {
+                            field,
+                            units: c.units.clone(),
+                            calendar: c.calendar.clone(),
+                        },
+                    )
                 })
                 .collect(),
         }
@@ -412,12 +419,18 @@ impl Selection {
     /// `all_rows`, `all_cells`) and an empty object read as [`Selection::All`];
     /// any other key is an error rather than a window quietly dropped.
     pub fn from_json(v: &serde_json::Value) -> Result<Selection> {
-        let err = |detail: String| crate::Error::Format { format: "select".to_string(), detail };
+        let err = |detail: String| crate::Error::Format {
+            format: "select".to_string(),
+            detail,
+        };
         let obj = v
             .as_object()
             .ok_or_else(|| err(format!("a select must be a JSON object, got {v}")))?;
         for k in obj.keys() {
-            if !matches!(k.as_str(), "axes" | "dims" | "all_records" | "all_rows" | "all_cells") {
+            if !matches!(
+                k.as_str(),
+                "axes" | "dims" | "all_records" | "all_rows" | "all_cells"
+            ) {
                 return Err(err(format!(
                     "unknown select key {k:?}; a select is {{\"axes\": [...]}} or \
                      {{\"dims\": {{...}}}}"
@@ -435,7 +448,9 @@ impl Selection {
                     .as_array()
                     .ok_or_else(|| err(format!("select.axes must be an array, got {axes}")))?;
                 Ok(Selection::Orthogonal(
-                    axes.iter().map(AxisSelect::from_json).collect::<Result<_>>()?,
+                    axes.iter()
+                        .map(AxisSelect::from_json)
+                        .collect::<Result<_>>()?,
                 ))
             }
             (None, Some(dims)) => {
@@ -492,7 +507,13 @@ impl DimWindow {
 
     /// `[start, stop)` by `step` along `dim` (`{"slice": [start, stop, step]}`).
     /// A `step` of 0 is carried as given and refused by the read, as on the wire.
-    pub fn step_range(self, dim: impl Into<String>, start: usize, stop: usize, step: usize) -> Self {
+    pub fn step_range(
+        self,
+        dim: impl Into<String>,
+        start: usize,
+        stop: usize,
+        step: usize,
+    ) -> Self {
         self.axis(dim, AxisSelect::Range { start, stop, step })
     }
 
@@ -594,7 +615,10 @@ impl AxisSelect {
     /// `{"slice": [start, stop, step?]}` (`step` default 1). A negative or
     /// non-integer index is an error, never a wrap.
     pub fn from_json(v: &serde_json::Value) -> Result<AxisSelect> {
-        let err = |detail: String| crate::Error::Format { format: "select".to_string(), detail };
+        let err = |detail: String| crate::Error::Format {
+            format: "select".to_string(),
+            detail,
+        };
         let index = |x: &serde_json::Value| -> Result<usize> {
             x.as_u64().map(|i| i as usize).ok_or_else(|| {
                 err(format!(
@@ -609,7 +633,9 @@ impl AxisSelect {
         if let Some(obj) = v.as_object() {
             if obj.len() == 1 {
                 if let Some(idx) = obj.get("indices").and_then(serde_json::Value::as_array) {
-                    return Ok(AxisSelect::Indices(idx.iter().map(index).collect::<Result<_>>()?));
+                    return Ok(AxisSelect::Indices(
+                        idx.iter().map(index).collect::<Result<_>>()?,
+                    ));
                 }
                 if let Some(s) = obj.get("slice").and_then(serde_json::Value::as_array) {
                     if !(2..=3).contains(&s.len()) {
@@ -619,7 +645,11 @@ impl AxisSelect {
                         Some(x) => index(x)?,
                         None => 1,
                     };
-                    return Ok(AxisSelect::Range { start: index(&s[0])?, stop: index(&s[1])?, step });
+                    return Ok(AxisSelect::Range {
+                        start: index(&s[0])?,
+                        stop: index(&s[1])?,
+                        step,
+                    });
                 }
             }
         }
@@ -668,7 +698,9 @@ impl AxisSelect {
                     if g >= dim_len {
                         return Err(crate::Error::Format {
                             format: format.to_string(),
-                            detail: format!("index {g} out of range for dimension length {dim_len}"),
+                            detail: format!(
+                                "index {g} out of range for dimension length {dim_len}"
+                            ),
                         });
                     }
                 }
@@ -755,7 +787,12 @@ pub trait Reader: Send + Sync {
         match records {
             None => self.read_native(blob_path, variables, select),
             Some(r) => Err(crate::Error::Format {
-                format: self.formats().first().copied().unwrap_or("native").to_string(),
+                format: self
+                    .formats()
+                    .first()
+                    .copied()
+                    .unwrap_or("native")
+                    .to_string(),
                 detail: format!(
                     "reader does not honour a `records` pushdown, but one was asked \
                      for along dimension '{}'; read the whole record axis and slice \
@@ -868,7 +905,12 @@ pub trait Reader: Send + Sync {
         let mut keys: Vec<&str> = options.keys().map(String::as_str).collect();
         keys.sort_unstable();
         Err(crate::Error::Format {
-            format: self.formats().first().copied().unwrap_or("native").to_string(),
+            format: self
+                .formats()
+                .first()
+                .copied()
+                .unwrap_or("native")
+                .to_string(),
             detail: format!("reader takes no reader_options, but the loader declares {keys:?}"),
         })
     }

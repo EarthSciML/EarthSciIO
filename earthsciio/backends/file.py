@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..errors import TransportError
 from ..transport import DOWNLOADED, FetchResult, file_url_to_path
@@ -29,15 +29,15 @@ class FileTransport:
     NAME = "file"
     SCHEMES = ("file",)
 
-    def schemes(self) -> List[str]:
+    def schemes(self) -> list[str]:
         return list(self.SCHEMES)
 
     def fetch(
         self,
         resolved_url: str,
         dest: Any,
-        conditional: Optional[Dict[str, Any]] = None,
-        auth: Optional[Any] = None,
+        conditional: dict[str, Any] | None = None,
+        auth: Any | None = None,
     ) -> FetchResult:
         src = file_url_to_path(resolved_url)
         if not os.path.isfile(src):
@@ -48,9 +48,7 @@ class FileTransport:
         try:
             shutil.copyfile(src, os.fspath(dest))
         except OSError as exc:
-            raise TransportError(
-                f"file copy failed {src} -> {dest}: {exc}"
-            ) from exc
+            raise TransportError(f"file copy failed {src} -> {dest}: {exc}") from exc
         return FetchResult(
             DOWNLOADED,
             etag=None,

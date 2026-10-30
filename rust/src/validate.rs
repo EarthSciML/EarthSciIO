@@ -361,7 +361,9 @@ impl SourceRevalidator {
         hashed_at: std::time::SystemTime,
     ) {
         let Some(mtime) = mtime else { return };
-        let Ok(mut seen) = self.seen.lock() else { return };
+        let Ok(mut seen) = self.seen.lock() else {
+            return;
+        };
         // Crude but sufficient: the memo is an optimisation, so dropping all of
         // it costs one re-hash per live file rather than needing an LRU.
         if seen.len() >= MEMO_CAP {
@@ -493,10 +495,7 @@ mod tests {
         let temporal = Temporal::Incomplete {
             ttl: Duration::from_secs(3600),
         };
-        assert_eq!(
-            decide(&m, Some(&temporal), None),
-            CacheDecision::Revalidate
-        );
+        assert_eq!(decide(&m, Some(&temporal), None), CacheDecision::Revalidate);
     }
 
     #[test]

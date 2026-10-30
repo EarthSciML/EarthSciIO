@@ -113,8 +113,7 @@ def test_the_prj_and_shape_type_ride_as_meta_fields(tmp_path):
     assert list(ds.variables["shape_type"].data) == ["Polygon"]
     assert list(ds.variables["crs_wkt"].data) == [PRJ]
     # No `.prj` in the archive -> no CRS is invented.
-    bare = ShapefileReader().read_native(_zip(tmp_path, _write_layer(prj=False),
-                                              name="noprj.zip"))
+    bare = ShapefileReader().read_native(_zip(tmp_path, _write_layer(prj=False), name="noprj.zip"))
     assert "crs_wkt" not in bare.variables
 
 
@@ -131,15 +130,14 @@ def test_a_bare_shp_blob_decodes_geometry_without_attributes(tmp_path):
 def test_the_member_seam_finds_names_and_reports_the_ambiguous_cases(tmp_path):
     two = {**_write_layer(stem="a/one"), **_write_layer(stem="b/two")}
     path = _zip(tmp_path, two, name="two.zip")
-    with pytest.raises(KeyError, match="2 .shp members"):
+    with pytest.raises(KeyError, match=r"2 \.shp members"):
         ShapefileReader().read_native(path)
     ds = ShapefileReader().read_native(path, member="b/two.shp")
     assert list(ds.variables["NAME"].data) == ["one", "two", "two"]
     with pytest.raises(KeyError, match="not in the archive"):
         ShapefileReader().read_native(path, member="b/nope.shp")
-    with pytest.raises(KeyError, match="no .shp member"):
-        ShapefileReader().read_native(_zip(tmp_path, {"readme.txt": b"hi"},
-                                           name="empty.zip"))
+    with pytest.raises(KeyError, match=r"no \.shp member"):
+        ShapefileReader().read_native(_zip(tmp_path, {"readme.txt": b"hi"}, name="empty.zip"))
 
 
 def test_numeric_columns_forces_a_text_code_column_to_float(tmp_path):
@@ -150,13 +148,16 @@ def test_numeric_columns_forces_a_text_code_column_to_float(tmp_path):
         w.poly([SQUARE])
         w.record("01001")
     members["l.shp"], members["l.shx"], members["l.dbf"] = (
-        shp_io.getvalue(), shx_io.getvalue(), dbf_io.getvalue())
+        shp_io.getvalue(),
+        shx_io.getvalue(),
+        dbf_io.getvalue(),
+    )
     path = _zip(tmp_path, members, name="codes.zip")
     text = ShapefileReader().read_native(path)
     assert list(text.variables["GEOID"].data) == ["01001"]
     numeric = ShapefileReader().read_native(path, numeric_columns=["GEOID"])
     assert numeric.variables["GEOID"].data.tolist() == [1001.0]
-    with pytest.raises(KeyError, match="no such .dbf column"):
+    with pytest.raises(KeyError, match=r"no such \.dbf column"):
         ShapefileReader().read_native(path, numeric_columns=["NOPE"])
 
 
@@ -174,8 +175,11 @@ def test_a_dbf_column_named_like_a_reader_field_is_refused(tmp_path):
         w.field("xmin", "N", 10, 3)  # collides with the reader's own bbox field
         w.poly([SQUARE])
         w.record(1.0)
-    path = _zip(tmp_path, {"c.shp": shp_io.getvalue(), "c.shx": shx_io.getvalue(),
-                           "c.dbf": dbf_io.getvalue()}, name="clash.zip")
+    path = _zip(
+        tmp_path,
+        {"c.shp": shp_io.getvalue(), "c.shx": shx_io.getvalue(), "c.dbf": dbf_io.getvalue()},
+        name="clash.zip",
+    )
     with pytest.raises(ValueError, match="collide with the reader's own fields"):
         ShapefileReader().read_native(path)
 
@@ -186,8 +190,8 @@ def test_a_nul_deletion_flag_is_not_a_deletion(tmp_path):
     raw = bytearray(members["layer/parcels.dbf"])
     hdr = int.from_bytes(raw[8:10], "little")
     rec = int.from_bytes(raw[10:12], "little")
-    raw[hdr] = 0x00              # record 0: NUL — a live row
-    raw[hdr + rec] = 0x2A        # record 1: `*` — deleted, with its two parts
+    raw[hdr] = 0x00  # record 0: NUL — a live row
+    raw[hdr + rec] = 0x2A  # record 1: `*` — deleted, with its two parts
     members["layer/parcels.dbf"] = bytes(raw)
     ds = ShapefileReader().read_native(_zip(tmp_path, members, name="flags.zip"))
     assert list(ds.variables["NAME"].data) == ["one"]
@@ -199,11 +203,13 @@ def test_the_registry_serves_the_reader_and_screens_its_options():
     assert format_registry.status("shapefile") == "active"
     reader = format_registry.create("shapefile")
     assert isinstance(reader, ShapefileReader)
-    loader = DataSource(name="l", format="shapefile", url="file:///x.zip",
-                        reader_kwargs={"member": "a.shp"})
+    loader = DataSource(
+        name="l", format="shapefile", url="file:///x.zip", reader_kwargs={"member": "a.shp"}
+    )
     check_reader_options(reader, loader)  # recognised -> no raise
-    bad = DataSource(name="l", format="shapefile", url="file:///x.zip",
-                     reader_kwargs={"membre": "a.shp"})
+    bad = DataSource(
+        name="l", format="shapefile", url="file:///x.zip", reader_kwargs={"membre": "a.shp"}
+    )
     with pytest.raises(Exception, match="membre"):
         check_reader_options(reader, bad)
 

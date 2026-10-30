@@ -16,7 +16,6 @@ import pytest
 
 from earthsciio import decode_cds_url, era5
 
-
 # --------------------------------------------------------------------------- #
 # area-from-domain — era5.jl rounds outward with a 1° margin.
 # --------------------------------------------------------------------------- #
@@ -59,9 +58,11 @@ def test_levels_from_indices_rounds_and_range_checks():
 
 def test_request_matches_era5jl_shape():
     req = era5.era5_request(
-        2018, 11, [8, 9],
+        2018,
+        11,
+        [8, 9],
         variables=["u_component_of_wind", "temperature"],  # unsorted on purpose
-        pressure_levels=[500, 1000, 850],                   # unsorted on purpose
+        pressure_levels=[500, 1000, 850],  # unsorted on purpose
         area=[47, -102, 38, -79],
     )
     assert req["product_type"] == ["reanalysis"]
@@ -101,7 +102,11 @@ def test_request_requires_variable_level_and_day():
 def test_cds_url_decodes_to_the_request():
     days = [8]
     url = era5.era5_cds_url(
-        2018, 11, days, ["temperature"], [1000, 500],
+        2018,
+        11,
+        days,
+        ["temperature"],
+        [1000, 500],
         era5.era5_area_from_bbox(-100.5, 39.0, -80.2, 45.7),
     )
     dataset, request = decode_cds_url(url)
@@ -122,18 +127,30 @@ def test_cds_url_is_the_shared_cross_language_form():
     # shared cache key across languages. Lists are sorted regardless of input
     # order (variables asc, levels desc, days asc).
     url = era5.era5_cds_url(
-        2018, 1, [8, 1], ["temperature", "geopotential"], [850, 1000],
+        2018,
+        1,
+        [8, 1],
+        ["temperature", "geopotential"],
+        [850, 1000],
         [50, -130, 20, -60],
     )
     request = era5.era5_request(
-        2018, 1, [8, 1], ["temperature", "geopotential"], [850, 1000],
+        2018,
+        1,
+        [8, 1],
+        ["temperature", "geopotential"],
+        [850, 1000],
         [50, -130, 20, -60],
     )
     canonical = json.dumps(request, sort_keys=True, separators=(",", ":"))
     assert url == f"cds://{era5.ERA5_DATASET}?{canonical}"
     # the canonicalization is order-independent
     assert url == era5.era5_cds_url(
-        2018, 1, [1, 8], ["geopotential", "temperature"], [1000, 850],
+        2018,
+        1,
+        [1, 8],
+        ["geopotential", "temperature"],
+        [1000, 850],
         [50, -130, 20, -60],
     )
 
@@ -159,9 +176,7 @@ def test_months_in_span_crosses_month_and_year_boundary():
 
 def test_months_in_span_buffer_pulls_in_adjacent_month():
     # 3h buffer before 2018-12-01T01:00 reaches back into November.
-    months = era5.era5_months_in_span(
-        datetime(2018, 12, 1, 1, 0), datetime(2018, 12, 1, 5, 0)
-    )
+    months = era5.era5_months_in_span(datetime(2018, 12, 1, 1, 0), datetime(2018, 12, 1, 5, 0))
     assert months[0][0:2] == (2018, 11)
     assert months[0][2][-1] == 30  # Nov 30 included by the back-buffer
     assert months[-1][0:2] == (2018, 12)
@@ -169,6 +184,4 @@ def test_months_in_span_buffer_pulls_in_adjacent_month():
 
 def test_months_in_span_rejects_reversed():
     with pytest.raises(ValueError):
-        era5.era5_months_in_span(
-            datetime(2019, 1, 2), datetime(2018, 1, 1), buffer=timedelta(0)
-        )
+        era5.era5_months_in_span(datetime(2019, 1, 2), datetime(2018, 1, 1), buffer=timedelta(0))

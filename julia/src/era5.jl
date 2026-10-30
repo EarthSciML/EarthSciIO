@@ -50,8 +50,10 @@ The CDS `area` sub-tile (degrees, order North/West/South/East) for a domain's
 lon/lat bounds, with the reference's ±1° integer buffer so interpolation has
 edge data. Mirrors `ERA5PressureLevelFileSet`'s area computation."""
 function era5_area(; north::Real, west::Real, south::Real, east::Real)
-    return [ceil(Int, north + 1), floor(Int, west - 1),
-            floor(Int, south - 1), ceil(Int, east + 1)]
+    return [
+        ceil(Int, north + 1), floor(Int, west - 1),
+        floor(Int, south - 1), ceil(Int, east + 1),
+    ]
 end
 
 _era5_day(d::Integer) = lpad(d, 2, '0')
@@ -75,20 +77,22 @@ fields:
 
 The result is the `Dict` of CDS request parameters; pass it to [`cds_url`] (or
 use [`era5_pressure_url`]) to get the cache key / fetch URL."""
-function era5_pressure_request(year::Integer, month::Integer;
+function era5_pressure_request(
+        year::Integer, month::Integer;
         variables::AbstractVector{<:AbstractString} = sort(collect(keys(ERA5_VARIABLES))),
         pressure_levels::AbstractVector{<:Real} = ERA5_PRESSURE_LEVELS_HPA,
         days = nothing, times = nothing, area = nothing,
         product_type = ["reanalysis"],
         data_format::AbstractString = "netcdf",
-        download_format::AbstractString = "unarchived")
+        download_format::AbstractString = "unarchived"
+    )
     dys = days === nothing ?
         [lpad(d, 2, '0') for d in 1:Dates.daysinmonth(Date(year, month))] :
         [_era5_day(d) for d in days]
     tms = times === nothing ?
         [_era5_time(h) for h in 0:23] :
         [_era5_time(h) for h in times]
-    req = Dict{String,Any}(
+    req = Dict{String, Any}(
         "product_type" => collect(product_type),
         "variable" => collect(variables),
         "pressure_level" => [string(p) for p in sort(collect(pressure_levels); rev = true)],

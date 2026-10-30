@@ -49,8 +49,9 @@ import dataclasses
 import datetime as _dt
 import inspect
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Union
 
 import numpy as np
 
@@ -58,13 +59,12 @@ from .cache import Cache, CacheEntry
 from .errors import UnknownReaderOption
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
-from .selection import _WindowUnion, _as_dims_select
+from .selection import _as_dims_select, _WindowUnion
 
-__all__ = ["SourceTemporal", "DataSource", "Provider", "Window",
-           "LoaderTemporal", "DataLoader"]
+__all__ = ["DataLoader", "DataSource", "LoaderTemporal", "Provider", "SourceTemporal", "Window"]
 
 #: A run window ``(start, end)`` — half-open ``[start, end)``.
-Window = Tuple[_dt.datetime, _dt.datetime]
+Window = tuple[_dt.datetime, _dt.datetime]
 
 #: A URL spec: a literal URL, a ``strftime`` template (contains ``%``), or a
 #: callable ``anchor -> url`` (the most general, per-file-anchor resolver).
@@ -110,9 +110,9 @@ class SourceTemporal:
     start: _dt.datetime
     frequency: _dt.timedelta
     file_period: _dt.timedelta
-    end: Optional[_dt.datetime] = None
+    end: _dt.datetime | None = None
     time_dim: str = "time"
-    records_per_sample: Optional[int] = None
+    records_per_sample: int | None = None
 
     def __post_init__(self) -> None:
         if self.frequency <= _ZERO:
@@ -120,9 +120,7 @@ class SourceTemporal:
         if self.file_period <= _ZERO:
             raise ValueError(f"file_period must be positive, got {self.file_period!r}")
         if self.records_per_sample not in (None, 1, 2):
-            raise ValueError(
-                f"records_per_sample must be 1 or 2, got {self.records_per_sample!r}"
-            )
+            raise ValueError(f"records_per_sample must be 1 or 2, got {self.records_per_sample!r}")
 
 
 @dataclass
@@ -160,10 +158,10 @@ class DataSource:
     format: str
     url: UrlSpec
     variables: Sequence[str] = ()
-    temporal: Optional[SourceTemporal] = None
+    temporal: SourceTemporal | None = None
     mirrors: Sequence[str] = ()
-    auth_realm: Optional[str] = None
-    reader_kwargs: Dict[str, object] = field(default_factory=dict)
+    auth_realm: str | None = None
+    reader_kwargs: dict[str, object] = field(default_factory=dict)
 
     @property
     def is_const(self) -> bool:
@@ -185,7 +183,7 @@ class DataSource:
 _NOT_AN_OPTION = frozenset({"self", "handle", "cache", "base_url", "variables"})
 
 
-def reader_option_names(reader: Any) -> Set[str]:
+def reader_option_names(reader: Any) -> set[str]:
     """The decode-option names ``reader`` recognises (``spec/registries.md`` §2.1).
 
     A Python reader **declares** its options as the keyword parameters of its
@@ -220,7 +218,7 @@ def reader_option_names(reader: Any) -> Set[str]:
     }
 
 
-def check_reader_options(reader: Any, loader: "DataSource") -> None:
+def check_reader_options(reader: Any, loader: DataSource) -> None:
     """Reject a ``reader_kwargs`` key the bound ``reader`` does not recognise.
 
     Called once, when the :class:`Provider` is built, so a mis-typed decode
@@ -283,9 +281,9 @@ class Provider:
         self,
         loader: DataSource,
         cache: Cache,
-        window: Optional[Window] = None,
+        window: Window | None = None,
         *,
-        formats: Optional[Registry] = None,
+        formats: Registry | None = None,
     ) -> None:
         self.loader = loader
         self.cache = cache
@@ -308,27 +306,26 @@ class Provider:
         :meth:`with_window` or by pickling starts with its own, empty."""
         # Current state — a file-read cache so stepping within one file decodes
         # it once, and the buffer the solver reads between cadence boundaries.
-        self._current: Optional[NativeDataset] = None
-        self._current_anchor: Optional[_dt.datetime] = None
-        self._current_file_anchor: Optional[_dt.datetime] = None
-        self._current_file: Optional[NativeDataset] = None
+        self._current: NativeDataset | None = None
+        self._current_anchor: _dt.datetime | None = None
+        self._current_file_anchor: _dt.datetime | None = None
+        self._current_file: NativeDataset | None = None
         # Tiny LRU of decoded files keyed by file anchor — bracket mode may need
         # two adjacent files open at a file-period seam (the "after" record of the
         # last record in a file lives in the next file). Cap 2.
-        self._files: "OrderedDict[_dt.datetime, NativeDataset]" = OrderedDict()
+        self._files: OrderedDict[_dt.datetime, NativeDataset] = OrderedDict()
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         # A pickled provider (a `PrefetchGroup(executor="process")` member)
         # travels WITHOUT its decoded buffers: they are a per-process cache that
         # is rebuilt on first use, not state, and shipping them would copy whole
         # decoded files to every worker for nothing.
         state = self.__dict__.copy()
-        for k in ("_current", "_current_anchor", "_current_file_anchor",
-                  "_current_file", "_files"):
+        for k in ("_current", "_current_anchor", "_current_file_anchor", "_current_file", "_files"):
             state.pop(k, None)
         return state
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
         self._init_buffers()
 
@@ -340,14 +337,14 @@ class Provider:
         return self.loader.temporal is None
 
     @property
-    def coords(self) -> Dict[str, NativeField]:
+    def coords(self) -> dict[str, NativeField]:
         """Native coordinates of the current buffer (lat/lon/…); empty until the
         first :meth:`materialize`/:meth:`refresh`."""
         return self._current.coords if self._current is not None else {}
 
     # -- materialize / refresh --------------------------------------------- #
 
-    def materialize(self, select: Optional[Any] = None) -> NativeDataset:
+    def materialize(self, select: Any | None = None) -> NativeDataset:
         """Materialize the loader's native arrays into the buffer and return them.
 
         CONST: reads the single file once. DISCRETE: primes the buffer at the
@@ -373,7 +370,7 @@ class Provider:
             return ds
         return self.refresh(self._lower_bound(), select=select)
 
-    def refresh(self, t: _dt.datetime, select: Optional[Any] = None) -> NativeDataset:
+    def refresh(self, t: _dt.datetime, select: Any | None = None) -> NativeDataset:
         """Refresh the buffer to the cadence anchor for time ``t`` and return it.
 
         Snaps ``t`` down to the loader's cadence anchor, re-reads the covering
@@ -435,7 +432,7 @@ class Provider:
 
     # -- named-dimension windows (spec/prefetch.md §2) ---------------------- #
 
-    def with_window(self, w: Any) -> "Provider":
+    def with_window(self, w: Any) -> Provider:
         """A NEW provider with the window ``w`` baked in as its ``select``.
 
         ``w`` is a :class:`~earthsciio.selection.DimWindow` or the wire dict
@@ -464,7 +461,7 @@ class Provider:
         clone._init_buffers()
         return clone
 
-    def sample_windows_at(self, t: _dt.datetime, windows: Sequence[Any]) -> List[NativeDataset]:
+    def sample_windows_at(self, t: _dt.datetime, windows: Sequence[Any]) -> list[NativeDataset]:
         """K windows of :meth:`sample_at` ``(t)``, from ONE fetch and decode.
 
         Dataset ``i`` is identical — bitwise, coordinates included — to
@@ -513,7 +510,7 @@ class Provider:
         ``select`` shrinks the DOWNLOAD or only the decode."""
         return bool(getattr(self._reader, "store_backed", False))
 
-    def array_shape(self, var: str) -> Optional[Tuple[int, ...]]:
+    def array_shape(self, var: str) -> tuple[int, ...] | None:
         """The full native (dims-order) shape of on-disk array ``var``, for a
         honour/refuse pushdown decision, or ``None``.
 
@@ -530,7 +527,7 @@ class Provider:
         anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
         return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
-    def refresh_times(self) -> List[_dt.datetime]:
+    def refresh_times(self) -> list[_dt.datetime]:
         """The cadence anchors at which the data changes and the solver must
         :meth:`refresh` — the solver tstops.
 
@@ -551,7 +548,7 @@ class Provider:
         # First aligned anchor >= lower (ceil of the elapsed step count).
         steps = -((temporal.start - lower) // temporal.frequency)
         anchor = temporal.start + steps * temporal.frequency
-        out: List[_dt.datetime] = []
+        out: list[_dt.datetime] = []
         while anchor < upper:
             out.append(anchor)
             anchor = anchor + temporal.frequency
@@ -559,7 +556,7 @@ class Provider:
 
     # -- prefetch ----------------------------------------------------------- #
 
-    def prefetch(self, window: Optional[Window] = None) -> List[CacheEntry]:
+    def prefetch(self, window: Window | None = None) -> list[CacheEntry]:
         """Warm the cache for every file the provider will need, WITHOUT decoding.
 
         CONST: the single file. DISCRETE: each unique file covering the window
@@ -580,7 +577,7 @@ class Provider:
                 "SourceTemporal.end"
             )
         start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
-        entries: List[CacheEntry] = []
+        entries: list[CacheEntry] = []
         seen: set = set()
         file_anchor = _snap_down(temporal.start, start, temporal.file_period)
         while file_anchor < upper:
@@ -593,7 +590,7 @@ class Provider:
 
     # -- internals ---------------------------------------------------------- #
 
-    def _window_select(self, w: Any) -> Dict[str, Any]:
+    def _window_select(self, w: Any) -> dict[str, Any]:
         """``w`` as a wire select, or the :meth:`with_window` precondition it
         breaks — checked before any I/O."""
         baked = (self.loader.reader_kwargs or {}).get("select")
@@ -630,13 +627,12 @@ class Provider:
         anchor = self._anchor_of(t)
         temporal = self.loader.temporal
         if anchor < temporal.start:
-            raise ValueError(
-                f"t={t!r} precedes the loader start {temporal.start!r}"
-            )
+            raise ValueError(f"t={t!r} precedes the loader start {temporal.start!r}")
         return anchor
 
-    def _sample(self, t: _dt.datetime,
-                files: Callable[[_dt.datetime], NativeDataset]) -> NativeDataset:
+    def _sample(
+        self, t: _dt.datetime, files: Callable[[_dt.datetime], NativeDataset]
+    ) -> NativeDataset:
         """The ONE sampling path behind :meth:`refresh`, :meth:`sample_at` and a
         prefetch group's decode (``spec/prefetch.md`` §1).
 
@@ -657,18 +653,20 @@ class Provider:
         rec = _record_index(file_ds, temporal, anchor, file_anchor)
         return _slice_record(file_ds, temporal.time_dim, rec)
 
-    def _sample_windows(self, t: _dt.datetime, union: _WindowUnion,
-                        files: Callable[[_dt.datetime], NativeDataset]) -> List[NativeDataset]:
+    def _sample_windows(
+        self, t: _dt.datetime, union: _WindowUnion, files: Callable[[_dt.datetime], NativeDataset]
+    ) -> list[NativeDataset]:
         """:meth:`_sample` over files decoded under ``union.select``, split back
         into its windows. Record slicing and window slicing are both pure
         gathers, so their order does not change a value."""
         return union.split(self._sample(t, files))
 
-    def _fresh_files(self, select: Optional[Any] = None
-                     ) -> Callable[[_dt.datetime], NativeDataset]:
+    def _fresh_files(self, select: Any | None = None) -> Callable[[_dt.datetime], NativeDataset]:
         """A file source that decodes afresh on every call (no buffer)."""
+
         def files(file_anchor: _dt.datetime) -> NativeDataset:
             return self._read_file(self.loader.resolve_url(file_anchor), select=select)
+
         return files
 
     def _buffered_file(self, file_anchor: _dt.datetime) -> NativeDataset:
@@ -679,7 +677,7 @@ class Provider:
             self._current_file_anchor = file_anchor
         return self._current_file
 
-    def _sample_urls(self, t: _dt.datetime) -> List[str]:
+    def _sample_urls(self, t: _dt.datetime) -> list[str]:
         """The blob URLs a sample at ``t`` reads (the successor's file too, for a
         bracket) — what a prefetch group's ``fetch_ahead`` warms. Best-effort:
         computed from the cadence grid, never from a decode."""
@@ -691,7 +689,7 @@ class Provider:
         nxt = anchor + temporal.frequency
         if temporal.records_per_sample == 2 and (temporal.end is None or nxt < temporal.end):
             anchors.append(nxt)
-        urls: List[str] = []
+        urls: list[str] = []
         for a in anchors:
             url = self.loader.resolve_url(_snap_down(temporal.start, a, temporal.file_period))
             if url not in urls:
@@ -715,7 +713,7 @@ class Provider:
             mirrors=tuple(self.loader.mirrors),
         )
 
-    def _read_file(self, url: str, select: Optional[Any] = None) -> NativeDataset:
+    def _read_file(self, url: str, select: Any | None = None) -> NativeDataset:
         variables = list(self.loader.variables) if self.loader.variables else None
         reader_kwargs = self.loader.reader_kwargs
         # Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
@@ -731,9 +729,7 @@ class Provider:
         if getattr(self._reader, "store_backed", False):
             effective = select if select is not None else reader_kwargs.get("select")
             rest = {k: v for k, v in reader_kwargs.items() if k != "select"}
-            return self._reader.read_store(
-                self.cache, url, variables, select=effective, **rest
-            )
+            return self._reader.read_store(self.cache, url, variables, select=effective, **rest)
         # Whole-file reader. A `select` — per-call, else the baked one — reaches
         # it only if it declares `supports_selection`; the netcdf reader does, and
         # honours it at DECODE time (same blob, same cache key, only the requested
@@ -743,8 +739,7 @@ class Provider:
         effective = select if select is not None else reader_kwargs.get("select")
         if effective is not None and not supports_selection(self._reader):
             raise ValueError(
-                f"reader {type(self._reader).__name__} does not support "
-                "select/pushdown"
+                f"reader {type(self._reader).__name__} does not support select/pushdown"
             )
         rest = {k: v for k, v in reader_kwargs.items() if k != "select"}
         entry = self._fetch(url)
@@ -753,8 +748,7 @@ class Provider:
             return self._reader.read_native(handle, variables, **rest)
         return self._reader.read_native(handle, variables, select=effective, **rest)
 
-    def _file_for(self, file_anchor: _dt.datetime,
-                  select: Optional[Any] = None) -> NativeDataset:
+    def _file_for(self, file_anchor: _dt.datetime, select: Any | None = None) -> NativeDataset:
         """Decode the file covering ``file_anchor``, via a 2-entry LRU so a
         file-period seam (two adjacent files) decodes each at most once.
 
@@ -790,9 +784,12 @@ class Provider:
             self._files.move_to_end(file_anchor)
         return ds
 
-    def _sample_bracket(self, temporal: SourceTemporal,
-                        anchor: _dt.datetime,
-                        files: Callable[[_dt.datetime], NativeDataset]) -> NativeDataset:
+    def _sample_bracket(
+        self,
+        temporal: SourceTemporal,
+        anchor: _dt.datetime,
+        files: Callable[[_dt.datetime], NativeDataset],
+    ) -> NativeDataset:
         """Return the two records bracketing ``anchor`` (floor + successor) with
         ``time_dim`` retained at length 2 and a canonical epoch-seconds ``time``
         coordinate. Handles the cross-file successor and the end-of-data clamp.
@@ -807,14 +804,13 @@ class Provider:
 
         next_anchor = anchor + temporal.frequency
         has_succ = temporal.end is None or next_anchor < temporal.end
-        succ: Optional[Tuple[NativeDataset, int]] = None
+        succ: tuple[NativeDataset, int] | None = None
         if has_succ:
             try:
                 if rec0 + 1 < _time_len(file0, time_dim):
                     succ = (file0, rec0 + 1)  # successor in the same file
                 else:  # successor is record 0 of the next file
-                    n_anchor = _snap_down(temporal.start, next_anchor,
-                                          temporal.file_period)
+                    n_anchor = _snap_down(temporal.start, next_anchor, temporal.file_period)
                     file1 = files(n_anchor)
                     r1 = _record_index(file1, temporal, next_anchor, n_anchor)
                     if 0 <= r1 < _time_len(file1, time_dim):
@@ -826,8 +822,13 @@ class Provider:
             succ = (file0, rec0)
 
         return _bracket_record(
-            file0, rec0, succ[0], succ[1], time_dim,
-            _epoch_seconds(anchor), _epoch_seconds(next_anchor),
+            file0,
+            rec0,
+            succ[0],
+            succ[1],
+            time_dim,
+            _epoch_seconds(anchor),
+            _epoch_seconds(next_anchor),
         )
 
 
@@ -840,9 +841,7 @@ def _slice_record(ds: NativeDataset, time_dim: str, rec: int) -> NativeDataset:
     """
     variables = {name: _slice_field(f, time_dim, rec) for name, f in ds.variables.items()}
     coords = {
-        name: _slice_field(f, time_dim, rec)
-        for name, f in ds.coords.items()
-        if name != time_dim
+        name: _slice_field(f, time_dim, rec) for name, f in ds.coords.items() if name != time_dim
     }
     return NativeDataset(variables, coords)
 
@@ -854,8 +853,7 @@ def _slice_field(f: NativeField, time_dim: str, rec: int) -> NativeField:
     length = f.data.shape[axis]
     if rec < 0 or rec >= length:
         raise IndexError(
-            f"cadence record {rec} out of range for dimension {time_dim!r} "
-            f"(length {length})"
+            f"cadence record {rec} out of range for dimension {time_dim!r} (length {length})"
         )
     sliced = np.take(f.data, rec, axis=axis)
     new_dims = tuple(d for d in f.dims if d != time_dim)
@@ -874,8 +872,9 @@ def _time_len(ds: NativeDataset, time_dim: str) -> int:
     return 0
 
 
-def _stack_two(f0: NativeField, f1: NativeField, time_dim: str,
-               rec0: int, rec1: int) -> NativeField:
+def _stack_two(
+    f0: NativeField, f1: NativeField, time_dim: str, rec0: int, rec1: int
+) -> NativeField:
     """Stack record ``rec0`` of ``f0`` and ``rec1`` of ``f1`` along ``time_dim``,
     keeping ``time_dim`` at length 2. Non-temporal fields pass through unchanged."""
     if time_dim not in f0.dims:
@@ -886,8 +885,15 @@ def _stack_two(f0: NativeField, f1: NativeField, time_dim: str,
     return NativeField(np.stack([a, b], axis=axis), f0.dims, f0.attrs)
 
 
-def _bracket_record(file0: NativeDataset, rec0: int, file1: NativeDataset, rec1: int,
-                    time_dim: str, t0_epoch: float, t1_epoch: float) -> NativeDataset:
+def _bracket_record(
+    file0: NativeDataset,
+    rec0: int,
+    file1: NativeDataset,
+    rec1: int,
+    time_dim: str,
+    t0_epoch: float,
+    t1_epoch: float,
+) -> NativeDataset:
     """Assemble the 2-record bracket dataset: every temporal variable stacked to a
     size-2 ``time_dim`` axis, non-temporal coords passed through, and a canonical
     2-element ``time_dim`` coordinate of Unix epoch seconds ``[t0, t1]``."""
@@ -895,9 +901,7 @@ def _bracket_record(file0: NativeDataset, rec0: int, file1: NativeDataset, rec1:
         name: _stack_two(f, file1.variables[name], time_dim, rec0, rec1)
         for name, f in file0.variables.items()
     }
-    coords = {
-        name: f for name, f in file0.coords.items() if name != time_dim
-    }
+    coords = {name: f for name, f in file0.coords.items() if name != time_dim}
     coords[time_dim] = NativeField(
         np.array([t0_epoch, t1_epoch], dtype=np.float64),
         (time_dim,),
@@ -922,7 +926,7 @@ def _to_naive_utc(d: _dt.datetime) -> _dt.datetime:
     return d
 
 
-def _decode_file_times(coord: NativeField) -> Optional[List[_dt.datetime]]:
+def _decode_file_times(coord: NativeField) -> list[_dt.datetime] | None:
     """Decode a raw CF time coordinate to naive-UTC datetimes, or ``None``.
 
     The netcdf reader returns the time axis undecoded (raw integers + a CF
@@ -938,8 +942,9 @@ def _decode_file_times(coord: NativeField) -> Optional[List[_dt.datetime]]:
         from xarray.coding.times import decode_cf_datetime
 
         decoded = np.asarray(
-            decode_cf_datetime(np.asarray(coord.data), str(units),
-                               attrs.get("calendar", "standard"))
+            decode_cf_datetime(
+                np.asarray(coord.data), str(units), attrs.get("calendar", "standard")
+            )
         )
         if not np.issubdtype(decoded.dtype, np.datetime64):
             return None  # cftime (non-standard calendar) — fall back
@@ -949,13 +954,13 @@ def _decode_file_times(coord: NativeField) -> Optional[List[_dt.datetime]]:
         return None
 
 
-def _record_at_or_before(times: List[_dt.datetime], anchor: _dt.datetime) -> Optional[int]:
+def _record_at_or_before(times: list[_dt.datetime], anchor: _dt.datetime) -> int | None:
     """Index of the latest record at or before ``anchor`` (clamped to the
     earliest record when ``anchor`` precedes them all). Order-independent."""
     if not times:
         return None
     a = _to_naive_utc(anchor)
-    best: Optional[int] = None
+    best: int | None = None
     for i, ti in enumerate(times):
         if ti <= a and (best is None or ti > times[best]):
             best = i
@@ -964,8 +969,9 @@ def _record_at_or_before(times: List[_dt.datetime], anchor: _dt.datetime) -> Opt
     return min(range(len(times)), key=lambda i: times[i])
 
 
-def _record_index(file_ds: NativeDataset, temporal: Any, anchor: _dt.datetime,
-                  file_anchor: _dt.datetime) -> int:
+def _record_index(
+    file_ds: NativeDataset, temporal: Any, anchor: _dt.datetime, file_anchor: _dt.datetime
+) -> int:
     """The record index for ``anchor`` within ``file_ds``.
 
     Prefer the file's REAL time axis (``temporal.time_dim`` coordinate): robust to

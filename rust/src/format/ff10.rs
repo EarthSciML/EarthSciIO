@@ -51,25 +51,82 @@ use super::{ArrayData, DType, NativeDataset, NativeField, Reader, Selection};
 /// spec names COUNTRY_CD / REGION_CD (Emissions.jl: COUNTRY / FIPS — identical
 /// values, a positional alias).
 pub const FF10_POINT_COLUMNS: [&str; 77] = [
-    "COUNTRY_CD", "REGION_CD", "TRIBAL_CODE", "FACILITY_ID",
-    "UNIT_ID", "REL_POINT_ID", "PROCESS_ID", "AGY_FACILITY_ID",
-    "AGY_UNIT_ID", "AGY_REL_POINT_ID", "AGY_PROCESS_ID", "SCC",
-    "POLID", "ANN_VALUE", "ANN_PCT_RED", "FACILITY_NAME",
-    "ERPTYPE", "STKHGT", "STKDIAM", "STKTEMP",
-    "STKFLOW", "STKVEL", "NAICS", "LONGITUDE",
-    "LATITUDE", "LL_DATUM", "HORIZ_COLL_MTHD", "DESIGN_CAPACITY",
-    "DESIGN_CAPACITY_UNITS", "REG_CODES", "FAC_SOURCE_TYPE", "UNIT_TYPE_CODE",
-    "CONTROL_IDS", "CONTROL_MEASURES", "CURRENT_COST", "CUMULATIVE_COST",
-    "PROJECTION_FACTOR", "SUBMITTER_FAC_ID", "CALC_METHOD", "DATA_SET_ID",
-    "FACIL_CATEGORY_CODE", "ORIS_FACILITY_CODE", "ORIS_BOILER_ID", "IPM_YN",
-    "CALC_YEAR", "DATE_UPDATED", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ZIPCODE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE",
-    "MAY_VALUE", "JUN_VALUE", "JUL_VALUE", "AUG_VALUE",
-    "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED",
-    "MAY_PCTRED", "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED",
-    "SEP_PCTRED", "OCT_PCTRED", "NOV_PCTRED", "DEC_PCTRED",
+    "COUNTRY_CD",
+    "REGION_CD",
+    "TRIBAL_CODE",
+    "FACILITY_ID",
+    "UNIT_ID",
+    "REL_POINT_ID",
+    "PROCESS_ID",
+    "AGY_FACILITY_ID",
+    "AGY_UNIT_ID",
+    "AGY_REL_POINT_ID",
+    "AGY_PROCESS_ID",
+    "SCC",
+    "POLID",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "FACILITY_NAME",
+    "ERPTYPE",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "NAICS",
+    "LONGITUDE",
+    "LATITUDE",
+    "LL_DATUM",
+    "HORIZ_COLL_MTHD",
+    "DESIGN_CAPACITY",
+    "DESIGN_CAPACITY_UNITS",
+    "REG_CODES",
+    "FAC_SOURCE_TYPE",
+    "UNIT_TYPE_CODE",
+    "CONTROL_IDS",
+    "CONTROL_MEASURES",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "SUBMITTER_FAC_ID",
+    "CALC_METHOD",
+    "DATA_SET_ID",
+    "FACIL_CATEGORY_CODE",
+    "ORIS_FACILITY_CODE",
+    "ORIS_BOILER_ID",
+    "IPM_YN",
+    "CALC_YEAR",
+    "DATE_UPDATED",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ZIPCODE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
     "COMMENT",
 ];
 
@@ -77,15 +134,48 @@ pub const FF10_POINT_COLUMNS: [&str; 77] = [
 /// (ids/codes/free-text/temporal tokens) stays `Str` so leading-zero codes
 /// (REGION_CD `"01001"`, ZIPCODE `"00000"`, SCC, POLID) never become floats.
 pub const FF10_POINT_NUMERIC: [&str; 42] = [
-    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
-    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
-    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
-    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
-    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
-    "NOV_PCTRED", "DEC_PCTRED",
+    "ANN_VALUE",
+    "ANN_PCT_RED",
+    "STKHGT",
+    "STKDIAM",
+    "STKTEMP",
+    "STKFLOW",
+    "STKVEL",
+    "LONGITUDE",
+    "LATITUDE",
+    "DESIGN_CAPACITY",
+    "CURRENT_COST",
+    "CUMULATIVE_COST",
+    "PROJECTION_FACTOR",
+    "FUG_HEIGHT",
+    "FUG_WIDTH_XDIM",
+    "FUG_LENGTH_YDIM",
+    "FUG_ANGLE",
+    "ANNUAL_AVG_HOURS_PER_YEAR",
+    "JAN_VALUE",
+    "FEB_VALUE",
+    "MAR_VALUE",
+    "APR_VALUE",
+    "MAY_VALUE",
+    "JUN_VALUE",
+    "JUL_VALUE",
+    "AUG_VALUE",
+    "SEP_VALUE",
+    "OCT_VALUE",
+    "NOV_VALUE",
+    "DEC_VALUE",
+    "JAN_PCTRED",
+    "FEB_PCTRED",
+    "MAR_PCTRED",
+    "APR_PCTRED",
+    "MAY_PCTRED",
+    "JUN_PCTRED",
+    "JUL_PCTRED",
+    "AUG_PCTRED",
+    "SEP_PCTRED",
+    "OCT_PCTRED",
+    "NOV_PCTRED",
+    "DEC_PCTRED",
 ];
 
 /// The FF10 schema variant. Only `Point` (77 columns) ships today; the 45-col
@@ -209,8 +299,10 @@ impl Ff10Reader {
                     let arr = v.as_array().ok_or_else(|| {
                         fmt_err(&format!("reader option {k:?} must be an array of strings"))
                     })?;
-                    let names: Result<Vec<String>> =
-                        arr.iter().map(|m| str_opt(k, m).map(str::to_string)).collect();
+                    let names: Result<Vec<String>> = arr
+                        .iter()
+                        .map(|m| str_opt(k, m).map(str::to_string))
+                        .collect();
                     r = r.members(names?);
                 }
                 "member_glob" => {
@@ -265,7 +357,9 @@ impl Reader for Ff10Reader {
         if options.is_empty() {
             return Ok(None);
         }
-        Ok(Some(std::sync::Arc::new(Ff10Reader::from_options(options)?)))
+        Ok(Some(std::sync::Arc::new(Ff10Reader::from_options(
+            options,
+        )?)))
     }
 
     fn read_native(
@@ -302,9 +396,12 @@ impl Reader for Ff10Reader {
 fn read_zip_member(path: &Path, member: &str) -> Result<String> {
     let file = std::fs::File::open(path).map_err(|e| Error::io(Some(path.to_path_buf()), e))?;
     let mut archive = zip::ZipArchive::new(file).map_err(zip_err)?;
-    let mut zf = archive
-        .by_name(member)
-        .map_err(|_| fmt_err(&format!("zip member {member:?} not found in {}", path.display())))?;
+    let mut zf = archive.by_name(member).map_err(|_| {
+        fmt_err(&format!(
+            "zip member {member:?} not found in {}",
+            path.display()
+        ))
+    })?;
     let mut text = String::new();
     zf.read_to_string(&mut text)
         .map_err(|e| Error::io(Some(path.to_path_buf()), e))?;
@@ -379,7 +476,10 @@ enum GlobTok {
     /// `[...]` / `[!...]` — a (possibly negated) character class of literal
     /// chars and `a-z` ranges. An unclosed `[` is treated as a literal (fnmatch
     /// semantics).
-    Class { neg: bool, ranges: Vec<(char, char)> },
+    Class {
+        neg: bool,
+        ranges: Vec<(char, char)>,
+    },
 }
 
 /// Parse an fnmatch-style glob (`*`, `?`, `[...]`/`[!...]`; case-sensitive) into
@@ -557,7 +657,9 @@ fn build_dataset(
     if let Some(w) = &want {
         for v in w {
             if !FF10_POINT_COLUMNS.contains(v) {
-                return Err(fmt_err(&format!("requested FF10 column {v:?} not in schema")));
+                return Err(fmt_err(&format!(
+                    "requested FF10 column {v:?} not in schema"
+                )));
             }
         }
     }
@@ -643,23 +745,37 @@ mod tests {
             r.join(",")
         };
         let stack: Vec<(&str, &str)> = vec![
-            ("COUNTRY_CD", "US"), ("REGION_CD", "01001"), ("FACILITY_ID", "F001"),
-            ("UNIT_ID", "U1"), ("REL_POINT_ID", "R1"), ("PROCESS_ID", "P1"),
-            ("SCC", "0030700101"), ("FACILITY_NAME", "Autauga Plant, Unit 1"),
-            ("STKHGT", "100.0"), ("STKTEMP", "500.0"),
-            ("LONGITUDE", "-86.51045"), ("LATITUDE", "32.43878"), ("ZIPCODE", "00000"),
+            ("COUNTRY_CD", "US"),
+            ("REGION_CD", "01001"),
+            ("FACILITY_ID", "F001"),
+            ("UNIT_ID", "U1"),
+            ("REL_POINT_ID", "R1"),
+            ("PROCESS_ID", "P1"),
+            ("SCC", "0030700101"),
+            ("FACILITY_NAME", "Autauga Plant, Unit 1"),
+            ("STKHGT", "100.0"),
+            ("STKTEMP", "500.0"),
+            ("LONGITUDE", "-86.51045"),
+            ("LATITUDE", "32.43878"),
+            ("ZIPCODE", "00000"),
         ];
         let mut r1 = stack.clone();
         r1.extend_from_slice(&[("POLID", "NOX"), ("ANN_VALUE", "123.45")]);
         let mut r2 = stack.clone();
         r2.extend_from_slice(&[("POLID", "SO2"), ("ANN_VALUE", "67.89")]);
         let r3: Vec<(&str, &str)> = vec![
-            ("COUNTRY_CD", "US"), ("REGION_CD", "01001"), ("FACILITY_ID", "F002"),
-            ("POLID", "PM25"), ("ANN_VALUE", "4.2"), ("FACILITY_NAME", "Plain Name"),
+            ("COUNTRY_CD", "US"),
+            ("REGION_CD", "01001"),
+            ("FACILITY_ID", "F002"),
+            ("POLID", "PM25"),
+            ("ANN_VALUE", "4.2"),
+            ("FACILITY_NAME", "Plain Name"),
         ];
         format!(
             "#FORMAT=FF10_POINT\n#COUNTRY US\n\n{}\n{}\n{}\n",
-            mkrow(&r1), mkrow(&r2), mkrow(&r3)
+            mkrow(&r1),
+            mkrow(&r2),
+            mkrow(&r3)
         )
     }
 
@@ -717,8 +833,7 @@ mod tests {
 
     #[test]
     fn absent_variable_is_an_error() {
-        let err = decode(&fixture_text(), &FF10_POINT_NUMERIC, &["NOPE".to_string()])
-            .unwrap_err();
+        let err = decode(&fixture_text(), &FF10_POINT_NUMERIC, &["NOPE".to_string()]).unwrap_err();
         assert!(matches!(err, Error::Format { .. }));
     }
 
@@ -796,7 +911,10 @@ mod tests {
             ("point/egu_beta.csv", vec![tiny_row("F202", "NOX", "333.3")]),
             (
                 "point/egu_alpha.csv",
-                vec![tiny_row("F101", "NOX", "111.1"), tiny_row("F101", "SO2", "22.2")],
+                vec![
+                    tiny_row("F101", "NOX", "111.1"),
+                    tiny_row("F101", "SO2", "22.2"),
+                ],
             ),
             ("point/ptnonipm.csv", vec![tiny_row("F999", "NOX", "999.9")]),
         ] {
@@ -942,12 +1060,10 @@ mod tests {
         assert_eq!(f64s(&declared, "ANN_VALUE"), f64s(&built, "ANN_VALUE"));
 
         // An empty option set leaves the registered reader alone.
-        assert!(
-            Ff10Reader::new()
-                .configured(&serde_json::Map::new())
-                .unwrap()
-                .is_none()
-        );
+        assert!(Ff10Reader::new()
+            .configured(&serde_json::Map::new())
+            .unwrap()
+            .is_none());
     }
 
     /// A mis-typed or wrongly-typed option is an ERROR, never a silently

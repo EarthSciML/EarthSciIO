@@ -33,8 +33,7 @@ def test_registered_active():
 def test_rewrite_default_region():
     url = "s3://inmap-model/isrm_v1.2.1.zarr/PrimaryPM25/.zarray"
     assert s3_https_url(url) == (
-        "https://inmap-model.s3.us-east-2.amazonaws.com/"
-        "isrm_v1.2.1.zarr/PrimaryPM25/.zarray"
+        "https://inmap-model.s3.us-east-2.amazonaws.com/isrm_v1.2.1.zarr/PrimaryPM25/.zarray"
     )
 
 

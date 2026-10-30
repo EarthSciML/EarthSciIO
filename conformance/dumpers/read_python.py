@@ -35,7 +35,7 @@ import math
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -62,17 +62,17 @@ class _LocalDirCache:
     turns into ``fill_value`` (never NaN)."""
 
     def fetch(self, url: str, **_: Any) -> _Entry:
-        path = url[len("file://"):] if url.startswith("file://") else url
+        path = url[len("file://") :] if url.startswith("file://") else url
         if not os.path.exists(path):
             raise CacheMiss(url, "write-conformance-readback")
         return _Entry(path)
 
 
-def _encode_field(data: np.ndarray, dims: List[str]) -> Dict[str, Any]:
+def _encode_field(data: np.ndarray, dims: list[str]) -> dict[str, Any]:
     flat = np.asarray(data).reshape(-1)
     if np.issubdtype(flat.dtype, np.floating):
         dtype = "float64"
-        values: List[Any] = [None if math.isnan(x) else float(x) for x in flat.tolist()]
+        values: list[Any] = [None if math.isnan(x) else float(x) for x in flat.tolist()]
     elif flat.dtype == np.int32:
         dtype = "int32"
         values = [int(x) for x in flat.tolist()]
@@ -82,7 +82,7 @@ def _encode_field(data: np.ndarray, dims: List[str]) -> Dict[str, Any]:
     return {"dtype": dtype, "dims": list(dims), "shape": list(data.shape), "data": values}
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(
             "usage: read_python.py STORE_DIR WRITER_LABEL [OUT.json] [SPEC.json]",

@@ -25,9 +25,7 @@
 use std::sync::Arc;
 
 use zarrs::storage::byte_range::ByteRangeIterator;
-use zarrs::storage::{
-    Bytes, MaybeBytesIterator, ReadableStorageTraits, StorageError, StoreKey,
-};
+use zarrs::storage::{Bytes, MaybeBytesIterator, ReadableStorageTraits, StorageError, StoreKey};
 
 use crate::cache::{Cache, FetchRequest};
 
@@ -35,8 +33,7 @@ use crate::cache::{Cache, FetchRequest};
 /// document (a zarr-python/numcodecs quirk `zarrs` rejects). Returns the input
 /// unchanged if it is not the JSON object with that null field.
 pub(crate) fn sanitize_v2_array_meta(data: Vec<u8>) -> Vec<u8> {
-    let Ok(serde_json::Value::Object(mut map)) =
-        serde_json::from_slice::<serde_json::Value>(&data)
+    let Ok(serde_json::Value::Object(mut map)) = serde_json::from_slice::<serde_json::Value>(&data)
     else {
         return data;
     };

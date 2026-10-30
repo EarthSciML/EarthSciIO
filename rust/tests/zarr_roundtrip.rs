@@ -26,7 +26,10 @@ use serde_json::{Map, Value};
 const RTOL: f64 = 1e-6;
 
 fn attrs(pairs: &[(&str, Value)]) -> Map<String, Value> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }
 
 fn assert_close(got: &NativeField, want: &[f64], ctx: &str) {
@@ -63,10 +66,14 @@ fn write_then_read_roundtrip_within_tolerance() {
         }
     }
 
-    let chunk_shape: BTreeMap<String, usize> =
-        [("time", 1), ("y", 2), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    let shard_shape: BTreeMap<String, usize> =
-        [("time", 2), ("y", 4), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    let chunk_shape: BTreeMap<String, usize> = [("time", 1), ("y", 2), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
+    let shard_shape: BTreeMap<String, usize> = [("time", 2), ("y", 4), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
 
     let schema = OutputSchema {
         dims: vec![("time".into(), 2), ("y".into(), 4), ("x".into(), 3)],
@@ -111,9 +118,14 @@ fn write_then_read_roundtrip_within_tolerance() {
 
     // --- read back through the new ZarrReader (Provider over file://) -------- //
     let base_url = format!("file://{}", store_dir.display());
-    let cache = Arc::new(Cache::builder().data_dir(&cache_dir).build().expect("cache"));
-    let loader = DataSource::new("roundtrip", "zarr", &base_url)
-        .variables(["conc", "time", "x", "y"]);
+    let cache = Arc::new(
+        Cache::builder()
+            .data_dir(&cache_dir)
+            .build()
+            .expect("cache"),
+    );
+    let loader =
+        DataSource::new("roundtrip", "zarr", &base_url).variables(["conc", "time", "x", "y"]);
     let mut provider = Provider::new(loader, cache, None).expect("provider");
     let buffers = provider.materialize().expect("materialize written store");
 
@@ -135,16 +147,28 @@ fn write_then_read_roundtrip_within_tolerance() {
     .unwrap();
     assert_eq!(conc_meta["zarr_format"], 3);
     assert_eq!(conc_meta["data_type"], "float64");
-    assert_eq!(conc_meta["dimension_names"], serde_json::json!(["time", "y", "x"]));
+    assert_eq!(
+        conc_meta["dimension_names"],
+        serde_json::json!(["time", "y", "x"])
+    );
     assert_eq!(conc_meta["attributes"]["units"], "ug/m3");
     assert_eq!(conc_meta["attributes"]["coordinates"], "x y");
-    assert_eq!(conc_meta["attributes"]["_ARRAY_DIMENSIONS"], serde_json::json!(["time", "y", "x"]));
+    assert_eq!(
+        conc_meta["attributes"]["_ARRAY_DIMENSIONS"],
+        serde_json::json!(["time", "y", "x"])
+    );
     // Sharding codec pipeline: sharding_indexed(inner=[bytes,blosc], index=[bytes,crc32c]).
     let codec = &conc_meta["codecs"][0];
     assert_eq!(codec["name"], "sharding_indexed");
-    assert_eq!(codec["configuration"]["chunk_shape"], serde_json::json!([1, 2, 3]));
+    assert_eq!(
+        codec["configuration"]["chunk_shape"],
+        serde_json::json!([1, 2, 3])
+    );
     assert_eq!(codec["configuration"]["codecs"][1]["name"], "blosc");
-    assert_eq!(codec["configuration"]["codecs"][1]["configuration"]["cname"], "zstd");
+    assert_eq!(
+        codec["configuration"]["codecs"][1]["configuration"]["cname"],
+        "zstd"
+    );
     assert_eq!(codec["configuration"]["index_codecs"][1]["name"], "crc32c");
     // The outer chunk grid is the shard shape.
     assert_eq!(
@@ -173,7 +197,9 @@ fn write_then_read_roundtrip_within_tolerance() {
     assert_eq!(manifest["vars"][0]["attrs"]["coordinates"], "x y");
     // `_ARRAY_DIMENSIONS` is the node writer's own bookkeeping, not something the
     // caller stated, so it stays out of the caller-facing manifest.
-    assert!(manifest["vars"][0]["attrs"].get("_ARRAY_DIMENSIONS").is_none());
+    assert!(manifest["vars"][0]["attrs"]
+        .get("_ARRAY_DIMENSIONS")
+        .is_none());
 }
 
 // --- the `wasm` codec profile ---------------------------------------------- //
@@ -200,10 +226,14 @@ fn fixture_schema(profile: &str) -> (OutputSchema, Vec<f64>, Vec<f64>, Vec<f64>,
             }
         }
     }
-    let chunk_shape: BTreeMap<String, usize> =
-        [("time", 1), ("y", 2), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    let shard_shape: BTreeMap<String, usize> =
-        [("time", 2), ("y", 4), ("x", 3)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    let chunk_shape: BTreeMap<String, usize> = [("time", 1), ("y", 2), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
+    let shard_shape: BTreeMap<String, usize> = [("time", 2), ("y", 4), ("x", 3)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
 
     let schema = OutputSchema {
         dims: vec![("time".into(), 2), ("y".into(), 4), ("x".into(), 3)],
@@ -270,7 +300,10 @@ fn wasm_profile_emits_plain_zstd_without_blosc() {
         assert_eq!(inner[1]["configuration"]["level"], 5, "{array}");
         assert_eq!(inner[1]["configuration"]["checksum"], false, "{array}");
         // the shard index pipeline is untouched
-        assert_eq!(codec["configuration"]["index_codecs"][1]["name"], "crc32c", "{array}");
+        assert_eq!(
+            codec["configuration"]["index_codecs"][1]["name"], "crc32c",
+            "{array}"
+        );
         // fill_value stays 0.0 (never NaN)
         assert_eq!(meta["fill_value"], 0.0, "{array}");
         assert_eq!(meta["data_type"], "float64", "{array}");
@@ -297,11 +330,18 @@ fn wasm_profile_write_then_read_roundtrip_within_tolerance() {
     write_zarr_v3(&store_dir, &schema).expect("write wasm-profile zarr v3 store");
 
     let base_url = format!("file://{}", store_dir.display());
-    let cache = Arc::new(Cache::builder().data_dir(&cache_dir).build().expect("cache"));
+    let cache = Arc::new(
+        Cache::builder()
+            .data_dir(&cache_dir)
+            .build()
+            .expect("cache"),
+    );
     let loader =
         DataSource::new("wasm-roundtrip", "zarr", &base_url).variables(["conc", "time", "x", "y"]);
     let mut provider = Provider::new(loader, cache, None).expect("provider");
-    let buffers = provider.materialize().expect("materialize wasm-profile store");
+    let buffers = provider
+        .materialize()
+        .expect("materialize wasm-profile store");
 
     let got = &buffers["conc"];
     assert_eq!(got.dims, vec!["time", "y", "x"]);
@@ -317,7 +357,10 @@ fn wasm_profile_write_then_read_roundtrip_within_tolerance() {
         &std::fs::read(store_dir.join("conc/zarr.json")).expect("conc/zarr.json"),
     )
     .unwrap();
-    assert_eq!(conc_meta["dimension_names"], serde_json::json!(["time", "y", "x"]));
+    assert_eq!(
+        conc_meta["dimension_names"],
+        serde_json::json!(["time", "y", "x"])
+    );
     assert_eq!(conc_meta["attributes"]["units"], "ug/m3");
     assert_eq!(conc_meta["attributes"]["coordinates"], "x y");
 }
@@ -350,6 +393,9 @@ fn a_bad_time_coordinate_is_rejected_before_any_io() {
         let path = scratch.path().join("bad.zarr");
         let err = write_zarr_v3(&path, &schema).expect_err("a bad time coordinate");
         assert!(format!("{err}").contains(want), "{vals:?}: {err}");
-        assert!(!path.join("zarr.json").exists(), "{vals:?}: wrote before checking");
+        assert!(
+            !path.join("zarr.json").exists(),
+            "{vals:?}: wrote before checking"
+        );
     }
 }

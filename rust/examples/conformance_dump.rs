@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, Cache, Coord, DType, DataSource, Ff10Reader, FormatRegistry, NativeField,
-    Provider, Selection,
+    ArrayData, Cache, Coord, DType, DataSource, Ff10Reader, FormatRegistry, NativeField, Provider,
+    Selection,
 };
 use serde_json::{json, Map, Value};
 
@@ -49,7 +49,11 @@ fn ff10_reader_from_decode(case: &Value) -> Option<Ff10Reader> {
         reader = reader.member_glob(g);
         configured = true;
     }
-    if dec.get("skip_header_row").and_then(Value::as_bool).unwrap_or(false) {
+    if dec
+        .get("skip_header_row")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         reader = reader.skip_header_row(true);
         configured = true;
     }
@@ -178,7 +182,9 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
     if fmt == "parquet" {
         if let Some(vars) = case.get("variables").and_then(Value::as_array) {
             loader = loader.variables(
-                vars.iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>(),
+                vars.iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>(),
             );
         }
         let mut options = Map::new();
@@ -267,7 +273,12 @@ fn main() {
     let raw = std::env::var("ESIO_CONFORMANCE_CASES").unwrap_or_default();
     let only: Option<Vec<&str>> = match raw.trim() {
         "" => None,
-        list => Some(list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect()),
+        list => Some(
+            list.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect(),
+        ),
     };
 
     let index = read_json(&corpus.join("cases.json"));

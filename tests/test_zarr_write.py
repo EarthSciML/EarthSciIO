@@ -24,8 +24,8 @@ from earthsciio.backends.zarr import ZarrReader
 from earthsciio.backends.zarr_write import (
     BLOSC_CHECKPOINT,
     BLOSC_DIAGNOSTIC,
-    ZSTD_WASM,
     OUTPUT_MANIFEST_SCHEMA,
+    ZSTD_WASM,
     OutputSchema,
     OutputVar,
     ZarrWriter,
@@ -80,9 +80,24 @@ def _schema(profile="diagnostic"):
         chunk_shape={"time": 2, "y": 3, "x": 4},
         shard_shape={"time": 4, "y": 3, "x": 4},
         coords=[
-            ("y", (np.array([0.0, 10.0, 20.0]), {"standard_name": "projection_y_coordinate", "axis": "Y", "units": "m"})),
-            ("x", (np.array([0.0, 1.0, 2.0, 3.0]), {"standard_name": "projection_x_coordinate", "axis": "X", "units": "m"})),
-            ("time", (np.array([]), {"units": "seconds since 1970-01-01", "standard_name": "time"})),
+            (
+                "y",
+                (
+                    np.array([0.0, 10.0, 20.0]),
+                    {"standard_name": "projection_y_coordinate", "axis": "Y", "units": "m"},
+                ),
+            ),
+            (
+                "x",
+                (
+                    np.array([0.0, 1.0, 2.0, 3.0]),
+                    {"standard_name": "projection_x_coordinate", "axis": "X", "units": "m"},
+                ),
+            ),
+            (
+                "time",
+                (np.array([]), {"units": "seconds since 1970-01-01", "standard_name": "time"}),
+            ),
         ],
         profile=profile,
         attrs={"title": "roundtrip"},
@@ -94,9 +109,7 @@ def _write(store_dir, schema, n=5, flush_at=None):
     h = w.write_open(str(store_dir), schema)
     recs = []
     for ti in range(n):
-        slab = np.array(
-            [[ti * 100 + y * 10 + x for x in range(4)] for y in range(3)], dtype="f8"
-        )
+        slab = np.array([[ti * 100 + y * 10 + x for x in range(4)] for y in range(3)], dtype="f8")
         recs.append(slab)
         w.write_record(h, float(ti * 3600), {"temp": slab})
         if flush_at is not None and ti == flush_at:
@@ -124,9 +137,7 @@ def test_roundtrip_arrays_coords_attrs(tmp_path):
     assert temp.data.dtype == np.float64
     np.testing.assert_allclose(temp.data, expected, rtol=1e-6, atol=0)
 
-    np.testing.assert_allclose(
-        nds.variables["time"].data, np.arange(5) * 3600.0, rtol=1e-6
-    )
+    np.testing.assert_allclose(nds.variables["time"].data, np.arange(5) * 3600.0, rtol=1e-6)
     np.testing.assert_allclose(nds.variables["y"].data, [0.0, 10.0, 20.0])
     np.testing.assert_allclose(nds.variables["x"].data, [0.0, 1.0, 2.0, 3.0])
 
@@ -146,9 +157,7 @@ def test_roundtrip_attrs_and_dimension_names(tmp_path):
     assert list(a.metadata.dimension_names) == ["time", "y", "x"]
     assert dict(a.attrs) == {"units": "K", "standard_name": "air_temperature"}
     # sharded v3: the top codec is the sharding codec with an inner chunk shape.
-    zj = json.loads(
-        (store_dir / "temp" / "zarr.json").read_text()
-    )
+    zj = json.loads((store_dir / "temp" / "zarr.json").read_text())
     assert zj["codecs"][0]["name"] == "sharding_indexed"
     assert zj["chunk_grid"]["configuration"]["chunk_shape"] == [4, 3, 4]  # shard
     assert zj["codecs"][0]["configuration"]["chunk_shape"] == [2, 3, 4]  # inner
@@ -208,9 +217,7 @@ def test_output_manifest_shape(tmp_path):
         "shuffle": "shuffle",
     }
     assert manifest["time_dim"] == "time"
-    assert manifest["vars"] == [
-        {"name": "temp", "dims": ["time", "y", "x"], "dtype": "float64"}
-    ]
+    assert manifest["vars"] == [{"name": "temp", "dims": ["time", "y", "x"], "dtype": "float64"}]
     assert manifest["chunk_shape"] == {"time": 2, "y": 3, "x": 4}
     assert manifest["shard_shape"] == {"time": 4, "y": 3, "x": 4}
 
@@ -331,9 +338,7 @@ def test_wasm_profile_values_match_the_blosc_profile_exactly(tmp_path):
 
 def test_unknown_profile_rejected(tmp_path):
     with pytest.raises(ValueError, match="unknown codec profile"):
-        ZarrWriter().write_open(
-            str(tmp_path / "bad.zarr"), _schema(profile="not-a-profile")
-        )
+        ZarrWriter().write_open(str(tmp_path / "bad.zarr"), _schema(profile="not-a-profile"))
 
 
 # --------------------------------------------------------------------------- #

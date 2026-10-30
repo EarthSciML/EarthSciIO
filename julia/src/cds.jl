@@ -49,7 +49,7 @@ Parse the `url:`/`key:` lines of a `.cdsapirc` file (the standard CDS API
 config). Returns an empty dict if the file is absent. Path-parametrized so it
 is testable without touching the real home directory."""
 function _read_cdsapirc(path::AbstractString = joinpath(homedir(), ".cdsapirc"))
-    out = Dict{String,String}()
+    out = Dict{String, String}()
     isfile(path) || return out
     for line in eachline(path)
         m = match(r"^\s*(url|key)\s*:\s*(.*?)\s*$", line)
@@ -67,8 +67,10 @@ The CDS API key, resolved from `ENV["CDSAPI_KEY"]` then the `key:` line of
 function cds_api_key(; rc::AbstractDict = _read_cdsapirc())
     haskey(ENV, "CDSAPI_KEY") && return String(ENV["CDSAPI_KEY"])
     haskey(rc, "key") && return rc["key"]
-    error("CDS API key not found. Set the CDSAPI_KEY environment variable or " *
-          "create ~/.cdsapirc with 'key: <your-key>'.")
+    error(
+        "CDS API key not found. Set the CDSAPI_KEY environment variable or " *
+            "create ~/.cdsapirc with 'key: <your-key>'."
+    )
 end
 
 """
@@ -127,7 +129,7 @@ and parses the raw query as JSON, mirroring Rust `parse_cds_url` / Python
 URL fails here at the cache boundary, not as an opaque CDS error later."""
 function parse_cds_url(url::AbstractString)
     startswith(url, "cds://") || error("not a cds:// URL: $url")
-    rest = url[ncodeunits("cds://")+1:end]
+    rest = url[(ncodeunits("cds://") + 1):end]
     q = findfirst('?', rest)
     q === nothing && error("cds:// URL missing '?<request-json>': $url")
     dataset = rest[1:prevind(rest, q)]
@@ -147,15 +149,21 @@ end
 
 # One Downloads.jl round-trip against the CDS API; returns the response body as
 # a String and raises on any >=400 status (with the body for diagnosis).
-function _cds_http(url::AbstractString, headers::Vector{<:Pair};
-                   method::AbstractString = "GET", body = nothing)
+function _cds_http(
+        url::AbstractString, headers::Vector{<:Pair};
+        method::AbstractString = "GET", body = nothing
+    )
     out = IOBuffer()
     resp = if body === nothing
-        Downloads.request(url; headers = headers, output = out,
-                          method = method, throw = false)
+        Downloads.request(
+            url; headers = headers, output = out,
+            method = method, throw = false
+        )
     else
-        Downloads.request(url; headers = headers, output = out,
-                          input = IOBuffer(body), method = method, throw = false)
+        Downloads.request(
+            url; headers = headers, output = out,
+            input = IOBuffer(body), method = method, throw = false
+        )
     end
     text = String(take!(out))
     resp.status >= 400 && error("CDS API HTTP $(resp.status) for $url: $text")
@@ -167,14 +175,18 @@ end
 
 POST a CDS retrieve request (`{inputs: request}`) and return the accepted job
 ID. Authenticated with the `PRIVATE-TOKEN` header."""
-function cds_submit(dataset::AbstractString, request;
-                    api_key::AbstractString = cds_api_key(),
-                    endpoint::AbstractString = cds_api_endpoint())
+function cds_submit(
+        dataset::AbstractString, request;
+        api_key::AbstractString = cds_api_key(),
+        endpoint::AbstractString = cds_api_endpoint()
+    )
     url = "$(endpoint)/retrieve/v1/processes/$(dataset)/execution"
     body = JSON.json(Dict("inputs" => request))
-    headers = ["PRIVATE-TOKEN" => api_key,
-               "Content-Type" => "application/json",
-               "Expect" => ""]   # suppress libcurl 100-continue for large bodies
+    headers = [
+        "PRIVATE-TOKEN" => api_key,
+        "Content-Type" => "application/json",
+        "Expect" => "",
+    ]   # suppress libcurl 100-continue for large bodies
     resp = _cds_http(url, headers; method = "POST", body = body)
     data = JSON.parse(resp)
     get(data, "status", "") in ("accepted", "running", "successful") ||
@@ -188,11 +200,13 @@ end
 
 Poll a CDS job until it succeeds, then return the result asset's download
 href. Errors on a failed job or on timeout."""
-function cds_wait(job_id::AbstractString;
-                  api_key::AbstractString = cds_api_key(),
-                  endpoint::AbstractString = cds_api_endpoint(),
-                  poll_interval::Real = cds_poll_interval(),
-                  timeout::Real = cds_timeout())
+function cds_wait(
+        job_id::AbstractString;
+        api_key::AbstractString = cds_api_key(),
+        endpoint::AbstractString = cds_api_endpoint(),
+        poll_interval::Real = cds_poll_interval(),
+        timeout::Real = cds_timeout()
+    )
     url = "$(endpoint)/retrieve/v1/jobs/$(job_id)"
     headers = ["PRIVATE-TOKEN" => api_key]
     start = time()
@@ -209,6 +223,7 @@ function cds_wait(job_id::AbstractString;
         end
         sleep(poll_interval)
     end
+    return
 end
 
 """
@@ -217,9 +232,11 @@ end
 Submit a CDS request, wait for it, and download the result to `output_path`
 (skipping the network round-trip if the file already exists). Convenience for
 manual/standalone use; the cache fetch path uses the `cds` transport instead."""
-function cds_retrieve(dataset::AbstractString, request, output_path::AbstractString;
-                      api_key::AbstractString = cds_api_key(),
-                      endpoint::AbstractString = cds_api_endpoint())
+function cds_retrieve(
+        dataset::AbstractString, request, output_path::AbstractString;
+        api_key::AbstractString = cds_api_key(),
+        endpoint::AbstractString = cds_api_endpoint()
+    )
     isfile(output_path) && return output_path
     mkpath(dirname(output_path))
     job_id = cds_submit(dataset, request; api_key = api_key, endpoint = endpoint)
@@ -238,9 +255,11 @@ because CDS has no conditional-GET."""
 struct CdsTransport <: Transport end
 schemes(::CdsTransport) = ["cds"]
 
-function fetch!(::CdsTransport, url::AbstractString, dest::AbstractString;
-                conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
-                store_read::Bool = false)   # CDS serves whole blobs, never a store
+function fetch!(
+        ::CdsTransport, url::AbstractString, dest::AbstractString;
+        conditional = NamedTuple(), auth::AuthResolver = NoAuth(),
+        store_read::Bool = false
+    )   # CDS serves whole blobs, never a store
     dataset, request = parse_cds_url(url)
     api_key = cds_token(auth)
     endpoint = cds_api_endpoint()

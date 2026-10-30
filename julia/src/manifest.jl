@@ -16,13 +16,13 @@ fetched-at → `fetched_at`, byte-size → `bytes`.
 """
 struct Manifest
     url::String
-    etag::Union{String,Nothing}
-    last_modified::Union{String,Nothing}
+    etag::Union{String, Nothing}
+    last_modified::Union{String, Nothing}
     sha256_content::String
     bytes::Int
     fetched_at::String
-    source_loader::Union{String,Nothing}
-    auth_realm::Union{String,Nothing}
+    source_loader::Union{String, Nothing}
+    auth_realm::Union{String, Nothing}
 end
 
 _strornothing(::Nothing) = nothing
@@ -31,16 +31,16 @@ _strornothing(x::AbstractString) = String(x)
 """Manifest as an ordered-by-key `Dict` ready for JSON serialization. Optional
 fields are emitted as JSON `null` (never omitted) — the key is always present."""
 function manifest_dict(m::Manifest)
-    return Dict{String,Any}(
-        "schema"         => MANIFEST_SCHEMA,
-        "url"            => m.url,
-        "etag"           => m.etag,
-        "last_modified"  => m.last_modified,
+    return Dict{String, Any}(
+        "schema" => MANIFEST_SCHEMA,
+        "url" => m.url,
+        "etag" => m.etag,
+        "last_modified" => m.last_modified,
         "sha256_content" => m.sha256_content,
-        "bytes"          => m.bytes,
-        "fetched_at"     => m.fetched_at,
-        "source_loader"  => m.source_loader,
-        "auth_realm"     => m.auth_realm,
+        "bytes" => m.bytes,
+        "fetched_at" => m.fetched_at,
+        "source_loader" => m.source_loader,
+        "auth_realm" => m.auth_realm,
     )
 end
 
@@ -55,7 +55,7 @@ function write_manifest(path::AbstractString, m::Manifest)
 end
 
 """Read `meta/<key>.json` into a [`Manifest`], or `nothing` if absent."""
-function read_manifest(path::AbstractString)::Union{Manifest,Nothing}
+function read_manifest(path::AbstractString)::Union{Manifest, Nothing}
     isfile(path) || return nothing
     d = JSON.parsefile(path)
     return Manifest(
@@ -91,12 +91,14 @@ struct TimeShardRecord
     n::Int
 end
 
-_timeshard_dict(s::TimeShardRecord) = Dict{String,Any}(
-    "index" => s.index, "t_start" => s.t_start, "t_end" => s.t_end, "n" => s.n)
+_timeshard_dict(s::TimeShardRecord) = Dict{String, Any}(
+    "index" => s.index, "t_start" => s.t_start, "t_end" => s.t_end, "n" => s.n
+)
 # (`n_records` is the Python v1 spelling of `n`.)
 _timeshard_from(d) = TimeShardRecord(
     Int(d["index"]), Float64(d["t_start"]), Float64(d["t_end"]),
-    Int(haskey(d, "n") ? d["n"] : d["n_records"]))
+    Int(haskey(d, "n") ? d["n"] : d["n_records"])
+)
 
 """
     OutputManifest
@@ -110,35 +112,35 @@ struct OutputManifest
     format::String
     zarr_format::Int
     profile::String
-    codec::Dict{String,Any}
+    codec::Dict{String, Any}
     time_dim::String
-    dims::Vector{Pair{String,Int}}
-    vars::Vector{Dict{String,Any}}     # ordered; each {name, dims, dtype}
-    chunk_shape::Dict{String,Int}
-    shard_shape::Dict{String,Int}
+    dims::Vector{Pair{String, Int}}
+    vars::Vector{Dict{String, Any}}     # ordered; each {name, dims, dtype}
+    chunk_shape::Dict{String, Int}
+    shard_shape::Dict{String, Int}
     time_shards::Vector{TimeShardRecord}
-    last_t::Union{Float64,Nothing}
+    last_t::Union{Float64, Nothing}
     n_records::Int
     created_at::String
 end
 
 function output_manifest_dict(m::OutputManifest)
-    return Dict{String,Any}(
-        "schema"      => OUTPUT_MANIFEST_SCHEMA,
-        "base_url"    => m.base_url,
-        "format"      => m.format,
+    return Dict{String, Any}(
+        "schema" => OUTPUT_MANIFEST_SCHEMA,
+        "base_url" => m.base_url,
+        "format" => m.format,
         "zarr_format" => m.zarr_format,
-        "profile"     => m.profile,
-        "codec"       => m.codec,
-        "time_dim"    => m.time_dim,
-        "dims"        => [Dict{String,Any}("name" => k, "length" => v) for (k, v) in m.dims],
-        "vars"        => m.vars,
+        "profile" => m.profile,
+        "codec" => m.codec,
+        "time_dim" => m.time_dim,
+        "dims" => [Dict{String, Any}("name" => k, "length" => v) for (k, v) in m.dims],
+        "vars" => m.vars,
         "chunk_shape" => m.chunk_shape,
         "shard_shape" => m.shard_shape,
         "time_shards" => [_timeshard_dict(s) for s in m.time_shards],
-        "last_t"      => m.last_t,
-        "n_records"   => m.n_records,
-        "created_at"  => m.created_at,
+        "last_t" => m.last_t,
+        "n_records" => m.n_records,
+        "created_at" => m.created_at,
     )
 end
 
@@ -187,20 +189,22 @@ end
 # `[name, length]` pairs, `written_at`) so a Python-written v1 store reads back.
 function _output_manifest_v1(d)
     lt = get(d, "last_t", nothing)
-    dims = Pair{String,Int}[e isa AbstractVector ? String(e[1]) => Int(e[2]) :
-                            String(e["name"]) => Int(e["length"]) for e in d["dims"]]
+    dims = Pair{String, Int}[
+        e isa AbstractVector ? String(e[1]) => Int(e[2]) :
+            String(e["name"]) => Int(e["length"]) for e in d["dims"]
+    ]
     n = haskey(d, "n_records") ? d["n_records"] : d["total_records"]
     return OutputManifest(
         String(d["base_url"]),
         String(d["format"]),
         Int(d["zarr_format"]),
         String(d["profile"]),
-        Dict{String,Any}(d["codec"]),
+        Dict{String, Any}(d["codec"]),
         String(d["time_dim"]),
         dims,
-        Vector{Dict{String,Any}}(Dict{String,Any}.(d["vars"])),
-        Dict{String,Int}(String(k) => Int(v) for (k, v) in d["chunk_shape"]),
-        Dict{String,Int}(String(k) => Int(v) for (k, v) in d["shard_shape"]),
+        Vector{Dict{String, Any}}(Dict{String, Any}.(d["vars"])),
+        Dict{String, Int}(String(k) => Int(v) for (k, v) in d["chunk_shape"]),
+        Dict{String, Int}(String(k) => Int(v) for (k, v) in d["shard_shape"]),
         TimeShardRecord[_timeshard_from(s) for s in d["time_shards"]],
         lt === nothing ? nothing : Float64(lt),
         Int(n),

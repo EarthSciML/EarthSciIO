@@ -57,9 +57,7 @@ class CountingFileTransport:
 
 
 def _register():
-    transport_registry.register(
-        "count", CountingFileTransport, keys=["count"], status="active"
-    )
+    transport_registry.register("count", CountingFileTransport, keys=["count"], status="active")
 
 
 def _count_url(src, counter):
@@ -138,7 +136,7 @@ def test_threads_fetching_several_urls_at_once_download_each_once(cache_root, tm
     for url, entry in zip(jobs, results):
         src, _ = urls[url]
         assert entry.path.read_bytes() == src.read_bytes()
-    for url, (src, counter) in urls.items():
+    for url, (_src, counter) in urls.items():
         assert counter.stat().st_size == 1, url  # one download per url
         statuses = [r.status for u, r in zip(jobs, results) if u == url]
         assert statuses.count("downloaded") == 1

@@ -44,8 +44,10 @@ function encode_field(field)
     else
         error("unexpected numeric eltype $et in field with dims $dims")
     end
-    return Dict("dtype" => dtype, "dims" => dims,
-                "shape" => collect(Int, size(data)), "data" => vals)
+    return Dict(
+        "dtype" => dtype, "dims" => dims,
+        "shape" => collect(Int, size(data)), "data" => vals
+    )
 end
 
 function main()
@@ -58,8 +60,12 @@ function main()
     spec = JSON.parsefile(spec_path)
 
     arrays = String[]
-    for co in spec["coords"]; push!(arrays, String(co["name"])); end
-    for v in spec["vars"];   push!(arrays, String(v["name"]));  end
+    for co in spec["coords"]
+        push!(arrays, String(co["name"]))
+    end
+    for v in spec["vars"]
+        push!(arrays, String(v["name"]))
+    end
 
     # A plain online cache over a throwaway dir; a `file://` base URL means every
     # object fetch is a local copy (no network). verify=false: freshly-written
@@ -70,7 +76,7 @@ function main()
 
     nds = read_store(ZarrReader(), cache, base_url; variables = arrays)
 
-    fields = Dict{String,Any}()
+    fields = Dict{String, Any}()
     for (n, f) in nds.variables
         fields[n] = encode_field(f)
     end
@@ -82,7 +88,7 @@ function main()
         "fields" => fields,
     )
     text = JSON.json(out, 2)
-    if length(ARGS) >= 3
+    return if length(ARGS) >= 3
         open(ARGS[3], "w") do io
             write(io, text); write(io, "\n")
         end

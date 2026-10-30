@@ -7,7 +7,7 @@ using Sockets
 
 function _read_http_request(io)
     line = readline(io)
-    headers = Dict{String,String}()
+    headers = Dict{String, String}()
     while true
         h = readline(io)
         isempty(h) && break
@@ -30,12 +30,16 @@ function _start_test_server(payload::Vector{UInt8}, etag::AbstractString)
                 @async try
                     _, headers = _read_http_request(conn)
                     if occursin(etag, get(headers, "if-none-match", ""))
-                        write(conn, "HTTP/1.1 304 Not Modified\r\n",
-                              "ETag: \"$etag\"\r\nConnection: close\r\n\r\n")
+                        write(
+                            conn, "HTTP/1.1 304 Not Modified\r\n",
+                            "ETag: \"$etag\"\r\nConnection: close\r\n\r\n"
+                        )
                     else
-                        write(conn, "HTTP/1.1 200 OK\r\n",
-                              "Content-Length: $(length(payload))\r\n",
-                              "ETag: \"$etag\"\r\nConnection: close\r\n\r\n")
+                        write(
+                            conn, "HTTP/1.1 200 OK\r\n",
+                            "Content-Length: $(length(payload))\r\n",
+                            "ETag: \"$etag\"\r\nConnection: close\r\n\r\n"
+                        )
                         write(conn, payload)
                     end
                 catch
@@ -79,9 +83,11 @@ end
         # forces the same conditional GET -> 304 (spec §4 step 3).
         key = cache_key(url)
         m = EarthSciIO.get_meta(c.store, key)
-        aged = EarthSciIO.Manifest(m.url, m.etag, m.last_modified, m.sha256_content,
-                                   m.bytes, "2000-01-01T00:00:00Z", m.source_loader,
-                                   m.auth_realm)
+        aged = EarthSciIO.Manifest(
+            m.url, m.etag, m.last_modified, m.sha256_content,
+            m.bytes, "2000-01-01T00:00:00Z", m.source_loader,
+            m.auth_realm
+        )
         EarthSciIO.put_meta!(c.store, key, aged)
         @test fetch_blob(c, url; ttl = 3600).status == :not_modified
 
@@ -114,8 +120,10 @@ end
 # but larger than the per-request cap is indistinguishable from a stall until
 # you look at whether bytes moved. Serves each connection more slowly than
 # EARTHSCIIO_HTTP_TIMEOUT allows on the first attempt.
-function _start_slow_server(payload::Vector{UInt8}, etag::AbstractString;
-                            pieces::Int = 4, pause::Float64 = 0.6)
+function _start_slow_server(
+        payload::Vector{UInt8}, etag::AbstractString;
+        pieces::Int = 4, pause::Float64 = 0.6
+    )
     server = listen(Sockets.localhost, 0)
     port = Int(getsockname(server)[2])
     task = @async begin
@@ -124,9 +132,11 @@ function _start_slow_server(payload::Vector{UInt8}, etag::AbstractString;
                 conn = accept(server)
                 @async try
                     _read_http_request(conn)
-                    write(conn, "HTTP/1.1 200 OK\r\n",
-                          "Content-Length: $(length(payload))\r\n",
-                          "ETag: \"$etag\"\r\nConnection: close\r\n\r\n")
+                    write(
+                        conn, "HTTP/1.1 200 OK\r\n",
+                        "Content-Length: $(length(payload))\r\n",
+                        "ETag: \"$etag\"\r\nConnection: close\r\n\r\n"
+                    )
                     n = cld(length(payload), pieces)
                     for i in 1:pieces
                         lo = (i - 1) * n + 1
@@ -153,12 +163,16 @@ end
     try
         # 1 s cap against a ~2.4 s body: the first attempt times out having
         # moved bytes, which must buy a longer budget rather than a failure.
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_RETRIES" => "2",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_RETRIES" => "2",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
-            r = EarthSciIO.fetch!(EarthSciIO.HttpTransport(),
-                                  "http://127.0.0.1:$port/slow.bin", dest)
+            r = EarthSciIO.fetch!(
+                EarthSciIO.HttpTransport(),
+                "http://127.0.0.1:$port/slow.bin", dest
+            )
             @test r.status == :downloaded
         end
         @test read(dest) == payload
@@ -179,8 +193,10 @@ end
             conn = accept(server)
             @async try
                 _read_http_request(conn)
-                write(conn, "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n",
-                      "Connection: close\r\n\r\n")
+                write(
+                    conn, "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n",
+                    "Connection: close\r\n\r\n"
+                )
                 sleep(30)     # ... and nothing else
             catch
             finally
@@ -192,12 +208,15 @@ end
     dest = tempname()
     try
         t0 = time()
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_RETRIES" => "2",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_RETRIES" => "2",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
             @test_throws Exception EarthSciIO.fetch!(
-                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/wedged.bin", dest)
+                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/wedged.bin", dest
+            )
         end
         @test time() - t0 < 15    # 2 attempts x 1 s cap + backoff, not 6 extensions
     finally
@@ -223,9 +242,11 @@ function _start_shrinking_server(payload::Vector{UInt8}, prefixes::Vector{Int})
                 i = Threads.atomic_add!(conn_no, 1) + 1
                 @async try
                     _read_http_request(conn)
-                    write(conn, "HTTP/1.1 200 OK\r\n",
-                          "Content-Length: $(length(payload))\r\n",
-                          "ETag: \"shrink\"\r\nConnection: close\r\n\r\n")
+                    write(
+                        conn, "HTTP/1.1 200 OK\r\n",
+                        "Content-Length: $(length(payload))\r\n",
+                        "ETag: \"shrink\"\r\nConnection: close\r\n\r\n"
+                    )
                     if i <= length(prefixes)
                         write(conn, @view payload[1:prefixes[i]])
                         flush(conn)
@@ -253,12 +274,16 @@ end
     server, port = _start_shrinking_server(payload, [60 * 1024, 24 * 1024])
     dest = tempname()
     try
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_RETRIES" => "1",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_RETRIES" => "1",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
-            r = EarthSciIO.fetch!(EarthSciIO.HttpTransport(),
-                                  "http://127.0.0.1:$port/shrink.bin", dest)
+            r = EarthSciIO.fetch!(
+                EarthSciIO.HttpTransport(),
+                "http://127.0.0.1:$port/shrink.bin", dest
+            )
             @test r.status == :downloaded
         end
         @test read(dest) == payload
@@ -281,8 +306,10 @@ end
             conn = accept(server)
             @async try
                 _read_http_request(conn)
-                write(conn, "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n",
-                      "Connection: close\r\n\r\n")
+                write(
+                    conn, "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n",
+                    "Connection: close\r\n\r\n"
+                )
                 for _ in 1:200
                     write(conn, zeros(UInt8, 512)); flush(conn); sleep(0.25)
                 end
@@ -296,13 +323,16 @@ end
     dest = tempname()
     try
         t0 = time()
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "2",
-                "EARTHSCIIO_HTTP_RETRIES" => "8",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "2",
+            "EARTHSCIIO_HTTP_RETRIES" => "8",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
             @test_throws Exception EarthSciIO.fetch!(
-                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/trickle.bin", dest)
+                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/trickle.bin", dest
+            )
         end
         # Budget is 8 s; without a whole-call deadline the extension ladder plus
         # 8 backed-off retries runs for ~1 minute (measured: 57 s).
@@ -319,8 +349,10 @@ end
 # that trickles above the bytes/s floor could sit on ONE chunk for two hours,
 # times the object count of a scan. The store path therefore passes
 # `store_read=true`, which selects `EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE`.
-function _start_trickle_server(; chunk::Int = 512, pause::Float64 = 0.25,
-                               claimed::Int = 1048576, pieces::Int = 400)
+function _start_trickle_server(;
+        chunk::Int = 512, pause::Float64 = 0.25,
+        claimed::Int = 1048576, pieces::Int = 400
+    )
     server = listen(Sockets.localhost, 0)
     port = Int(getsockname(server)[2])
     @async try
@@ -328,8 +360,10 @@ function _start_trickle_server(; chunk::Int = 512, pause::Float64 = 0.25,
             conn = accept(server)
             @async try
                 _read_http_request(conn)
-                write(conn, "HTTP/1.1 200 OK\r\nContent-Length: $claimed\r\n",
-                      "Connection: close\r\n\r\n")
+                write(
+                    conn, "HTTP/1.1 200 OK\r\nContent-Length: $claimed\r\n",
+                    "Connection: close\r\n\r\n"
+                )
                 for _ in 1:pieces
                     write(conn, zeros(UInt8, chunk)); flush(conn); sleep(pause)
                 end
@@ -353,11 +387,13 @@ end
     try
         c = Cache(LocalStore(root); offline = false)
         t0 = time()
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_RETRIES" => "2",
-                "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "25",
-                "EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE" => "2",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_RETRIES" => "2",
+            "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "25",
+            "EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE" => "2",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
             @test_throws Exception EarthSciIO._fetch_bytes(c, "http://127.0.0.1:$port/c/0.0.0")
         end
@@ -379,14 +415,17 @@ end
     dest = tempname()
     try
         t0 = time()
-        withenv("EARTHSCIIO_HTTP_TIMEOUT" => "1",
-                "EARTHSCIIO_HTTP_RETRIES" => "2",
-                "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "6",
-                "EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE" => "1",
-                "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60") do
+        withenv(
+            "EARTHSCIIO_HTTP_TIMEOUT" => "1",
+            "EARTHSCIIO_HTTP_RETRIES" => "2",
+            "EARTHSCIIO_HTTP_TIMEOUT_MAX" => "6",
+            "EARTHSCIIO_HTTP_TIMEOUT_MAX_STORE" => "1",
+            "EARTHSCIIO_HTTP_LOW_SPEED_TIME" => "60"
+        ) do
             EarthSciIO._reset_http_downloader!()
             @test_throws Exception EarthSciIO.fetch!(
-                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/blob.bin", dest)
+                EarthSciIO.HttpTransport(), "http://127.0.0.1:$port/blob.bin", dest
+            )
         end
         el = time() - t0
         @test el >= 4     # spent its own 6 s budget (a lower bound: load only lengthens it)

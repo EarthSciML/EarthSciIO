@@ -1159,7 +1159,10 @@ impl Provider {
             return Vec::new();
         }
         let Ok(Some(cadence)) = self.cadence() else {
-            return self.resolve_url(OffsetDateTime::UNIX_EPOCH).into_iter().collect();
+            return self
+                .resolve_url(OffsetDateTime::UNIX_EPOCH)
+                .into_iter()
+                .collect();
         };
         let temporal = &cadence.temporal;
         let anchor = cadence.anchor(t);
@@ -1171,7 +1174,10 @@ impl Provider {
                 anchors.push(next_file);
             }
         }
-        anchors.into_iter().filter_map(|a| self.resolve_url(a).ok()).collect()
+        anchors
+            .into_iter()
+            .filter_map(|a| self.resolve_url(a).ok())
+            .collect()
     }
 
     /// Fetch (or reuse) `url` into the disk cache, decoding nothing.
@@ -1308,7 +1314,10 @@ fn slice_window(
         let positions = match union.get(dim) {
             Some(AxisSelect::Indices(held)) => wanted
                 .iter()
-                .map(|g| held.binary_search(g).expect("the union holds every window index"))
+                .map(|g| {
+                    held.binary_search(g)
+                        .expect("the union holds every window index")
+                })
                 .collect(),
             _ => match axis_len(ds, dim) {
                 // The union read this dimension whole for some OTHER window, so
@@ -1337,9 +1346,14 @@ fn slice_window(
 /// `"<step> since <ref>"` units, or a dimension literally named `time` — the
 /// union of the readers' rules, since only a refusal rests on it.
 fn is_time_dim(ds: &NativeDataset, dim: &str) -> bool {
-    let cf = ds.coords.get(dim).and_then(|c| c.units.as_deref()).is_some_and(|u| {
-        u.split_whitespace().any(|w| w.eq_ignore_ascii_case("since"))
-    });
+    let cf = ds
+        .coords
+        .get(dim)
+        .and_then(|c| c.units.as_deref())
+        .is_some_and(|u| {
+            u.split_whitespace()
+                .any(|w| w.eq_ignore_ascii_case("since"))
+        });
     cf || dim.eq_ignore_ascii_case("time")
 }
 

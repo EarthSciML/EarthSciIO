@@ -4,14 +4,15 @@
 
 @testset "cache_key — spec §1 worked examples + byte-range" begin
     @test cache_key("https://data.earthsci.dev/era5/2018/11/20181108.nc") ==
-          "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1"
+        "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1"
     @test cache_key(
-        "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv") ==
-          "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a"
+        "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
+    ) ==
+        "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a"
     # a byte-slice is its own cache entry (#bytes=a-b appended before hashing)
     @test cache_key("http://x/a.nc", (0, 99)) != cache_key("http://x/a.nc")
     @test cache_key("http://x/a.nc", (0, 99)) ==
-          cache_key("http://x/a.nc#bytes=0-99")
+        cache_key("http://x/a.nc#bytes=0-99")
 end
 
 @testset "datadir / EARTHSCIDATADIR (spec §5: env wins, default on /scratch.local)" begin
@@ -122,13 +123,19 @@ end
     write(src, rand(UInt8, 64))
     root = mktempdir()
     url = string("file://", src)
-    fetch_blob(Cache(LocalStore(root); offline = false), url;
-               source_loader = "era5", auth_realm = "cds")
+    fetch_blob(
+        Cache(LocalStore(root); offline = false), url;
+        source_loader = "era5", auth_realm = "cds"
+    )
     raw = JSON.parsefile(joinpath(root, "v1", "meta", string(cache_key(url), ".json")))
     # exactly the schema's 9 properties (additionalProperties: false)
-    @test Set(keys(raw)) == Set(["schema", "url", "etag", "last_modified",
-                                 "sha256_content", "bytes", "fetched_at",
-                                 "source_loader", "auth_realm"])
+    @test Set(keys(raw)) == Set(
+        [
+            "schema", "url", "etag", "last_modified",
+            "sha256_content", "bytes", "fetched_at",
+            "source_loader", "auth_realm",
+        ]
+    )
     @test raw["schema"] == "earthsciio/manifest/v1"
     @test occursin(r"^[0-9a-f]{64}$", raw["sha256_content"])
     @test raw["bytes"] == 64

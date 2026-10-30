@@ -337,10 +337,10 @@ Cumulative from construction; `start` does not reset them.
 w = DimWindow({"lat": (120, 218), "lon": (300, 497)})
 prov = {s: providers[s].with_window(w) for s in discrete}
 with PrefetchGroup(prov, depth=2, max_bytes=8 << 30, workers=2, executor="thread") as g:
-    B = g.boundaries()                    # list[datetime]
+    B = g.boundaries()  # list[datetime]
     g.start("forward")
     for k in range(len(B)):
-        ep = g.take(k)                    # ep["U"].data, ep["U"].anchor, ep["U"].changed
+        ep = g.take(k)  # ep["U"].data, ep["U"].anchor, ep["U"].changed
     g.start("reverse")
 ```
 

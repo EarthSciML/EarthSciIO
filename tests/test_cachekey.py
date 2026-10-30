@@ -17,8 +17,7 @@ from earthsciio.transport import ext_from_url
 ERA5_URL = "https://data.earthsci.dev/era5/2018/11/20181108.nc"
 ERA5_KEY = "11cdcec111409f586e6afc432e1a6da47e6f97ccf3715e5db8554632b00671c1"
 OPENAQ_URL = (
-    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/"
-    "locationid=1/2018-11-08.csv"
+    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
 )
 OPENAQ_KEY = "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a"
 
@@ -42,9 +41,7 @@ def test_byte_range_is_its_own_entry():
     assert ranged != base
     # The hashed string is the URL plus the #bytes fragment, appended verbatim.
     assert range_keyed_url(ERA5_URL, (0, 1023)) == ERA5_URL + "#bytes=0-1023"
-    assert ranged == hashlib.sha256(
-        (ERA5_URL + "#bytes=0-1023").encode("utf-8")
-    ).hexdigest()
+    assert ranged == hashlib.sha256((ERA5_URL + "#bytes=0-1023").encode("utf-8")).hexdigest()
 
 
 def test_sha256_helpers(tmp_path):

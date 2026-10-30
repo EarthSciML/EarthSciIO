@@ -23,8 +23,8 @@ from earthsciio import (
     BackendNotRegistered,
     Cache,
     DataSource,
-    SourceTemporal,
     Provider,
+    SourceTemporal,
     UnknownReaderOption,
     format_registry,
     reader_option_names,
@@ -35,8 +35,7 @@ CORPUS = REPO_ROOT / "conformance" / "corpus"
 
 ERA5_URL = "https://data.earthsci.dev/era5/2018/11/20181108.nc"
 OPENAQ_URL = (
-    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/"
-    "locationid=1/2018-11-08.csv"
+    "https://openaq-data-archive.s3.amazonaws.com/records/openaq/locationid=1/2018-11-08.csv"
 )
 
 START = dt.datetime(2018, 11, 8, tzinfo=dt.timezone.utc)
@@ -112,9 +111,7 @@ def test_netcdf_per_call_select_overrides_the_baked_one(cache):
     Neither changes the URL or the cache key: the same blob is read either way.
     """
     baked = {"axes": ["all", {"slice": [1, 3]}, {"indices": [0, 2]}]}
-    p = Provider(
-        DataSource("era5", "netcdf", ERA5_URL, reader_kwargs={"select": baked}), cache
-    )
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, reader_kwargs={"select": baked}), cache)
     assert p.supports_selection is True
     assert p.store_backed is False
 
@@ -206,8 +203,9 @@ def test_discrete_refresh_is_idempotent_within_interval(cache):
 
 
 def _interp_loader(end=None, file_period=2 * HOUR) -> DataSource:
-    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=file_period,
-                              end=end, records_per_sample=2)
+    temporal = SourceTemporal(
+        start=START, frequency=HOUR, file_period=file_period, end=end, records_per_sample=2
+    )
     return DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
 
 
@@ -313,8 +311,9 @@ def test_prefetch_const_warms_single_file(cache):
 
 def test_prefetch_strftime_window_hits_corpus(cache):
     temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
-    loader = DataSource("era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc",
-                        temporal=temporal)
+    loader = DataSource(
+        "era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc", temporal=temporal
+    )
     p = Provider(loader, cache, window=(START, START + DAY))
     entries = p.prefetch()
     assert len(entries) == 1 and entries[0].status == "hit"
@@ -328,8 +327,9 @@ def test_prefetch_enumerates_file_anchors_and_dedups(cache):
         return ERA5_URL  # every file anchor collapses to the one corpus blob
 
     temporal = SourceTemporal(start=START, frequency=HOUR, file_period=HOUR)
-    p = Provider(DataSource("era5", "netcdf", url_for, temporal=temporal), cache,
-                 window=(_utc(0), _utc(2)))
+    p = Provider(
+        DataSource("era5", "netcdf", url_for, temporal=temporal), cache, window=(_utc(0), _utc(2))
+    )
     entries = p.prefetch()
     assert seen == [_utc(0), _utc(1)]  # one anchor per file period across the window
     assert len(entries) == 1  # collapsed to a single unique fetch
@@ -433,8 +433,9 @@ def test_baked_records_beside_a_cadence_is_refused_not_honoured(cache):
     baked = {"dim": "time", "indices": [0]}
     with pytest.raises(ValueError, match="`records` may not be baked"):
         Provider(
-            DataSource("era5", "netcdf", ERA5_URL, temporal=temporal,
-                       reader_kwargs={"records": baked}),
+            DataSource(
+                "era5", "netcdf", ERA5_URL, temporal=temporal, reader_kwargs={"records": baked}
+            ),
             cache,
         )
     # Left unrefused, that is what it would have done: every anchor the same
@@ -456,8 +457,7 @@ def test_baked_records_beside_a_cadence_is_refused_not_honoured(cache):
     # what this track reads — and so does a `records` on a CONST loader, which
     # owns no cadence and therefore no record axis to narrow behind.
     Provider(
-        DataSource("era5", "netcdf", ERA5_URL, temporal=temporal,
-                   reader_kwargs={"records": None}),
+        DataSource("era5", "netcdf", ERA5_URL, temporal=temporal, reader_kwargs={"records": None}),
         cache,
     )
     const = Provider(

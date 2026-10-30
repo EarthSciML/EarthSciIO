@@ -18,7 +18,7 @@ import pytest
 numcodecs = pytest.importorskip("numcodecs")  # builds the v2 test fixtures
 pytest.importorskip("zarr")  # the reader is now built on zarr-python 3.x
 
-from earthsciio import (
+from earthsciio import (  # noqa: E402
     Cache,
     CSVReader,
     DataSource,
@@ -28,14 +28,14 @@ from earthsciio import (
     format_registry,
     supports_selection,
 )
-from earthsciio.backends.local import LocalStore
-from earthsciio.backends.zarr import (
+from earthsciio.backends.local import LocalStore  # noqa: E402
+from earthsciio.backends.zarr import (  # noqa: E402
     ZarrReader,
     _parse_axis,
     _resolve_axis_indices,
 )
-from earthsciio.cachekey import sha256_bytes
-from earthsciio.manifest import Manifest
+from earthsciio.cachekey import sha256_bytes  # noqa: E402
+from earthsciio.manifest import Manifest  # noqa: E402
 
 BASE = "s3://earthsci-fixtures/mini.zarr"
 
@@ -47,11 +47,25 @@ def _blosc():
 def _zarray(shape, chunks, dtype="<f4"):
     import json
 
-    return json.dumps({
-        "zarr_format": 2, "shape": list(shape), "chunks": list(chunks), "dtype": dtype,
-        "compressor": {"id": "blosc", "cname": "lz4", "clevel": 5, "shuffle": 1, "blocksize": 0},
-        "fill_value": 0.0, "order": "C", "filters": None, "dimension_separator": None,
-    }).encode()
+    return json.dumps(
+        {
+            "zarr_format": 2,
+            "shape": list(shape),
+            "chunks": list(chunks),
+            "dtype": dtype,
+            "compressor": {
+                "id": "blosc",
+                "cname": "lz4",
+                "clevel": 5,
+                "shuffle": 1,
+                "blocksize": 0,
+            },
+            "fill_value": 0.0,
+            "order": "C",
+            "filters": None,
+            "dimension_separator": None,
+        }
+    ).encode()
 
 
 def _encode_chunk(chunk):
@@ -66,10 +80,15 @@ def _populate(root, objects):
         staged = store.staging_path()
         staged.write_bytes(data)
         store.put_blob(key, staged, "")
-        store.put_meta(key, Manifest(
-            url=url, sha256_content=sha256_bytes(data), bytes=len(data),
-            fetched_at="2026-06-26T00:00:00Z",
-        ))
+        store.put_meta(
+            key,
+            Manifest(
+                url=url,
+                sha256_content=sha256_bytes(data),
+                bytes=len(data),
+                fetched_at="2026-06-26T00:00:00Z",
+            ),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +133,9 @@ def test_read_store_orthogonal_selection(tmp_path):
     _mini_store(tmp_path)
     cache = Cache(root=tmp_path, offline=True, verify=True)
     nds = ZarrReader().read_store(
-        cache, BASE, ["field3d"],
+        cache,
+        BASE,
+        ["field3d"],
         select={"axes": [{"indices": [1]}, {"indices": [1, 4]}, "all"]},
     )
     f = nds.variables["field3d"]
@@ -169,16 +190,19 @@ def test_absent_chunk_object_fills_with_fill_value(tmp_path):
 
 
 def test_synthesized_dims_without_zattrs(tmp_path):
-    objs = {f"{BASE}/n/.zarray": _zarray((3,), (3,), "<f8"),
-            f"{BASE}/n/0": _encode_chunk(np.array([1.0, 2.0, 3.0], dtype="<f8"))}
+    objs = {
+        f"{BASE}/n/.zarray": _zarray((3,), (3,), "<f8"),
+        f"{BASE}/n/0": _encode_chunk(np.array([1.0, 2.0, 3.0], dtype="<f8")),
+    }
     _populate(tmp_path, objs)
     cache = Cache(root=tmp_path, offline=True, verify=True)
     f = ZarrReader().read_store(cache, BASE, ["n"]).variables["n"]
     assert f.dims == ("dim_0",)
     # ...and a synthesized name is nameable in a `dims` select (spec/prefetch.md
     # §2.1): it is the array's dimension name for every purpose
-    g = ZarrReader().read_store(cache, BASE, ["n"],
-                                select={"dims": {"dim_0": {"indices": [2, 0, 2]}}})
+    g = ZarrReader().read_store(
+        cache, BASE, ["n"], select={"dims": {"dim_0": {"indices": [2, 0, 2]}}}
+    )
     np.testing.assert_array_equal(g.variables["n"].data, [3.0, 1.0, 3.0])
 
 
@@ -188,12 +212,19 @@ def test_named_select_matches_the_positional_one(tmp_path):
     _mini_store(tmp_path)
     cache = Cache(root=tmp_path, offline=True, verify=True)
     axes = ZarrReader().read_store(
-        cache, BASE, ["field3d"],
-        select={"axes": [{"indices": [1]}, {"slice": [1, 5, 3]}, {"indices": [3, 0]}]})
+        cache,
+        BASE,
+        ["field3d"],
+        select={"axes": [{"indices": [1]}, {"slice": [1, 5, 3]}, {"indices": [3, 0]}]},
+    )
     dims = ZarrReader().read_store(
-        cache, BASE, ["field3d"],
-        select={"dims": {"x": {"indices": [3, 0]}, "layer": {"indices": [1]},
-                         "y": {"slice": [1, 5, 3]}}})
+        cache,
+        BASE,
+        ["field3d"],
+        select={
+            "dims": {"x": {"indices": [3, 0]}, "layer": {"indices": [1]}, "y": {"slice": [1, 5, 3]}}
+        },
+    )
     assert dims["field3d"].dims == axes["field3d"].dims
     np.testing.assert_array_equal(dims["field3d"].data, axes["field3d"].data)
 
@@ -206,17 +237,22 @@ def test_named_select_refuses_a_time_subset(tmp_path):
     import json
 
     _mini_store(tmp_path)
-    _populate(tmp_path, {f"{BASE}/field3d/.zattrs":
-                         json.dumps({"_ARRAY_DIMENSIONS": ["Time", "y", "x"]}).encode()})
+    _populate(
+        tmp_path,
+        {f"{BASE}/field3d/.zattrs": json.dumps({"_ARRAY_DIMENSIONS": ["Time", "y", "x"]}).encode()},
+    )
     cache = Cache(root=tmp_path, offline=True, verify=True)
     with pytest.raises(ValueError, match="time dimension 'Time'"):
-        ZarrReader().read_store(cache, BASE, ["field3d"],
-                                select={"dims": {"Time": {"indices": [1]}}})
-    whole = ZarrReader().read_store(cache, BASE, ["field3d"],
-                                    select={"dims": {"Time": "all", "x": [0]}})
+        ZarrReader().read_store(
+            cache, BASE, ["field3d"], select={"dims": {"Time": {"indices": [1]}}}
+        )
+    whole = ZarrReader().read_store(
+        cache, BASE, ["field3d"], select={"dims": {"Time": "all", "x": [0]}}
+    )
     assert whole["field3d"].data.shape == (2, 5, 1)
     positional = ZarrReader().read_store(
-        cache, BASE, ["field3d"], select={"axes": [{"indices": [1]}, "all", "all"]})
+        cache, BASE, ["field3d"], select={"axes": [{"indices": [1]}, "all", "all"]}
+    )
     assert positional["field3d"].data.shape == (1, 5, 4)
 
 
@@ -233,7 +269,8 @@ def test_laziness_never_touches_unselected_chunks(tmp_path):
     objs = {
         f"{BASE}/sr/.zarray": _zarray((3, 500, 1), (1, 100, 1), "<f4"),
         f"{BASE}/sr/.zattrs": json.dumps(
-            {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}).encode(),
+            {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}
+        ).encode(),
     }
     # 3 layers x 5 source-chunks x 1 = 15 chunks. Only layer 0, source-chunks {0,3}
     # are valid; every other chunk is poison (garbage that fails blosc decode).
@@ -251,10 +288,10 @@ def test_laziness_never_touches_unselected_chunks(tmp_path):
 
     # select layer=[0], source=[5, 12, 305, 340] (chunks {0, 3}), receptor=all.
     nds = ZarrReader().read_store(
-        cache, BASE, ["sr"],
-        select={"axes": [{"indices": [0]},
-                         {"indices": [5, 12, 305, 340]},
-                         "all"]},
+        cache,
+        BASE,
+        ["sr"],
+        select={"axes": [{"indices": [0]}, {"indices": [5, 12, 305, 340]}, "all"]},
     )
     f = nds.variables["sr"]
     assert f.shape == (1, 4, 1)
@@ -270,16 +307,19 @@ def test_over_selection_would_hit_poison(tmp_path):
     objs = {
         f"{BASE}/sr/.zarray": _zarray((1, 500, 1), (1, 100, 1), "<f4"),
         f"{BASE}/sr/.zattrs": json.dumps(
-            {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}).encode(),
+            {"_ARRAY_DIMENSIONS": ["layer", "source", "receptor"]}
+        ).encode(),
         f"{BASE}/sr/0.0.0": _encode_chunk(np.zeros((1, 100, 1), dtype="<f4")),
     }
     for c1 in range(1, 5):
         objs[f"{BASE}/sr/0.{c1}.0"] = b"\x00POISON\xff"
     _populate(tmp_path, objs)
     cache = Cache(root=tmp_path, offline=True, verify=True)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - the poison's error type is the codec's
         ZarrReader().read_store(
-            cache, BASE, ["sr"],
+            cache,
+            BASE,
+            ["sr"],
             select={"axes": [{"indices": [0]}, {"indices": [150]}, "all"]},  # chunk 1 = poison
         )
 
@@ -299,7 +339,10 @@ def test_provider_routes_store_backed(tmp_path):
     _mini_store(tmp_path)
     cache = Cache(root=tmp_path, offline=True, verify=True)
     loader = DataSource(
-        name="isrm", format="zarr", url=BASE, variables=["field3d"],
+        name="isrm",
+        format="zarr",
+        url=BASE,
+        variables=["field3d"],
         reader_kwargs={"select": {"axes": [{"indices": [1]}, {"indices": [1, 4]}, "all"]}},
     )
     nds = Provider(loader, cache).materialize()
@@ -400,9 +443,7 @@ def test_per_call_select_pushes_down_and_fetches_only_needed_chunks(tmp_path):
     f = nds.variables["sr"]
     assert f.dims == ("layer", "source", "receptor")
     assert f.shape == (1, 4, 1)
-    np.testing.assert_array_equal(
-        f.data.ravel(), [1_000_005, 1_000_012, 1_000_305, 1_000_340]
-    )
+    np.testing.assert_array_equal(f.data.ravel(), [1_000_005, 1_000_012, 1_000_305, 1_000_340])
 
     # Laziness: the two needed chunk objects (1,0,0) and (1,3,0) WERE fetched, and
     # NONE of the 13 other chunk objects was (layers 0/2, source-chunks 1/2/4).
@@ -415,9 +456,7 @@ def test_per_call_select_pushes_down_and_fetches_only_needed_chunks(tmp_path):
         for c1 in range(5):
             if (c0, c1) in ((1, 0), (1, 3)):
                 continue
-            assert cache_key(f"{ZSR}/sr/{c0}.{c1}.0") not in got, (
-                f"over-fetched chunk {c0}.{c1}.0"
-            )
+            assert cache_key(f"{ZSR}/sr/{c0}.{c1}.0") not in got, f"over-fetched chunk {c0}.{c1}.0"
 
 
 def test_per_call_select_preserves_permuted_order(tmp_path):
@@ -437,8 +476,9 @@ def test_per_call_select_overrides_baked(tmp_path):
     cache = Cache(LocalStore(tmp_path), offline=True, verify=False)
     baked = {"axes": [{"indices": [0]}, {"indices": [7]}, "all"]}
     p = Provider(
-        DataSource(name="isrm", format="zarr", url=ZSR, variables=["sr"],
-                   reader_kwargs={"select": baked}),
+        DataSource(
+            name="isrm", format="zarr", url=ZSR, variables=["sr"], reader_kwargs={"select": baked}
+        ),
         cache,
     )
     # No per-call select ⇒ the baked select still applies (regression).
@@ -638,9 +678,9 @@ def test_selection_streams_chunks_and_does_not_buffer_them_all(tmp_path):
     # roughly `concurrency` chunks plus the (here negligible) output.
     budget = (concurrency + 8) * _STREAM_CHUNK_BYTES
     assert peak < budget, (
-        f"peak live memory {peak/1e6:.1f} MB exceeds the streaming budget "
-        f"{budget/1e6:.1f} MB while the intersected chunk volume is "
-        f"{volume/1e6:.1f} MB — the reader looks like it is buffering chunks "
+        f"peak live memory {peak / 1e6:.1f} MB exceeds the streaming budget "
+        f"{budget / 1e6:.1f} MB while the intersected chunk volume is "
+        f"{volume / 1e6:.1f} MB — the reader looks like it is buffering chunks "
         f"instead of scattering each one into the output"
     )
     assert peak < volume / 4
@@ -654,13 +694,13 @@ def test_peak_memory_is_flat_in_the_number_of_chunks(tmp_path):
         pytest.skip("tracemalloc does not see numpy data allocations here")
 
     with zarr.config.set({"async.concurrency": 8}):
-        small = _read_one_row_per_chunk(tmp_path, 16)   # 16 MiB chunk volume
+        small = _read_one_row_per_chunk(tmp_path, 16)  # 16 MiB chunk volume
         large = _read_one_row_per_chunk(tmp_path, 128)  # 128 MiB chunk volume
 
     # Buffering would make this ratio ~8; streaming keeps it near 1 (the only
     # growth is the output itself, 128 KiB -> 1 MiB).
     assert large < 2.0 * small, (
-        f"peak live memory grew from {small/1e6:.1f} MB to {large/1e6:.1f} MB when the "
+        f"peak live memory grew from {small / 1e6:.1f} MB to {large / 1e6:.1f} MB when the "
         f"intersected chunk volume grew 8x at a nearly fixed answer size — peak is "
         f"tracking chunk volume, not output"
     )

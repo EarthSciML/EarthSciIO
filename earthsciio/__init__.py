@@ -25,6 +25,28 @@ point of the seam, ``spec/registries.md`` §4).
 
 from __future__ import annotations
 
+# Register backends on import (idempotent). Stubs first (esio-9nb.8), then the
+# active core backends (esio-9nb.2); order is irrelevant — names are orthogonal.
+from . import backends, era5
+from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
+from .backends.cds import (
+    CdsTransport,
+    cds_api_key,
+    cds_api_url,
+    cds_auth,
+    decode_cds_url,
+    encode_cds_url,
+)
+from .cache import Cache, CacheEntry
+from .cachekey import cache_key, range_keyed_url, sha256_bytes, sha256_file
+from .config import (
+    CACHE_FORMAT_VERSION,
+    REVALIDATE_FILE_ENV,
+    default_cache_root,
+    resolve_cache_root,
+    resolve_offline,
+    resolve_revalidate_file,
+)
 from .errors import (
     AuthError,
     BackendNotRegistered,
@@ -39,6 +61,27 @@ from .errors import (
     UnknownReaderOption,
     Unsupported,
 )
+from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
+from .native import NativeDataset, NativeField
+from .prefetch import EpochSample, PrefetchGroup, Sample
+from .provider import (
+    DataLoader,  # 0.1.1 alias of DataSource; dropped in 0.2.0
+    DataSource,
+    LoaderTemporal,  # 0.1.1 alias of SourceTemporal; dropped in 0.2.0
+    Provider,
+    SourceTemporal,
+    Window,
+    reader_option_names,
+)
+from .readers import (
+    CSVReader,
+    FF10Reader,
+    GeoTIFFReader,
+    NetCDFReader,
+    ParquetReader,
+    ShapefileReader,
+    register_format_readers,
+)
 from .registry import (
     Reader,
     Registry,
@@ -52,58 +95,13 @@ from .registry import (
     supports_selection,
     transport_registry,
 )
-from .cachekey import cache_key, range_keyed_url, sha256_bytes, sha256_file
-from .config import (
-    CACHE_FORMAT_VERSION,
-    REVALIDATE_FILE_ENV,
-    default_cache_root,
-    resolve_cache_root,
-    resolve_offline,
-    resolve_revalidate_file,
-)
-from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
+from .selection import DimWindow
 from .validate import (
-    Temporal,
     SourceRevalidator,
+    Temporal,
     file_source_is_current,
     file_source_state,
 )
-from .auth import AuthRegistry, AuthResolver, StaticHeaderAuth
-from .cache import Cache, CacheEntry
-from .native import NativeDataset, NativeField
-from .readers import (
-    CSVReader,
-    FF10Reader,
-    GeoTIFFReader,
-    ParquetReader,
-    ShapefileReader,
-    NetCDFReader,
-    register_format_readers,
-)
-from .provider import (
-    DataLoader,  # 0.1.1 alias of DataSource; dropped in 0.2.0
-    DataSource,
-    LoaderTemporal,  # 0.1.1 alias of SourceTemporal; dropped in 0.2.0
-    Provider,
-    SourceTemporal,
-    Window,
-    reader_option_names,
-)
-from .selection import DimWindow
-from .prefetch import EpochSample, PrefetchGroup, Sample
-from .backends.cds import (
-    CdsTransport,
-    cds_api_key,
-    cds_api_url,
-    cds_auth,
-    decode_cds_url,
-    encode_cds_url,
-)
-from . import era5
-
-# Register backends on import (idempotent). Stubs first (esio-9nb.8), then the
-# active core backends (esio-9nb.2); order is irrelevant — names are orthogonal.
-from . import backends
 
 backends.register_stub_backends()
 backends.register_active_backends()
@@ -113,91 +111,91 @@ backends.register_active_backends()
 register_format_readers()
 
 __all__ = [
-    # errors — registry seam
-    "EarthSciIOError",
-    "BackendNotRegistered",
-    "Unsupported",
-    "UnknownReaderOption",
-    # errors — the streaming writer (spec/writer.md)
-    "RegionNotShardAligned",
-    "CommitError",
-    # errors — cache core
-    "CacheMiss",
-    "IntegrityError",
-    "TransportError",
-    "FetchError",
-    "OfflineError",
-    "AuthError",
-    # registry mechanism + interfaces
-    "Registry",
-    "RegistryEntry",
-    "Transport",
-    "Reader",
-    "Store",
-    # the three registry singletons
-    "transport_registry",
-    "format_registry",
-    "store_registry",
-    "all_registries",
-    "supports_selection",
-    "dim_length",
-    # cache core
-    "Cache",
-    "CacheEntry",
-    "Manifest",
-    "Temporal",
-    "cache_key",
-    "range_keyed_url",
-    "sha256_bytes",
-    "sha256_file",
-    "utc_now_rfc3339",
-    "parse_rfc3339",
-    # native arrays + format readers (esio-9nb.3)
-    "NativeField",
-    "NativeDataset",
-    "NetCDFReader",
-    "CSVReader",
-    "GeoTIFFReader",
-    "FF10Reader",
-    "ShapefileReader",
-    "ParquetReader",
-    "register_format_readers",
-    # provider API (esio-9nb.3)
-    "Provider",
-    "DataSource",
-    "SourceTemporal",
-    "Window",
-    "reader_option_names",
-    # named-dimension windows + epoch prefetch (spec/prefetch.md)
-    "DimWindow",
-    "PrefetchGroup",
-    "Sample",
-    "EpochSample",
-    # 0.1.1 spellings, kept source-compatible; dropped in 0.2.0
-    "DataLoader",
-    "LoaderTemporal",
     # config
     "CACHE_FORMAT_VERSION",
-    "resolve_cache_root",
-    "default_cache_root",
-    "resolve_offline",
-    "resolve_revalidate_file",
     "REVALIDATE_FILE_ENV",
-    "file_source_is_current",
-    "file_source_state",
-    "SourceRevalidator",
+    "AuthError",
     # auth
     "AuthRegistry",
     "AuthResolver",
-    "StaticHeaderAuth",
+    "BackendNotRegistered",
+    "CSVReader",
+    # cache core
+    "Cache",
+    "CacheEntry",
+    # errors — cache core
+    "CacheMiss",
     # CDS transport + ERA5 request mapping
     "CdsTransport",
+    "CommitError",
+    # 0.1.1 spellings, kept source-compatible; dropped in 0.2.0
+    "DataLoader",
+    "DataSource",
+    # named-dimension windows + epoch prefetch (spec/prefetch.md)
+    "DimWindow",
+    # errors — registry seam
+    "EarthSciIOError",
+    "EpochSample",
+    "FF10Reader",
+    "FetchError",
+    "GeoTIFFReader",
+    "IntegrityError",
+    "LoaderTemporal",
+    "Manifest",
+    "NativeDataset",
+    # native arrays + format readers (esio-9nb.3)
+    "NativeField",
+    "NetCDFReader",
+    "OfflineError",
+    "ParquetReader",
+    "PrefetchGroup",
+    # provider API (esio-9nb.3)
+    "Provider",
+    "Reader",
+    # errors — the streaming writer (spec/writer.md)
+    "RegionNotShardAligned",
+    # registry mechanism + interfaces
+    "Registry",
+    "RegistryEntry",
+    "Sample",
+    "ShapefileReader",
+    "SourceRevalidator",
+    "SourceTemporal",
+    "StaticHeaderAuth",
+    "Store",
+    "Temporal",
+    "Transport",
+    "TransportError",
+    "UnknownReaderOption",
+    "Unsupported",
+    "Window",
+    "all_registries",
+    # backend package
+    "backends",
+    "cache_key",
     "cds_api_key",
     "cds_api_url",
     "cds_auth",
-    "encode_cds_url",
     "decode_cds_url",
+    "default_cache_root",
+    "dim_length",
+    "encode_cds_url",
     "era5",
-    # backend package
-    "backends",
+    "file_source_is_current",
+    "file_source_state",
+    "format_registry",
+    "parse_rfc3339",
+    "range_keyed_url",
+    "reader_option_names",
+    "register_format_readers",
+    "resolve_cache_root",
+    "resolve_offline",
+    "resolve_revalidate_file",
+    "sha256_bytes",
+    "sha256_file",
+    "store_registry",
+    "supports_selection",
+    # the three registry singletons
+    "transport_registry",
+    "utc_now_rfc3339",
 ]

@@ -19,7 +19,7 @@ import TiffImages
 function _tiff_tags(img)
     ifd = TiffImages.ifds(img)
     ifd isa AbstractVector && (ifd = first(ifd))     # multi-page: georef is on page 1
-    out = Dict{Int,Any}()
+    out = Dict{Int, Any}()
     for (k, v) in ifd
         tag = v isa AbstractVector ? first(v) : v
         out[Int(k)] = getfield(tag, :data)
@@ -47,10 +47,14 @@ end
 # fixed-point/colour normalization). A 3-D array carries its bands on the trailing axis.
 function _tiff_bands(img)
     a = collect(img)
-    unwrap = m -> (R = _raw_scalar_type(eltype(m));
+    unwrap = m -> (
+        R = _raw_scalar_type(eltype(m));
         R <: Real ? Float64.(reinterpret(R, m)) :
-        error("unsupported GeoTIFF pixel type $(eltype(m)): the ESS loaders are " *
-              "single-band LANDFIRE/USGS rasters (multi-channel colour is not decoded)."))
+            error(
+                "unsupported GeoTIFF pixel type $(eltype(m)): the ESS loaders are " *
+                "single-band LANDFIRE/USGS rasters (multi-channel colour is not decoded)."
+            )
+    )
     if ndims(a) == 2
         return [unwrap(a)]
     elseif ndims(a) == 3
@@ -63,11 +67,15 @@ end
 # `variables` and `band_names` ARE the geotiff reader's decode options; naming
 # them explicitly (rather than slurping the rest) is what lets `Provider` refuse
 # an unrecognised `reader_options` key at construction — spec/registries.md §2.1.
-function read_native(::GeoTIFFReader, path::AbstractString;
-                     variables = nothing, band_names = nothing)
+function read_native(
+        ::GeoTIFFReader, path::AbstractString;
+        variables = nothing, band_names = nothing
+    )
     img = TiffImages.load(String(path))
-    return _assemble_geotiff(_tiff_bands(img), _tiff_tags(img);
-                             variables = variables, band_names = band_names)
+    return _assemble_geotiff(
+        _tiff_bands(img), _tiff_tags(img);
+        variables = variables, band_names = band_names
+    )
 end
 
 end # module

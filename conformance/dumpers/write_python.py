@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 
@@ -36,21 +36,18 @@ from earthsciio.backends.zarr_write import (  # noqa: E402
     ZarrWriter,
 )
 
-_NP_DTYPE = {"float64": np.float64, "float32": np.float32, "int32": np.int32,
-             "int64": np.int64}
+_NP_DTYPE = {"float64": np.float64, "float32": np.float32, "int32": np.int32, "int64": np.int64}
 
 
-def build_schema(spec: Dict[str, Any]) -> OutputSchema:
+def build_schema(spec: dict[str, Any]) -> OutputSchema:
     """Map the language-neutral spec onto the Python writer's ``OutputSchema``."""
-    coords: List = []
+    coords: list = []
     for co in spec["coords"]:
         vals = np.asarray(co["values"], dtype=np.float64)
         coords.append((co["name"], (vals, dict(co["attrs"]))))
-    variables: List = []
+    variables: list = []
     for v in spec["vars"]:
-        variables.append(
-            (v["name"], OutputVar(v["dims"], _NP_DTYPE[v["dtype"]], dict(v["attrs"])))
-        )
+        variables.append((v["name"], OutputVar(v["dims"], _NP_DTYPE[v["dtype"]], dict(v["attrs"]))))
     return OutputSchema(
         dims=[(d, int(n)) for d, n in spec["dims"]],
         time_dim=spec["time_dim"],
@@ -64,7 +61,7 @@ def build_schema(spec: Dict[str, Any]) -> OutputSchema:
     )
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("usage: write_python.py OUT_DIR [SPEC.json]", file=sys.stderr)
         return 2
@@ -78,10 +75,7 @@ def main(argv: List[str]) -> int:
 
     for rec in spec["records"]:
         t = float(rec["t"])
-        arrays = {
-            name: np.asarray(block, dtype=np.float64)
-            for name, block in rec["vars"].items()
-        }
+        arrays = {name: np.asarray(block, dtype=np.float64) for name, block in rec["vars"].items()}
         writer.write_record(handle, t, arrays)
     manifest = writer.write_close(handle)
 

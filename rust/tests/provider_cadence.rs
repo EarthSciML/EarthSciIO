@@ -291,7 +291,11 @@ fn interp_bracket_end_clamp_degenerates() {
     let t2m = &buf["t2m"];
     assert_eq!(t2m.shape, vec![2, 3, 3]);
     assert_eq!(f64s(t2m)[0], 282.6);
-    assert_eq!(f64s(t2m)[9], 282.6, "successor == floor (held at the endpoint)");
+    assert_eq!(
+        f64s(t2m)[9],
+        282.6,
+        "successor == floor (held at the endpoint)"
+    );
     let time = f64s(&provider.coords()["time"].field);
     assert_eq!(time[0], time[1], "degenerate bracket has equal timestamps");
     assert_eq!(
@@ -316,7 +320,9 @@ fn interp_rejects_bad_mode() {
         Err(Error::Format { detail, .. }) => {
             assert!(detail.contains("records_per_sample"), "detail: {detail}");
         }
-        other => panic!("expected a Format error for a bad records_per_sample count, got {other:?}"),
+        other => {
+            panic!("expected a Format error for a bad records_per_sample count, got {other:?}")
+        }
     }
 }
 

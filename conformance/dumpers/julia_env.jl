@@ -57,8 +57,8 @@ env_path() = get(ENV, "ESIO_JULIA_ENV", joinpath(REPO_ROOT, "conformance", ".jul
 # can be activated by one driver) plus what the drivers import directly.
 function _direct_deps()
     proj = TOML.parsefile(PKG_TOML)
-    deps = Dict{String,Any}()
-    for (name, uuid) in get(proj, "weakdeps", Dict{String,Any}())
+    deps = Dict{String, Any}()
+    for (name, uuid) in get(proj, "weakdeps", Dict{String, Any}())
         deps[name] = uuid
     end
     for name in DRIVER_DEPS
@@ -69,15 +69,17 @@ function _direct_deps()
 end
 
 # What the resolution depends on. Anything here changing invalidates the manifest.
-_stamp(deps) = string(VERSION, "\n",
-                      bytes2hex(SHA.sha256(read(PKG_TOML))), "\n",
-                      join(sort!(collect(keys(deps))), ","), "\n")
+_stamp(deps) = string(
+    VERSION, "\n",
+    bytes2hex(SHA.sha256(read(PKG_TOML))), "\n",
+    join(sort!(collect(keys(deps))), ","), "\n"
+)
 
 # Resolve/install OFFLINE first — the harness's whole claim is that it touches no
 # network — and only reach out when the depot genuinely lacks something.
 function _offline_first(f)
     was = get(ENV, "JULIA_PKG_OFFLINE", nothing)
-    try
+    return try
         ENV["JULIA_PKG_OFFLINE"] = "true"
         f()
     catch
@@ -100,7 +102,7 @@ function prepare_julia_env(; io = stderr)
     deps = _direct_deps()
     stamp_file = joinpath(env, ".esio-env-stamp")
     warm = isfile(joinpath(env, "Manifest.toml")) &&
-           isfile(stamp_file) && read(stamp_file, String) == _stamp(deps)
+        isfile(stamp_file) && read(stamp_file, String) == _stamp(deps)
     if !warm
         mkpath(env)
         # A stale manifest must not survive a Project.toml change.

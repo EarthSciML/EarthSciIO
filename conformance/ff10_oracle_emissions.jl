@@ -62,14 +62,16 @@ function main()
 
     # Emissions.jl's read path: no header row, '#' comment block skipped. `types =
     # String` captures the RAW field text (see the raw-parse note above).
-    df = CSV.read(blob, DataFrame; header = false, comment = "#",
-                  types = String, silencewarnings = true)
+    df = CSV.read(
+        blob, DataFrame; header = false, comment = "#",
+        types = String, silencewarnings = true
+    )
     rename!(df, FF10_POINT_COLUMNS)
 
-    @assert size(df, 2) == 77 "expected 77 columns, got $(size(df,2))"
+    @assert size(df, 2) == 77 "expected 77 columns, got $(size(df, 2))"
     exp = case["expected"]["variables"]
     nrows = size(df, 1)
-    println("Emissions.jl raw-parse oracle: $(size(df,2)) columns, $nrows rows")
+    println("Emissions.jl raw-parse oracle: $(size(df, 2)) columns, $nrows rows")
 
     numeric = Set(String.(case["decode"]["numeric_columns"]))
     mism = 0
@@ -88,9 +90,11 @@ function main()
         ok || (mism += 1; println("  MISMATCH in $name: got=$got want=$want"))
     end
 
-    if mism == 0
-        println("PASS: EarthSciIO ff10 schema + raw parse == Emissions.jl oracle ",
-                "(all 77 columns, $nrows rows; COUNTRY_CD↔COUNTRY, REGION_CD↔FIPS).")
+    return if mism == 0
+        println(
+            "PASS: EarthSciIO ff10 schema + raw parse == Emissions.jl oracle ",
+            "(all 77 columns, $nrows rows; COUNTRY_CD↔COUNTRY, REGION_CD↔FIPS)."
+        )
     else
         println("FAIL: $mism column(s) mismatched")
         exit(1)

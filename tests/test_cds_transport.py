@@ -24,7 +24,6 @@ from earthsciio.backends.cds import (
 from earthsciio.config import env_live
 from earthsciio.errors import TransportError
 
-
 # --------------------------------------------------------------------------- #
 # Credential + endpoint resolution (port of cds_api.jl `cds_api_key`).
 # --------------------------------------------------------------------------- #
@@ -36,9 +35,7 @@ def test_api_key_env_wins(monkeypatch):
 
 
 def test_api_key_from_cdsapirc(monkeypatch, tmp_path):
-    (tmp_path / ".cdsapirc").write_text(
-        "url: https://cds.example/api\nkey: rc-token\n"
-    )
+    (tmp_path / ".cdsapirc").write_text("url: https://cds.example/api\nkey: rc-token\n")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cds_api_key() == "rc-token"
     assert cds_api_url() == "https://cds.example/api"
@@ -169,9 +166,7 @@ def _url():
 def test_fetch_submits_polls_and_downloads(cds_server, tmp_path):
     cds_server.poll_states = ["accepted", "running", "successful"]
     dest = tmp_path / "out.part"
-    result = _transport(cds_server).fetch(
-        _url(), str(dest), auth=cds_auth("tok-123")
-    )
+    result = _transport(cds_server).fetch(_url(), str(dest), auth=cds_auth("tok-123"))
     assert result.status == "downloaded"
     assert result.bytes_written == len(cds_server.payload)
     assert dest.read_bytes() == cds_server.payload
@@ -182,7 +177,9 @@ def test_fetch_submits_polls_and_downloads(cds_server, tmp_path):
     # the dataset + request reached the server intact
     assert cds_server.last_dataset == "reanalysis-era5-pressure-levels"
     assert cds_server.last_inputs == {
-        "variable": ["temperature"], "year": ["2018"], "month": ["11"]
+        "variable": ["temperature"],
+        "year": ["2018"],
+        "month": ["11"],
     }
     # PRIVATE-TOKEN went on every API call (submit/poll/results), never blank
     assert cds_server.tokens and all(t == "tok-123" for t in cds_server.tokens)
@@ -191,9 +188,7 @@ def test_fetch_submits_polls_and_downloads(cds_server, tmp_path):
 def test_fetch_uses_injected_auth_over_ambient_key(cds_server, tmp_path, monkeypatch):
     # An ambient key exists, but the injected resolver must take precedence.
     monkeypatch.setenv("CDSAPI_KEY", "ambient-should-not-be-used")
-    _transport(cds_server).fetch(
-        _url(), str(tmp_path / "o.part"), auth=cds_auth("injected")
-    )
+    _transport(cds_server).fetch(_url(), str(tmp_path / "o.part"), auth=cds_auth("injected"))
     assert all(t == "injected" for t in cds_server.tokens)
 
 

@@ -23,17 +23,19 @@ notably a time axis's `units`/`calendar` (calendar decoding is ESS's job)."""
 struct NativeField
     data::AbstractArray
     dims::Vector{String}
-    attrs::Dict{String,Any}
+    attrs::Dict{String, Any}
 end
 NativeField(data::AbstractArray, dims::AbstractVector) =
-    NativeField(data, String.(collect(dims)), Dict{String,Any}())
+    NativeField(data, String.(collect(dims)), Dict{String, Any}())
 
 Base.size(f::NativeField) = size(f.data)
 Base.eltype(f::NativeField) = eltype(f.data)
 
 function Base.show(io::IO, f::NativeField)
-    print(io, "NativeField(", eltype(f.data), " ", join(string.(size(f.data)), "×"),
-          " dims=", f.dims, ")")
+    return print(
+        io, "NativeField(", eltype(f.data), " ", join(string.(size(f.data)), "×"),
+        " dims=", f.dims, ")"
+    )
 end
 
 """
@@ -45,10 +47,10 @@ grid's `latitude`/`longitude`/`time`). Both map `String` name → [`NativeField`
 `getindex` looks in `variables` then `coords`, so `nds["t2m"]` and `nds["time"]`
 both resolve."""
 struct NativeDataset
-    variables::Dict{String,NativeField}
-    coords::Dict{String,NativeField}
+    variables::Dict{String, NativeField}
+    coords::Dict{String, NativeField}
 end
-NativeDataset() = NativeDataset(Dict{String,NativeField}(), Dict{String,NativeField}())
+NativeDataset() = NativeDataset(Dict{String, NativeField}(), Dict{String, NativeField}())
 
 function Base.getindex(nds::NativeDataset, name::AbstractString)
     k = String(name)
@@ -64,8 +66,10 @@ variable_names(nds::NativeDataset) = sort!(collect(keys(nds.variables)))
 coord_names(nds::NativeDataset) = sort!(collect(keys(nds.coords)))
 
 function Base.show(io::IO, nds::NativeDataset)
-    print(io, "NativeDataset(variables=", variable_names(nds),
-          ", coords=", coord_names(nds), ")")
+    return print(
+        io, "NativeDataset(variables=", variable_names(nds),
+        ", coords=", coord_names(nds), ")"
+    )
 end
 
 # --- NetCDF reader (NCDatasets) ---------------------------------------------
@@ -211,8 +215,8 @@ const _NETCDF_LOCK = ReentrantLock()
 
 _with_netcdf(f, path::String) =
     lock(_NETCDF_LOCK) do
-        NCDatasets.NCDataset(f, path, "r")
-    end
+    NCDatasets.NCDataset(f, path, "r")
+end
 
 # A CF time axis is one whose `units` is "<step> since <reference>" (hours since
 # …, days since …). Matching xarray `decode_times=false`, such variables are
@@ -242,7 +246,7 @@ function _finalize_numeric(a::AbstractArray)
 end
 
 function _carry_attrs(attrib)
-    d = Dict{String,Any}()
+    d = Dict{String, Any}()
     for k in ("units", "calendar")
         haskey(attrib, k) && (d[k] = String(attrib[k]))
     end
@@ -342,7 +346,7 @@ function _netcdf_text_data(ds, v)
     if _netcdf_stacks_last_dim(ds, v)
         sz = size(raw)
         strlen = sz[end]
-        outsz = sz[1:end-1]
+        outsz = sz[1:(end - 1)]
         out = Array{String}(undef, outsz)
         for idx in CartesianIndices(outsz)
             out[idx] = _netcdf_nul_stripped(Char[raw[Tuple(idx)..., k] for k in 1:strlen])
@@ -370,11 +374,14 @@ function _netcdf_text_select(ds, v, dims::Vector{String}, data, sel)
     sel === nothing && return data
     cd = _netcdf_consumed_dim(ds, v)
     if cd !== nothing && haskey(sel, cd)
-        throw(ArgumentError(
-            "select asks for a subset of '$cd', which is the string LENGTH of the " *
-            "char variable '$(NCDatasets.name(v))', not an axis of it; the decoded " *
-            "field has dims $dims, and selecting along a string length would " *
-            "truncate every string rather than choose cells"))
+        throw(
+            ArgumentError(
+                "select asks for a subset of '$cd', which is the string LENGTH of the " *
+                    "char variable '$(NCDatasets.name(v))', not an axis of it; the decoded " *
+                    "field has dims $dims, and selecting along a string length would " *
+                    "truncate every string rather than choose cells"
+            )
+        )
     end
     any(haskey(sel, d) for d in dims) || return data
     idx = Any[haskey(sel, d) ? (sel[d] .+ 1) : Colon() for d in dims]
@@ -391,8 +398,11 @@ function _netcdf_wanted(ds, dimset::AbstractSet{String}, variables)
     want = Set(String[String(v) for v in variables])
     present = sort!(String[String(vn) for vn in keys(ds) if !(String(vn) in dimset)])
     absent = sort!(String[v for v in want if !(v in present)])
-    isempty(absent) || throw(ArgumentError(
-        "requested variables not in blob: $absent; present data variables: $present"))
+    isempty(absent) || throw(
+        ArgumentError(
+            "requested variables not in blob: $absent; present data variables: $present"
+        )
+    )
     return want
 end
 
@@ -432,7 +442,7 @@ function _netcdf_dim_selection(ds, select, want = nothing)
     parsed = [_parse_axis(a) for a in form[2]]
     naxes = length(parsed)
 
-    bydim = Dict{String,Any}()
+    bydim = Dict{String, Any}()
     matched = false
     for vn in keys(ds)
         dims = _netcdf_field_dims(ds, ds[vn])
@@ -440,26 +450,35 @@ function _netcdf_dim_selection(ds, select, want = nothing)
         matched = true
         for (i, d) in enumerate(dims)
             if haskey(bydim, d) && bydim[d] != parsed[i]
-                throw(ArgumentError(
-                    "select is ambiguous: dimension '$d' is asked for two different " *
-                    "selectors by two rank-$naxes variables in this blob; a netcdf " *
-                    "`select` is positional over file-order dims and must agree"))
+                throw(
+                    ArgumentError(
+                        "select is ambiguous: dimension '$d' is asked for two different " *
+                            "selectors by two rank-$naxes variables in this blob; a netcdf " *
+                            "`select` is positional over file-order dims and must agree"
+                    )
+                )
             end
             bydim[d] = parsed[i]
         end
     end
-    matched || throw(ArgumentError(
-        "select has $naxes axes but no variable in the blob has rank $naxes; " *
-        "a netcdf `select` is positional over the file-order dims of the arrays " *
-        "it applies to"))
+    matched || throw(
+        ArgumentError(
+            "select has $naxes axes but no variable in the blob has rank $naxes; " *
+                "a netcdf `select` is positional over the file-order dims of the arrays " *
+                "it applies to"
+        )
+    )
 
-    out = Dict{String,Vector{Int}}()
+    out = Dict{String, Vector{Int}}()
     for (d, ax) in bydim
         ax[1] === :all && continue
-        _netcdf_is_time_dim(ds, d) && throw(ArgumentError(
-            "select asks for a subset of the time dimension '$d'; record selection " *
-            "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
-            "reader's — the time axis of a netcdf `select` must be \"all\""))
+        _netcdf_is_time_dim(ds, d) && throw(
+            ArgumentError(
+                "select asks for a subset of the time dimension '$d'; record selection " *
+                    "is the Provider's (it owns the cadence: `records_per_sample`), not the " *
+                    "reader's — the time axis of a netcdf `select` must be \"all\""
+            )
+        )
         out[d] = _resolve_axis(ax, Int(ds.dim[d]))
     end
     return isempty(out) ? nothing : out
@@ -477,7 +496,7 @@ end
 # `_netcdf_field_dims` is for), so naming one is refused like any dimension the
 # read lacks — never applied, since it would cut characters off every string —
 # and the error says which char variable's length it is.
-function _netcdf_named_selection(ds, named::Dict{String,Any}, want)
+function _netcdf_named_selection(ds, named::Dict{String, Any}, want)
     dimset = Set(String.(collect(keys(ds.dim))))
     present = Set{String}()
     for vn in keys(ds)
@@ -491,9 +510,11 @@ function _netcdf_named_selection(ds, named::Dict{String,Any}, want)
         end
         return nothing
     end
-    _check_named_selection(named, present, d -> _netcdf_is_time_dim(ds, d);
-                           consumed = consumed)
-    out = Dict{String,Vector{Int}}()
+    _check_named_selection(
+        named, present, d -> _netcdf_is_time_dim(ds, d);
+        consumed = consumed
+    )
+    out = Dict{String, Vector{Int}}()
     for (d, ax) in named
         ax[1] === :all && continue
         out[d] = _resolve_axis(ax, Int(ds.dim[d]))
@@ -515,9 +536,12 @@ _records_resolver(x) = applicable(x, 1)
 # ask — hence the separate keyword and the explicit `dim`.
 function _netcdf_merge_records(ds, sel, records)
     records === nothing && return sel
-    haskey(records, "dim") && haskey(records, "indices") || throw(ArgumentError(
-        "records must be a Dict with \"dim\" and \"indices\", got keys " *
-        "$(sort!(String[String(k) for k in keys(records)]))"))
+    haskey(records, "dim") && haskey(records, "indices") || throw(
+        ArgumentError(
+            "records must be a Dict with \"dim\" and \"indices\", got keys " *
+                "$(sort!(String[String(k) for k in keys(records)]))"
+        )
+    )
     d = String(records["dim"])
     want = records["indices"]
     if !haskey(ds.dim, d)
@@ -527,24 +551,36 @@ function _netcdf_merge_records(ds, sel, records)
         # have done had it probed and found nothing. A LITERAL list was written
         # against an axis the blob does not have, and that is a mistake.
         _records_resolver(want) && return sel
-        throw(ArgumentError(
-            "records names dimension '$d', which the blob does not have; present: " *
-            "$(sort!(String[String(k) for k in keys(ds.dim)]))"))
+        throw(
+            ArgumentError(
+                "records names dimension '$d', which the blob does not have; present: " *
+                    "$(sort!(String[String(k) for k in keys(ds.dim)]))"
+            )
+        )
     end
     len = Int(ds.dim[d])
     idxs = Int[Int(i) for i in (_records_resolver(want) ? want(len) : want)]
-    isempty(idxs) && throw(ArgumentError(
-        "records asks for no records of '$d'; an empty selection is an error, " *
-        "not a whole-axis read"))
+    isempty(idxs) && throw(
+        ArgumentError(
+            "records asks for no records of '$d'; an empty selection is an error, " *
+                "not a whole-axis read"
+        )
+    )
     bad = sort!(unique(Int[i for i in idxs if i < 0 || i >= len]))
-    isempty(bad) || throw(ArgumentError(
-        "records index/indices $bad are outside 0:$(len - 1) for dimension '$d' " *
-        "(the reader does not wrap: locating a cadence tick inside its file is " *
-        "the Provider's job)"))
-    out = sel === nothing ? Dict{String,Vector{Int}}() : sel
-    haskey(out, d) && throw(ArgumentError(
-        "select and records both narrow dimension '$d'; a record selection is " *
-        "the Provider's and a `select` must leave the record axis \"all\""))
+    isempty(bad) || throw(
+        ArgumentError(
+            "records index/indices $bad are outside 0:$(len - 1) for dimension '$d' " *
+                "(the reader does not wrap: locating a cadence tick inside its file is " *
+                "the Provider's job)"
+        )
+    )
+    out = sel === nothing ? Dict{String, Vector{Int}}() : sel
+    haskey(out, d) && throw(
+        ArgumentError(
+            "select and records both narrow dimension '$d'; a record selection is " *
+                "the Provider's and a `select` must leave the record axis \"all\""
+        )
+    )
     out[d] = idxs
     return out
 end
@@ -557,7 +593,7 @@ function _netcdf_progression(idxs::Vector{Int})
     step = idxs[2] - idxs[1]
     step >= 1 || return (1, true)
     for k in 3:length(idxs)
-        idxs[k] - idxs[k-1] == step || return (1, true)
+        idxs[k] - idxs[k - 1] == step || return (1, true)
     end
     return (step, false)
 end
@@ -604,8 +640,10 @@ function _netcdf_read(v, file_dims::Vector{String}, sel, raw::Bool)
     return needs_gather ? data[gathers...] : data
 end
 
-function read_native(::NetCDFReader, path::AbstractString; variables = nothing,
-                     select = nothing, records = nothing)
+function read_native(
+        ::NetCDFReader, path::AbstractString; variables = nothing,
+        select = nothing, records = nothing
+    )
     nds = NativeDataset()
     _with_netcdf(String(path)) do ds
         dimset = Set(String.(collect(keys(ds.dim))))
@@ -639,16 +677,22 @@ function read_native(::NetCDFReader, path::AbstractString; variables = nothing,
                 # raw `Char` matrix, which is what NCDatasets hands back and what
                 # made this track disagree with xarray and netcdf-rs.
                 fdims = _netcdf_field_dims(ds, v)
-                NativeField(_netcdf_text_select(ds, v, fdims,
-                                                _netcdf_text_data(ds, v), sel),
-                            fdims, attrs)
+                NativeField(
+                    _netcdf_text_select(
+                        ds, v, fdims,
+                        _netcdf_text_data(ds, v), sel
+                    ),
+                    fdims, attrs
+                )
             else
                 file_dims = _netcdf_file_dims(v)
                 # A CF time axis is read RAW (no CF transform), so a "hours since …"
                 # axis stays the stored integers; everything else is mask_and_scale'd
                 # (NCDatasets applies scale/offset + _FillValue→missing).
-                NativeField(_netcdf_read(v, file_dims, sel, _is_cf_time(v.attrib)),
-                            file_dims, attrs)
+                NativeField(
+                    _netcdf_read(v, file_dims, sel, _is_cf_time(v.attrib)),
+                    file_dims, attrs
+                )
             end
             if String(vn) in dimset
                 nds.coords[String(vn)] = field
@@ -682,9 +726,11 @@ struct CSVReader <: Reader end
 
 _parses_float(s::AbstractString) = tryparse(Float64, strip(s)) !== nothing
 
-function read_native(::CSVReader, path::AbstractString;
-                     numeric_columns = nothing, delimiter::AbstractString = ",",
-                     header_row::Integer = 1)
+function read_native(
+        ::CSVReader, path::AbstractString;
+        numeric_columns = nothing, delimiter::AbstractString = ",",
+        header_row::Integer = 1
+    )
     rows = Vector{String}[]
     for ln in eachline(String(path))
         isempty(ln) && continue
@@ -692,18 +738,18 @@ function read_native(::CSVReader, path::AbstractString;
     end
     isempty(rows) && return NativeDataset()
     header = rows[header_row]
-    body = rows[header_row+1:end]
+    body = rows[(header_row + 1):end]
     numset = numeric_columns === nothing ? nothing : Set(String.(collect(numeric_columns)))
 
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     for (j, col) in enumerate(header)
         name = String(col)
         vals = String[r[j] for r in body]
         isnum = numset === nothing ? all(_parses_float, vals) : (name in numset)
         data = isnum ? Float64[parse(Float64, strip(v)) for v in vals] : vals
-        vars[name] = NativeField(data, ["index"], Dict{String,Any}())
+        vars[name] = NativeField(data, ["index"], Dict{String, Any}())
     end
-    return NativeDataset(vars, Dict{String,NativeField}())
+    return NativeDataset(vars, Dict{String, NativeField}())
 end
 
 # --- GeoTIFF reader (TiffImages backend via a weakdep extension) ------------
@@ -737,8 +783,9 @@ struct GeoTIFFReader <: Reader end
 # which precompilation forbids). This fallback fires only when the backend is absent.
 read_native(::GeoTIFFReader, path; kwargs...) = error(
     "the geotiff reader needs the TiffImages backend: add `using TiffImages` so the " *
-    "EarthSciIOTiffImagesExt extension supplies the decode (kept a weakdep to keep a " *
-    "base EarthSciIO install light, mirroring the Python tifffile-optional path).")
+        "EarthSciIOTiffImagesExt extension supplies the decode (kept a weakdep to keep a " *
+        "base EarthSciIO install light, mirroring the Python tifffile-optional path)."
+)
 
 # GTModelTypeGeoKey-style lookup (key 1024: 1=projected, 2=geographic) from a flat
 # `GeoKeyDirectoryTag`. The directory is [version,keyRev,minorRev,nKeys,
@@ -778,15 +825,20 @@ model space being y-up while raster rows increase downward — the geographic vs
 projected flag from `GeoKeyDirectoryTag` (34735) GTModelTypeGeoKey, and
 `GDAL_NODATA` (42113) → `NaN`. Shared decode CONTRACT: the TiffImages backend (and
 any future GDAL one) only supplies `bands`+`tags`, so the georef math lives once."""
-function _assemble_geotiff(bands::AbstractVector, tags::AbstractDict;
-                           variables = nothing, band_names = nothing)
+function _assemble_geotiff(
+        bands::AbstractVector, tags::AbstractDict;
+        variables = nothing, band_names = nothing
+    )
     isempty(bands) && throw(ArgumentError("GeoTIFF has no raster bands"))
     nbands = length(bands)
     scale = get(tags, 33550, nothing)
     tie = get(tags, 33922, nothing)
-    (scale === nothing || tie === nothing) && throw(ArgumentError(
-        "GeoTIFF lacks ModelPixelScaleTag/ModelTiepointTag; cannot derive a grid " *
-        "(a non-tiepoint affine georeferencing needs the GDAL backend)."))
+    (scale === nothing || tie === nothing) && throw(
+        ArgumentError(
+            "GeoTIFF lacks ModelPixelScaleTag/ModelTiepointTag; cannot derive a grid " *
+                "(a non-tiepoint affine georeferencing needs the GDAL backend)."
+        )
+    )
     sx, sy = Float64(scale[1]), Float64(scale[2])
     i0, j0 = Float64(tie[1]), Float64(tie[2])
     x0, y0 = Float64(tie[4]), Float64(tie[5])
@@ -797,17 +849,23 @@ function _assemble_geotiff(bands::AbstractVector, tags::AbstractDict;
     nodata = _geotiff_nodata(get(tags, 42113, nothing))
 
     names = band_names === nothing ? ["Band$(i)" for i in 1:nbands] :
-            String[String(n) for n in band_names]
-    length(names) == nbands || throw(ArgumentError(
-        "band_names has $(length(names)) entries but the GeoTIFF has $nbands band(s)"))
+        String[String(n) for n in band_names]
+    length(names) == nbands || throw(
+        ArgumentError(
+            "band_names has $(length(names)) entries but the GeoTIFF has $nbands band(s)"
+        )
+    )
     ydim, xdim = geographic ? ("lat", "lon") : ("y", "x")
     want = variables === nothing ? nothing : Set(String[String(v) for v in variables])
     if want !== nothing
         miss = sort!(String[v for v in want if !(v in names)])
-        isempty(miss) || throw(KeyError(
-            "requested bands not in GeoTIFF: $miss; present bands: $names"))
+        isempty(miss) || throw(
+            KeyError(
+                "requested bands not in GeoTIFF: $miss; present bands: $names"
+            )
+        )
     end
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     for (nm, band) in zip(names, bands)
         want !== nothing && !(nm in want) && continue
         data = Array{Float64}(band)                  # copy: we may write NaN below
@@ -816,11 +874,12 @@ function _assemble_geotiff(bands::AbstractVector, tags::AbstractDict;
                 data[k] == nodata && (data[k] = NaN)
             end
         end
-        vars[nm] = NativeField(data, [ydim, xdim], Dict{String,Any}())
+        vars[nm] = NativeField(data, [ydim, xdim], Dict{String, Any}())
     end
-    coords = Dict{String,NativeField}(
-        xdim => NativeField(xs, [xdim], Dict{String,Any}()),
-        ydim => NativeField(ys, [ydim], Dict{String,Any}()))
+    coords = Dict{String, NativeField}(
+        xdim => NativeField(xs, [xdim], Dict{String, Any}()),
+        ydim => NativeField(ys, [ydim], Dict{String, Any}())
+    )
     return NativeDataset(vars, coords)
 end
 
@@ -857,17 +916,19 @@ const FF10_POINT_COLUMNS = String[
 # (IDs, codes, free-text FACILITY_NAME, temporal tokens CALC_YEAR/DATE_UPDATED)
 # stays String so leading-zero codes (REGION_CD "01001", ZIPCODE "00000", SCC,
 # POLID) never become floats. Overridable via the `numeric_columns` kwarg.
-const FF10_POINT_NUMERIC = Set{String}([
-    "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
-    "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
-    "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
-    "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
-    "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
-    "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
-    "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
-    "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
-    "NOV_PCTRED", "DEC_PCTRED",
-])
+const FF10_POINT_NUMERIC = Set{String}(
+    [
+        "ANN_VALUE", "ANN_PCT_RED", "STKHGT", "STKDIAM", "STKTEMP", "STKFLOW",
+        "STKVEL", "LONGITUDE", "LATITUDE", "DESIGN_CAPACITY", "CURRENT_COST",
+        "CUMULATIVE_COST", "PROJECTION_FACTOR", "FUG_HEIGHT", "FUG_WIDTH_XDIM",
+        "FUG_LENGTH_YDIM", "FUG_ANGLE", "ANNUAL_AVG_HOURS_PER_YEAR",
+        "JAN_VALUE", "FEB_VALUE", "MAR_VALUE", "APR_VALUE", "MAY_VALUE", "JUN_VALUE",
+        "JUL_VALUE", "AUG_VALUE", "SEP_VALUE", "OCT_VALUE", "NOV_VALUE", "DEC_VALUE",
+        "JAN_PCTRED", "FEB_PCTRED", "MAR_PCTRED", "APR_PCTRED", "MAY_PCTRED",
+        "JUN_PCTRED", "JUL_PCTRED", "AUG_PCTRED", "SEP_PCTRED", "OCT_PCTRED",
+        "NOV_PCTRED", "DEC_PCTRED",
+    ]
+)
 
 """
     FF10Reader()
@@ -931,7 +992,7 @@ function _split_ff10_fields(line::AbstractString, delim::AbstractChar)
         c = chars[k]
         if inquote
             if c == '"'
-                if k < L && chars[k+1] == '"'   # escaped quote ""
+                if k < L && chars[k + 1] == '"'   # escaped quote ""
                     write(buf, '"'); k += 1
                 else
                     inquote = false
@@ -959,12 +1020,16 @@ end
 # `2016fd_inputs_point.zip` holds many member CSVs several loaders read.
 function _ff10_member_text(path::AbstractString, member::AbstractString)
     reader = ZipFile.Reader(String(path))
-    try
+    return try
         for f in reader.files
             f.name == member && return String(read(f))
         end
-        throw(ArgumentError("zip member $(repr(member)) not found in $(path); " *
-            "members: $(String[f.name for f in reader.files])"))
+        throw(
+            ArgumentError(
+                "zip member $(repr(member)) not found in $(path); " *
+                    "members: $(String[f.name for f in reader.files])"
+            )
+        )
     finally
         close(reader)
     end
@@ -996,7 +1061,7 @@ function _glob_regex(pat::AbstractString)
             if j > n
                 write(io, "\\[")                    # unclosed class -> literal '['
             else
-                inner = join(chars[i+1:j-1])
+                inner = join(chars[(i + 1):(j - 1)])
                 inner = replace(inner, "\\" => "\\\\")
                 startswith(inner, "!") && (inner = "^" * inner[2:end])
                 write(io, '[')
@@ -1031,20 +1096,29 @@ function _ff10_member_texts(path::AbstractString, members, member_glob)
         if members !== nothing
             want = String[String(m) for m in members]
             miss = sort!(String[m for m in want if !(m in names)])
-            isempty(miss) || throw(ArgumentError(
-                "zip members $(repr(miss)) not found in $(path); members: $(sort(names))"))
+            isempty(miss) || throw(
+                ArgumentError(
+                    "zip members $(repr(miss)) not found in $(path); members: $(sort(names))"
+                )
+            )
             union!(selected, want)
         end
         if member_glob !== nothing
             re = _glob_regex(String(member_glob))
             hits = String[n for n in names if occursin(re, n)]
-            isempty(hits) && throw(ArgumentError(
-                "member_glob $(repr(member_glob)) matched no members in $(path); " *
-                "members: $(sort(names))"))
+            isempty(hits) && throw(
+                ArgumentError(
+                    "member_glob $(repr(member_glob)) matched no members in $(path); " *
+                        "members: $(sort(names))"
+                )
+            )
             union!(selected, hits)
         end
-        isempty(selected) && throw(ArgumentError(
-            "members/member_glob selected no zip members"))
+        isempty(selected) && throw(
+            ArgumentError(
+                "members/member_glob selected no zip members"
+            )
+        )
         byname = Dict(f.name => f for f in reader.files)
         return [String(read(byname[n])) for n in sort!(collect(selected))]
     finally
@@ -1057,28 +1131,42 @@ end
 # `country_cd` (case-insensitive) — anything else is an error, so the option can
 # never silently drop a data row.
 function _ff10_skip_header(data_lines::Vector{<:AbstractString}, delimiter::AbstractString)
-    isempty(data_lines) && throw(ArgumentError(
-        "skip_header_row: no non-comment lines — the asserted header row is missing"))
+    isempty(data_lines) && throw(
+        ArgumentError(
+            "skip_header_row: no non-comment lines — the asserted header row is missing"
+        )
+    )
     first_field = lowercase(strip(first(split(first(data_lines), delimiter; limit = 2))))
-    first_field == "country_cd" || throw(ArgumentError(
-        "skip_header_row: first non-comment line does not start with a " *
-        "'country_cd' header field (got $(repr(first_field))); refusing to " *
-        "drop a data row"))
+    first_field == "country_cd" || throw(
+        ArgumentError(
+            "skip_header_row: first non-comment line does not start with a " *
+                "'country_cd' header field (got $(repr(first_field))); refusing to " *
+                "drop a data row"
+        )
+    )
     return data_lines[2:end]
 end
 
-function read_native(::FF10Reader, path::AbstractString;
-                     member = nothing, members = nothing, member_glob = nothing,
-                     skip_header_row::Bool = false, kind::AbstractString = "point",
-                     numeric_columns = FF10_POINT_NUMERIC,
-                     delimiter::AbstractString = ",", comment::AbstractString = "#",
-                     variables = nothing)
-    kind == "point" || throw(ArgumentError(
-        "FF10Reader only supports kind=\"point\" (got $(repr(kind))); the 45-col " *
-        "nonpoint/onroad/nonroad schemas are not implemented yet"))
+function read_native(
+        ::FF10Reader, path::AbstractString;
+        member = nothing, members = nothing, member_glob = nothing,
+        skip_header_row::Bool = false, kind::AbstractString = "point",
+        numeric_columns = FF10_POINT_NUMERIC,
+        delimiter::AbstractString = ",", comment::AbstractString = "#",
+        variables = nothing
+    )
+    kind == "point" || throw(
+        ArgumentError(
+            "FF10Reader only supports kind=\"point\" (got $(repr(kind))); the 45-col " *
+                "nonpoint/onroad/nonroad schemas are not implemented yet"
+        )
+    )
     texts = if members !== nothing || member_glob !== nothing
-        member === nothing || throw(ArgumentError(
-            "`member` is mutually exclusive with `members`/`member_glob`"))
+        member === nothing || throw(
+            ArgumentError(
+                "`member` is mutually exclusive with `members`/`member_glob`"
+            )
+        )
         _ff10_member_texts(String(path), members, member_glob)
     elseif member !== nothing
         [_ff10_member_text(String(path), String(member))]
@@ -1092,14 +1180,19 @@ function read_native(::FF10Reader, path::AbstractString;
     # `country_cd` header line (if skip_header_row), then RFC-4180 parse.
     rows = Vector{String}[]
     for text in texts
-        data_lines = String[rstrip(ln, ['\r']) for ln in split(text, '\n')
-                            if !isempty(strip(ln)) && !startswith(strip(ln), comment)]
+        data_lines = String[
+            rstrip(ln, ['\r']) for ln in split(text, '\n')
+                if !isempty(strip(ln)) && !startswith(strip(ln), comment)
+        ]
         skip_header_row && (data_lines = _ff10_skip_header(data_lines, delimiter))
         for ln in data_lines
             fields = _split_ff10_fields(ln, delim)
-            length(fields) == ncol || throw(ArgumentError(
-                "FF10 point row has $(length(fields)) fields, expected $ncol; " *
-                "row=$(repr(ln))"))
+            length(fields) == ncol || throw(
+                ArgumentError(
+                    "FF10 point row has $(length(fields)) fields, expected $ncol; " *
+                        "row=$(repr(ln))"
+                )
+            )
             push!(rows, fields)
         end
     end
@@ -1111,7 +1204,7 @@ function read_native(::FF10Reader, path::AbstractString;
         isempty(miss) || throw(KeyError("requested FF10 columns not in schema: $miss"))
     end
 
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     for (j, name) in enumerate(FF10_POINT_COLUMNS)
         want !== nothing && !(name in want) && continue
         col = String[r[j] for r in rows]
@@ -1120,9 +1213,9 @@ function read_native(::FF10Reader, path::AbstractString;
         else
             col
         end
-        vars[name] = NativeField(data, ["index"], Dict{String,Any}())
+        vars[name] = NativeField(data, ["index"], Dict{String, Any}())
     end
-    return NativeDataset(vars, Dict{String,NativeField}())
+    return NativeDataset(vars, Dict{String, NativeField}())
 end
 
 # --- Shapefile reader (ESRI shapefile feature table) -------------------------
@@ -1130,17 +1223,19 @@ end
 """Shape-type code -> name (ESRI Shapefile Technical Description, page 4). The
 name is carried in the geometry field's `attrs` so ESS can tell a polygon layer
 from a polyline one without re-sniffing the blob."""
-const SHAPE_TYPE_NAMES = Dict{Int,String}(
+const SHAPE_TYPE_NAMES = Dict{Int, String}(
     0 => "Null", 1 => "Point", 3 => "PolyLine", 5 => "Polygon", 8 => "MultiPoint",
     11 => "PointZ", 13 => "PolyLineZ", 15 => "PolygonZ", 18 => "MultiPointZ",
     21 => "PointM", 23 => "PolyLineM", 25 => "PolygonM", 28 => "MultiPointM",
-    31 => "MultiPatch")
+    31 => "MultiPatch"
+)
 
 """Field names the reader itself produces. A `.dbf` column of the same name is a
 collision the reader refuses rather than silently shadowing either side."""
 const SHAPEFILE_RESERVED = String[
     "geometry", "n_vertices", "shape_index", "part_index", "n_parts",
-    "xmin", "ymin", "xmax", "ymax", "shape_type", "crs_wkt"]
+    "xmin", "ymin", "xmax", "ymax", "shape_type", "crs_wkt",
+]
 
 """
     _shapefile_members(path, member) -> Dict{String,Vector{UInt8}}
@@ -1153,25 +1248,32 @@ when omitted the archive must contain exactly one."""
 function _shapefile_members(path::AbstractString, member)
     magic = open(io -> read(io, 2), path)
     if length(magic) < 2 || magic != UInt8['P', 'K']
-        return Dict{String,Vector{UInt8}}("shp" => read(path))
+        return Dict{String, Vector{UInt8}}("shp" => read(path))
     end
-    out = Dict{String,Vector{UInt8}}()
+    out = Dict{String, Vector{UInt8}}()
     r = ZipFile.Reader(path)
     try
         names = String[f.name for f in r.files if !endswith(f.name, "/")]
         shps = sort!(String[n for n in names if endswith(lowercase(n), ".shp")])
         target = if member !== nothing
             m = String(member)
-            m in names || throw(KeyError(
-                "zip member '$m' not in the archive; .shp members present: $shps"))
+            m in names || throw(
+                KeyError(
+                    "zip member '$m' not in the archive; .shp members present: $shps"
+                )
+            )
             m
         elseif length(shps) == 1
             shps[1]
         elseif isempty(shps)
             throw(KeyError("the zip contains no .shp member"))
         else
-            throw(KeyError("the zip contains $(length(shps)) .shp members; name one " *
-                           "with reader_options.member: $shps"))
+            throw(
+                KeyError(
+                    "the zip contains $(length(shps)) .shp members; name one " *
+                        "with reader_options.member: $shps"
+                )
+            )
         end
         stem = lowercase(target[1:(end - length(".shp"))])
         for f in r.files
@@ -1200,24 +1302,32 @@ shapefile record, its vertex rings in file order as `(x, y)` tuples), `boxes`
 `.prj` text; the CONTRACT — one row per PART, attribute replication, the
 `esm-spec` §8.6.1 repeat-final-vertex padding, the `N`/`F`→Float64 rule and the
 `*`-only deletion rule — lives here, shared with any future backend."""
-function _assemble_shapefile(shapecode::Integer,
-                             parts::AbstractVector,
-                             boxes::AbstractVector,
-                             colnames::AbstractVector{<:AbstractString},
-                             colvalues::AbstractVector,
-                             deleted::AbstractVector{Bool},
-                             crs_wkt;
-                             variables = nothing, numeric_columns = nothing,
-                             nvert_max = nothing)
+function _assemble_shapefile(
+        shapecode::Integer,
+        parts::AbstractVector,
+        boxes::AbstractVector,
+        colnames::AbstractVector{<:AbstractString},
+        colvalues::AbstractVector,
+        deleted::AbstractVector{Bool},
+        crs_wkt;
+        variables = nothing, numeric_columns = nothing,
+        nvert_max = nothing
+    )
     clash = sort!(String[c for c in colnames if String(c) in SHAPEFILE_RESERVED])
-    isempty(clash) || throw(ArgumentError(
-        ".dbf column name(s) $clash collide with the reader's own fields $SHAPEFILE_RESERVED"))
+    isempty(clash) || throw(
+        ArgumentError(
+            ".dbf column name(s) $clash collide with the reader's own fields $SHAPEFILE_RESERVED"
+        )
+    )
     nshape = length(parts)
-    (isempty(colvalues) || all(v -> length(v) == nshape, colvalues)) || throw(ArgumentError(
-        "shapefile has $nshape shapes but the .dbf column lengths disagree"))
+    (isempty(colvalues) || all(v -> length(v) == nshape, colvalues)) || throw(
+        ArgumentError(
+            "shapefile has $nshape shapes but the .dbf column lengths disagree"
+        )
+    )
 
     # Explode to one row per part, dropping `*`-deleted records whole.
-    rings = Vector{Vector{Tuple{Float64,Float64}}}()
+    rings = Vector{Vector{Tuple{Float64, Float64}}}()
     shape_ix, part_ix, nparts, row_of = Int[], Int[], Int[], Int[]
     for si in 1:nshape
         (si <= length(deleted) && deleted[si]) && continue
@@ -1233,9 +1343,12 @@ function _assemble_shapefile(shapecode::Integer,
     if nvert_max !== nothing
         if nvert > Int(nvert_max)
             w = argmax(length.(rings))          # 1-based; the row index is 0-based
-            throw(ArgumentError(
-                "declared nvert_max=$(Int(nvert_max)) but row $(w - 1) " *
-                "(shape $(shape_ix[w]), part $(part_ix[w])) has $nvert vertices"))
+            throw(
+                ArgumentError(
+                    "declared nvert_max=$(Int(nvert_max)) but row $(w - 1) " *
+                        "(shape $(shape_ix[w]), part $(part_ix[w])) has $nvert vertices"
+                )
+            )
         end
         nvert = Int(nvert_max)
     end
@@ -1251,14 +1364,16 @@ function _assemble_shapefile(shapecode::Integer,
         end
     end
 
-    vars = Dict{String,NativeField}(
+    vars = Dict{String, NativeField}(
         "geometry" => NativeField(geom, ["index", "vertex", "xy"]),
         "shape_type" => NativeField(
-            String[get(SHAPE_TYPE_NAMES, Int(shapecode), string(Int(shapecode)))], ["meta"]),
+            String[get(SHAPE_TYPE_NAMES, Int(shapecode), string(Int(shapecode)))], ["meta"]
+        ),
         "n_vertices" => NativeField(Int64[length(r) for r in rings], ["index"]),
         "shape_index" => NativeField(Int64.(shape_ix), ["index"]),
         "part_index" => NativeField(Int64.(part_ix), ["index"]),
-        "n_parts" => NativeField(Int64.(nparts), ["index"]))
+        "n_parts" => NativeField(Int64.(nparts), ["index"])
+    )
     crs_wkt === nothing ||
         (vars["crs_wkt"] = NativeField(String[strip(String(crs_wkt))], ["meta"]))
     for (k, nm) in enumerate(("xmin", "ymin", "xmax", "ymax"))
@@ -1266,7 +1381,7 @@ function _assemble_shapefile(shapecode::Integer,
     end
 
     numset = numeric_columns === nothing ? Set{String}() :
-             Set{String}(String(c) for c in numeric_columns)
+        Set{String}(String(c) for c in numeric_columns)
     unknown = sort!(String[c for c in numset if !(c in String.(colnames))])
     isempty(unknown) || throw(KeyError("numeric_columns names no such .dbf column: $unknown"))
     for (j, nm) in enumerate(colnames)
@@ -1288,11 +1403,14 @@ function _assemble_shapefile(shapecode::Integer,
         want = Set{String}(String(v) for v in variables)
         missing_names = sort!(String[v for v in want if !haskey(vars, v)])
         isempty(missing_names) && (vars = Dict(k => v for (k, v) in vars if k in want))
-        isempty(missing_names) || throw(KeyError(
-            "requested variables not in the shapefile: $missing_names; " *
-            "present: $(sort!(collect(keys(vars))))"))
+        isempty(missing_names) || throw(
+            KeyError(
+                "requested variables not in the shapefile: $missing_names; " *
+                    "present: $(sort!(collect(keys(vars))))"
+            )
+        )
     end
-    return NativeDataset(vars, Dict{String,NativeField}())
+    return NativeDataset(vars, Dict{String, NativeField}())
 end
 
 "A `.dbf` cell as Float64: blank / missing / unparseable -> `NaN`."
@@ -1363,8 +1481,9 @@ struct ShapefileReader <: Reader end
 # which precompilation forbids). This fallback fires only when the backend is absent.
 read_native(::ShapefileReader, path; kwargs...) = error(
     "the shapefile reader needs the Shapefile.jl backend: add `using Shapefile` so " *
-    "the EarthSciIOShapefileExt extension supplies the decode (kept a weakdep to " *
-    "keep a base EarthSciIO install light, mirroring the Python pyshp-optional path).")
+        "the EarthSciIOShapefileExt extension supplies the decode (kept a weakdep to " *
+        "keep a base EarthSciIO install light, mirroring the Python pyshp-optional path)."
+)
 
 # --- Parquet reader (columnar table) ----------------------------------------
 
@@ -1397,8 +1516,8 @@ all and is `:unsupported`.
 function _parquet_kind(T::Type, time_exponent = nothing)
     T === Missing && return :float64          # an all-null column: float64, all NaN
     T === Bool && return :bool                # BEFORE Integer: Bool <: Integer here
-    T <: Union{Int8,Int16,Int32,UInt8,UInt16} && return :int32
-    T <: Union{Int64,UInt32,UInt64} && return :int64
+    T <: Union{Int8, Int16, Int32, UInt8, UInt16} && return :int32
+    T <: Union{Int64, UInt32, UInt64} && return :int64
     T === Date && return :int32               # raw days since 1970-01-01
     T === Time && return time_exponent == -3 ? :int32 : :int64
     T === DateTime && return :int64
@@ -1426,12 +1545,14 @@ is what makes `variables` a real pushdown rather than a read-then-discard: an
 unread column chunk is never fetched off disk. A cell is `missing` (the null),
 a `Bool`, an `Integer`, a `Real`, or an `AbstractString`.
 """
-function _assemble_parquet(names::AbstractVector{<:AbstractString},
-                           kinds::AbstractVector{Symbol},
-                           types::AbstractVector,
-                           loadcolumn;
-                           variables = nothing, float_columns = nothing,
-                           null_int = nothing, null_string = nothing)
+function _assemble_parquet(
+        names::AbstractVector{<:AbstractString},
+        kinds::AbstractVector{Symbol},
+        types::AbstractVector,
+        loadcolumn;
+        variables = nothing, float_columns = nothing,
+        null_int = nothing, null_string = nothing
+    )
     allnames = String[String(n) for n in names]
     (length(kinds) == length(allnames) && length(types) == length(allnames)) ||
         throw(ArgumentError("parquet column metadata lengths disagree"))
@@ -1446,14 +1567,17 @@ function _assemble_parquet(names::AbstractVector{<:AbstractString},
     if variables !== nothing && !isempty(variables)
         asked = String[String(v) for v in variables]
         absent = sort!(unique!(String[v for v in asked if !(v in allnames)]))
-        isempty(absent) || throw(KeyError(
-            "requested variables not in the parquet file: $absent; present: $allnames"))
+        isempty(absent) || throw(
+            KeyError(
+                "requested variables not in the parquet file: $absent; present: $allnames"
+            )
+        )
         want = Set(asked)
     end
     forced = float_columns === nothing ? Set{String}() :
-             Set{String}(String(c) for c in float_columns)
+        Set{String}(String(c) for c in float_columns)
 
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     nrows = -1
     for (j, name) in enumerate(allnames)
         want === nothing || name in want || continue
@@ -1464,15 +1588,18 @@ function _assemble_parquet(names::AbstractVector{<:AbstractString},
             # unrequested, it is simply not a native field (the NetCDF reader
             # skips its non-numeric variables the same way).
             want === nothing && continue
-            throw(ArgumentError(
-                "column $(repr(name)) decodes as $(types[j]), which has no rank-1 " *
-                "native reading (nested and binary columns are not supported)"))
+            throw(
+                ArgumentError(
+                    "column $(repr(name)) decodes as $(types[j]), which has no rank-1 " *
+                        "native reading (nested and binary columns are not supported)"
+                )
+            )
         end
         # `float_columns` is a statement about the SOURCE, so it applies to any
         # column that can produce a number — decimal text included.
         dtype = name in forced ? :float64 : kind
         data = _parquet_column(loadcolumn(name), name, dtype, null_int, null_string)
-        attrs = Dict{String,Any}()
+        attrs = Dict{String, Any}()
         # A NaN-folded float carries no surviving sentinel; a DECLARED integer
         # sentinel does, and is reported back exactly as a CF integer fill is.
         # `attrs["fill_value"]` is the spelling because [`NativeField`] has no
@@ -1484,10 +1611,13 @@ function _assemble_parquet(names::AbstractVector{<:AbstractString},
         end
         vars[name] = NativeField(data, ["index"], attrs)
         nrows < 0 && (nrows = length(data))
-        length(data) == nrows || throw(ArgumentError(
-            "parquet column $(repr(name)) has $(length(data)) rows, but the table has $nrows"))
+        length(data) == nrows || throw(
+            ArgumentError(
+                "parquet column $(repr(name)) has $(length(data)) rows, but the table has $nrows"
+            )
+        )
     end
-    return NativeDataset(vars, Dict{String,NativeField}())
+    return NativeDataset(vars, Dict{String, NativeField}())
 end
 
 # One column's cells coerced into its target native dtype. Row numbers in errors
@@ -1511,9 +1641,12 @@ function _parquet_column(cells, name::AbstractString, dtype::Symbol, null_int, n
         out = Vector{Int32}(undef, n)
         for (i, c) in enumerate(cells)
             v = _parquet_int(c, name, i - 1, null_int)
-            typemin(Int32) <= v <= typemax(Int32) || throw(ArgumentError(
-                "column $(repr(name)) row $(i - 1): value $v does not fit the int32 " *
-                "native dtype"))
+            typemin(Int32) <= v <= typemax(Int32) || throw(
+                ArgumentError(
+                    "column $(repr(name)) row $(i - 1): value $v does not fit the int32 " *
+                        "native dtype"
+                )
+            )
             out[i] = v % Int32
         end
         return out
@@ -1539,20 +1672,29 @@ end
 # the column, the row and the text.
 function _parquet_float(c, name::AbstractString, row::Integer)
     c === missing && return NaN
-    c isa Bool && throw(ArgumentError(
-        "column $(repr(name)) row $row: a boolean cell cannot be read as float64"))
+    c isa Bool && throw(
+        ArgumentError(
+            "column $(repr(name)) row $row: a boolean cell cannot be read as float64"
+        )
+    )
     c isa Real && return Float64(c)
     if c isa AbstractString
         t = strip(String(c))
         isempty(t) && return NaN
         v = tryparse(Float64, t)
-        v === nothing && throw(ArgumentError(
-            "column $(repr(name)) row $row: $(repr(String(c))) is not a float64 " *
-            "(the column is declared in float_columns)"))
+        v === nothing && throw(
+            ArgumentError(
+                "column $(repr(name)) row $row: $(repr(String(c))) is not a float64 " *
+                    "(the column is declared in float_columns)"
+            )
+        )
         return v
     end
-    throw(ArgumentError(
-        "column $(repr(name)) row $row: a $(typeof(c)) cell cannot be read as float64"))
+    throw(
+        ArgumentError(
+            "column $(repr(name)) row $row: a $(typeof(c)) cell cannot be read as float64"
+        )
+    )
 end
 
 function _parquet_int(c, name::AbstractString, row::Integer, null_int)
@@ -1563,12 +1705,18 @@ function _parquet_int(c, name::AbstractString, row::Integer, null_int)
     if c isa Integer && !(c isa Bool)
         # The one integer width that does not fit: refuse rather than wrap into a
         # negative ID.
-        c isa Unsigned && c > typemax(Int64) && throw(ArgumentError(
-            "column $(repr(name)) row $row: uint64 value $c exceeds the int64 native dtype"))
+        c isa Unsigned && c > typemax(Int64) && throw(
+            ArgumentError(
+                "column $(repr(name)) row $row: uint64 value $c exceeds the int64 native dtype"
+            )
+        )
         return Int64(c)
     end
-    throw(ArgumentError(
-        "column $(repr(name)) row $row: expected an integer cell, got $(typeof(c))"))
+    throw(
+        ArgumentError(
+            "column $(repr(name)) row $row: expected an integer cell, got $(typeof(c))"
+        )
+    )
 end
 
 function _parquet_text(c, name::AbstractString, row::Integer, null_string)
@@ -1577,28 +1725,40 @@ function _parquet_text(c, name::AbstractString, row::Integer, null_string)
         return String(null_string)
     end
     c isa AbstractString && return String(c)
-    throw(ArgumentError(
-        "column $(repr(name)) row $row: expected a text cell, got $(typeof(c))"))
+    throw(
+        ArgumentError(
+            "column $(repr(name)) row $row: expected a text cell, got $(typeof(c))"
+        )
+    )
 end
 
 function _parquet_bool(c, name::AbstractString, row::Integer)
     c isa Bool && return c
     # No sentinel option: a third boolean state is a float64 column.
-    c === missing && throw(ArgumentError(
-        "column $(repr(name)) row $row is null, and a boolean native field has no " *
-        "missing value; declare the column in the `float_columns` reader option " *
-        "if a third state is meant"))
-    throw(ArgumentError(
-        "column $(repr(name)) row $row: expected a boolean cell, got $(typeof(c))"))
+    c === missing && throw(
+        ArgumentError(
+            "column $(repr(name)) row $row is null, and a boolean native field has no " *
+                "missing value; declare the column in the `float_columns` reader option " *
+                "if a third state is meant"
+        )
+    )
+    throw(
+        ArgumentError(
+            "column $(repr(name)) row $row: expected a boolean cell, got $(typeof(c))"
+        )
+    )
 end
 
 # The refusal a null in a type with no missing value gets. It names the way out,
 # because "declare a sentinel" is a decision only the document can make.
-_parquet_null_error(name::AbstractString, row::Integer, kind::AbstractString,
-                    option::AbstractString) = ArgumentError(
+_parquet_null_error(
+    name::AbstractString, row::Integer, kind::AbstractString,
+    option::AbstractString
+) = ArgumentError(
     "column $(repr(name)) row $row is null, and a $kind native field has no missing " *
-    "value; declare the `$option` reader option to substitute one, or list the " *
-    "column in `float_columns` to read it as float64 with NaN")
+        "value; declare the `$option` reader option to substitute one, or list the " *
+        "column in `float_columns` to read it as float64 with NaN"
+)
 
 """
     ParquetReader()
@@ -1689,5 +1849,6 @@ struct ParquetReader <: Reader end
 # backend is absent.
 read_native(::ParquetReader, path; kwargs...) = error(
     "the parquet reader needs the Parquet2.jl backend: add `using Parquet2` so " *
-    "the EarthSciIOParquet2Ext extension supplies the decode (kept a weakdep to " *
-    "keep a base EarthSciIO install light, mirroring the Shapefile.jl path).")
+        "the EarthSciIOParquet2Ext extension supplies the decode (kept a weakdep to " *
+        "keep a base EarthSciIO install light, mirroring the Shapefile.jl path)."
+)

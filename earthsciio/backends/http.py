@@ -14,7 +14,7 @@ has no hard dependency on it.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..errors import TransportError
 from ..transport import DOWNLOADED, NOT_MODIFIED, FetchResult
@@ -33,19 +33,19 @@ class HttpTransport:
     NAME = "http"
     SCHEMES = ("http", "https")
 
-    def schemes(self) -> List[str]:
+    def schemes(self) -> list[str]:
         return list(self.SCHEMES)
 
     def fetch(
         self,
         resolved_url: str,
         dest: Any,
-        conditional: Optional[Dict[str, Any]] = None,
-        auth: Optional[Any] = None,
+        conditional: dict[str, Any] | None = None,
+        auth: Any | None = None,
     ) -> FetchResult:
         import requests  # lazy: offline never reaches here
 
-        headers: Dict[str, str] = {"User-Agent": _USER_AGENT}
+        headers: dict[str, str] = {"User-Agent": _USER_AGENT}
         if conditional:
             etag = conditional.get("etag")
             last_modified = conditional.get("last_modified")
@@ -75,8 +75,7 @@ class HttpTransport:
                 return FetchResult(
                     NOT_MODIFIED,
                     etag=resp.headers.get("ETag") or cond.get("etag"),
-                    last_modified=resp.headers.get("Last-Modified")
-                    or cond.get("last_modified"),
+                    last_modified=resp.headers.get("Last-Modified") or cond.get("last_modified"),
                     bytes_written=0,
                 )
             if resp.status_code != 200:

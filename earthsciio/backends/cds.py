@@ -39,24 +39,25 @@ import json
 import os
 import pathlib
 import time
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from collections.abc import Mapping
+from typing import Any
 
 from ..auth import StaticHeaderAuth
 from ..errors import TransportError
 from ..transport import DOWNLOADED, FetchResult
 
 __all__ = [
-    "CdsTransport",
     "CDS_SCHEME",
     "DEFAULT_CDS_API_URL",
+    "CdsTransport",
     "cds_api_key",
     "cds_api_url",
     "cds_auth",
-    "encode_cds_url",
-    "decode_cds_url",
+    "cds_download",
     "cds_submit",
     "cds_wait",
-    "cds_download",
+    "decode_cds_url",
+    "encode_cds_url",
 ]
 
 #: The URL scheme this transport answers to (its ``transport`` registry key).
@@ -91,7 +92,7 @@ def _cdsapirc_path() -> pathlib.Path:
     return pathlib.Path(os.path.expanduser("~")) / ".cdsapirc"
 
 
-def _read_cdsapirc() -> Dict[str, str]:
+def _read_cdsapirc() -> dict[str, str]:
     """Parse ``~/.cdsapirc`` into ``{"url": ..., "key": ...}`` (missing keys absent).
 
     The file format is the two-line ``url: ...`` / ``key: ...`` used by the CDS
@@ -99,7 +100,7 @@ def _read_cdsapirc() -> Dict[str, str]:
     ``name:`` prefix are ignored. A missing file yields an empty mapping.
     """
     rc = _cdsapirc_path()
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     try:
         text = rc.read_text()
     except (FileNotFoundError, OSError):
@@ -150,7 +151,7 @@ def cds_api_url() -> str:
     return DEFAULT_CDS_API_URL
 
 
-def cds_auth(key: Optional[str] = None) -> StaticHeaderAuth:
+def cds_auth(key: str | None = None) -> StaticHeaderAuth:
     """A ``cds``-realm resolver carrying the ``PRIVATE-TOKEN`` header.
 
     Register it on the cache (``auth={"cds": cds_auth()}``) and fetch with
@@ -194,7 +195,7 @@ def encode_cds_url(dataset: str, request: Mapping[str, Any]) -> str:
     return f"{CDS_SCHEME}://{dataset}?{_canonical_request_json(request)}"
 
 
-def decode_cds_url(url: str) -> Tuple[str, Dict[str, Any]]:
+def decode_cds_url(url: str) -> tuple[str, dict[str, Any]]:
     """Recover ``(dataset, request)`` from a ``cds://`` URL (inverse of encode).
 
     String-split (not ``urlsplit``) so the raw JSON in the query is preserved
@@ -205,7 +206,7 @@ def decode_cds_url(url: str) -> Tuple[str, Dict[str, Any]]:
     prefix = f"{CDS_SCHEME}://"
     if not url.startswith(prefix):
         raise ValueError(f"not a cds:// URL: {url!r}")
-    dataset, sep, payload = url[len(prefix):].partition("?")
+    dataset, sep, payload = url[len(prefix) :].partition("?")
     if not sep:
         raise ValueError(f"cds:// URL missing '?<request-json>': {url!r}")
     if not dataset:
@@ -250,9 +251,7 @@ def cds_submit(
     except requests.RequestException as exc:
         raise TransportError(f"CDS submit failed for {dataset}: {exc}") from exc
     if resp.status_code >= 400:
-        raise TransportError(
-            f"CDS submit returned {resp.status_code} for {dataset}: {resp.text}"
-        )
+        raise TransportError(f"CDS submit returned {resp.status_code} for {dataset}: {resp.text}")
     data = resp.json()
     if data.get("status") in ("accepted", "running", "successful") and data.get("jobID"):
         return str(data["jobID"])
@@ -293,17 +292,12 @@ def cds_wait(
         status = resp.json().get("status", "")
         if status == "successful":
             try:
-                results = requests.get(
-                    f"{job_url}/results", headers=send, timeout=_HTTP_TIMEOUT
-                )
+                results = requests.get(f"{job_url}/results", headers=send, timeout=_HTTP_TIMEOUT)
             except requests.RequestException as exc:
-                raise TransportError(
-                    f"CDS results fetch failed for job {job_id}: {exc}"
-                ) from exc
+                raise TransportError(f"CDS results fetch failed for job {job_id}: {exc}") from exc
             if results.status_code >= 400:
                 raise TransportError(
-                    f"CDS results returned {results.status_code} for job {job_id}: "
-                    f"{results.text}"
+                    f"CDS results returned {results.status_code} for job {job_id}: {results.text}"
                 )
             try:
                 return results.json()["asset"]["value"]["href"]
@@ -330,16 +324,12 @@ def cds_download(href: str, dest: Any) -> int:
     import requests  # lazy
 
     try:
-        resp = requests.get(
-            href, stream=True, timeout=_HTTP_TIMEOUT, allow_redirects=True
-        )
+        resp = requests.get(href, stream=True, timeout=_HTTP_TIMEOUT, allow_redirects=True)
     except requests.RequestException as exc:
         raise TransportError(f"CDS asset download failed for {href}: {exc}") from exc
     try:
         if resp.status_code != 200:
-            raise TransportError(
-                f"CDS asset download returned {resp.status_code} for {href}"
-            )
+            raise TransportError(f"CDS asset download returned {resp.status_code} for {href}")
         written = 0
         with open(dest, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=_CHUNK):
@@ -372,7 +362,7 @@ class CdsTransport:
 
     def __init__(
         self,
-        api_url: Optional[str] = None,
+        api_url: str | None = None,
         *,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         timeout: float = DEFAULT_TIMEOUT,
@@ -383,10 +373,10 @@ class CdsTransport:
         self.timeout = timeout
         self._sleep = sleep
 
-    def schemes(self) -> List[str]:
+    def schemes(self) -> list[str]:
         return list(self.SCHEMES)
 
-    def _token_headers(self, auth: Optional[Any]) -> Dict[str, str]:
+    def _token_headers(self, auth: Any | None) -> dict[str, str]:
         """The auth headers for the CDS API calls.
 
         Prefers the injected resolver (the spec-aligned path — credentials never
@@ -401,8 +391,8 @@ class CdsTransport:
         self,
         resolved_url: str,
         dest: Any,
-        conditional: Optional[Dict[str, Any]] = None,
-        auth: Optional[Any] = None,
+        conditional: dict[str, Any] | None = None,
+        auth: Any | None = None,
     ) -> FetchResult:
         dataset, request = decode_cds_url(resolved_url)
         api_url = (self._api_url or cds_api_url()).rstrip("/")

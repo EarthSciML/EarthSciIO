@@ -72,40 +72,57 @@ struct Provider
     cadence::Cadence
     times::Vector{Float64}
     url_for::Function
-    time_dim::Union{Nothing,String}
-    variables::Union{Nothing,Vector{String}}
-    reader_kwargs::Dict{Symbol,Any}
-    source_loader::Union{Nothing,String}
-    auth_realm::Union{Nothing,String}
-    records_per_sample::Union{Nothing,Int}
+    time_dim::Union{Nothing, String}
+    variables::Union{Nothing, Vector{String}}
+    reader_kwargs::Dict{Symbol, Any}
+    source_loader::Union{Nothing, String}
+    auth_realm::Union{Nothing, String}
+    records_per_sample::Union{Nothing, Int}
 end
 
-function Provider(cache::Cache, url; format::AbstractString,
-                  cadence::Cadence = CONST, times = Float64[],
-                  time_dim = nothing, variables = nothing,
-                  reader_kwargs = NamedTuple(),
-                  source_loader = nothing, auth_realm = nothing,
-                  records_per_sample = nothing)
-    haskey(FORMAT_REGISTRY, format) || throw(ArgumentError(
-        "format '$format' is not registered in the format registry; " *
-        "registered: $(registered_names(FORMAT_REGISTRY))"))
+function Provider(
+        cache::Cache, url; format::AbstractString,
+        cadence::Cadence = CONST, times = Float64[],
+        time_dim = nothing, variables = nothing,
+        reader_kwargs = NamedTuple(),
+        source_loader = nothing, auth_realm = nothing,
+        records_per_sample = nothing
+    )
+    haskey(FORMAT_REGISTRY, format) || throw(
+        ArgumentError(
+            "format '$format' is not registered in the format registry; " *
+                "registered: $(registered_names(FORMAT_REGISTRY))"
+        )
+    )
     tvec = sort!(Float64[t for t in times])
     if cadence == CONST && !isempty(tvec)
-        throw(ArgumentError(
-            "a CONST provider has no refresh times, got $(length(tvec)) — use cadence=DISCRETE"))
+        throw(
+            ArgumentError(
+                "a CONST provider has no refresh times, got $(length(tvec)) — use cadence=DISCRETE"
+            )
+        )
     elseif cadence == DISCRETE && isempty(tvec)
-        throw(ArgumentError(
-            "a DISCRETE provider requires a non-empty cadence (times=...)"))
+        throw(
+            ArgumentError(
+                "a DISCRETE provider requires a non-empty cadence (times=...)"
+            )
+        )
     end
     time_dim === nothing || cadence == DISCRETE ||
         throw(ArgumentError("time_dim only applies to a DISCRETE provider"))
     records_per_sample === nothing || records_per_sample == 1 || records_per_sample == 2 ||
-        throw(ArgumentError(
-            "records_per_sample must be 1 or 2, got $(repr(records_per_sample))"))
+        throw(
+        ArgumentError(
+            "records_per_sample must be 1 or 2, got $(repr(records_per_sample))"
+        )
+    )
     records_per_sample != 2 || time_dim !== nothing ||
-        throw(ArgumentError(
-            "records_per_sample=2 needs a time_dim to bracket along"))
-    kw = Dict{Symbol,Any}(pairs(reader_kwargs))
+        throw(
+        ArgumentError(
+            "records_per_sample=2 needs a time_dim to bracket along"
+        )
+    )
+    kw = Dict{Symbol, Any}(pairs(reader_kwargs))
     _check_reader_kwargs(FORMAT_REGISTRY[format], String(format), kw)
     # A `time_dim` makes the RECORD AXIS the Provider's: it resolves a cadence
     # tick to that file's own record (`_file_record`) and slices — or brackets —
@@ -120,22 +137,31 @@ function Provider(cache::Cache, url; format::AbstractString,
     # `records = nothing` stays legal: it asks only to skip the pushdown and read
     # the record axis whole, which is what `_records_pushdown` then does.
     if time_dim !== nothing && get(kw, :records, nothing) !== nothing
-        throw(ArgumentError(
-            "reader option `records` may not be baked into a provider that owns a " *
-            "record axis (time_dim=$(repr(String(time_dim)))): the Provider resolves " *
-            "each cadence tick to a file-local record and pushes THAT down, so a " *
-            "caller-supplied `records` would narrow the axis the tick is located " *
-            "inside and every tick would read the same record. Drop it — or pass " *
-            "`records = nothing` to opt out of the pushdown and read the axis whole"))
+        throw(
+            ArgumentError(
+                "reader option `records` may not be baked into a provider that owns a " *
+                    "record axis (time_dim=$(repr(String(time_dim)))): the Provider resolves " *
+                    "each cadence tick to a file-local record and pushes THAT down, so a " *
+                    "caller-supplied `records` would narrow the axis the tick is located " *
+                    "inside and every tick would read the same record. Drop it — or pass " *
+                    "`records = nothing` to opt out of the pushdown and read the axis whole"
+            )
+        )
     end
-    url_for = url isa AbstractString ? (let u = String(url); _ -> u; end) : url
-    return Provider(cache, String(format), cadence, tvec, url_for,
-                    time_dim === nothing ? nothing : String(time_dim),
-                    variables === nothing ? nothing : String.(collect(variables)),
-                    kw,
-                    source_loader === nothing ? nothing : String(source_loader),
-                    auth_realm === nothing ? nothing : String(auth_realm),
-                    records_per_sample === nothing ? nothing : Int(records_per_sample))
+    url_for = url isa AbstractString ? (
+            let u = String(url)
+                _ -> u
+        end
+        ) : url
+    return Provider(
+        cache, String(format), cadence, tvec, url_for,
+        time_dim === nothing ? nothing : String(time_dim),
+        variables === nothing ? nothing : String.(collect(variables)),
+        kw,
+        source_loader === nothing ? nothing : String(source_loader),
+        auth_realm === nothing ? nothing : String(auth_realm),
+        records_per_sample === nothing ? nothing : Int(records_per_sample)
+    )
 end
 
 # The loader's declared decode options, checked against the bound reader AT
@@ -144,18 +170,21 @@ end
 # select nothing and surface much later as wrong numbers. The accepted set is
 # the reader's own keyword declaration (`reader_option_keys`), so this can never
 # disagree with what `read_native` / `read_store` will actually honour.
-function _check_reader_kwargs(reader, format::String, kw::AbstractDict{Symbol,<:Any})
+function _check_reader_kwargs(reader, format::String, kw::AbstractDict{Symbol, <:Any})
     isempty(kw) && return nothing
     accepted = reader_option_keys(reader)
     accepted === nothing && return nothing        # a reader that slurps everything
     unknown = sort!(String[String(k) for k in keys(kw) if !(k in accepted)])
     isempty(unknown) && return nothing
-    throw(ArgumentError(
-        "the '$format' reader does not recognise reader option(s) " *
-        "$(join(unknown, ", ")); it takes $(join(sort!(String.(accepted)), ", ")). " *
-        "An unrecognised option is an error rather than an ignored key " *
-        "(spec/registries.md §2.1) — a mis-typed option would otherwise decode " *
-        "something else, silently"))
+    throw(
+        ArgumentError(
+            "the '$format' reader does not recognise reader option(s) " *
+                "$(join(unknown, ", ")); it takes $(join(sort!(String.(accepted)), ", ")). " *
+                "An unrecognised option is an error rather than an ignored key " *
+                "(spec/registries.md §2.1) — a mis-typed option would otherwise decode " *
+                "something else, silently"
+        )
+    )
 end
 
 """Thin constructor for a time-invariant ([`CONST`]) provider."""
@@ -201,23 +230,33 @@ function _load(p::Provider, t; select = nothing, records = nothing)
         # Effective select: a per-call `select` OVERRIDES the baked
         # reader_kwargs[:select]. Forward it explicitly and splat the REST of
         # reader_kwargs (with `:select` removed, so `select` is never passed twice).
-        records === nothing || throw(ArgumentError(
-            "a store-backed reader takes its record selection through `select`, " *
-            "not `records`"))
+        records === nothing || throw(
+            ArgumentError(
+                "a store-backed reader takes its record selection through `select`, " *
+                    "not `records`"
+            )
+        )
         effective = select === nothing ? get(p.reader_kwargs, :select, nothing) : select
-        rest = Dict{Symbol,Any}(k => v for (k, v) in p.reader_kwargs if k !== :select)
-        return read_store(reader, p.cache, p.url_for(t);
-                          variables = p.variables, select = effective, rest...)
+        rest = Dict{Symbol, Any}(k => v for (k, v) in p.reader_kwargs if k !== :select)
+        return read_store(
+            reader, p.cache, p.url_for(t);
+            variables = p.variables, select = effective, rest...
+        )
     end
     # Whole-file reader. A `select` — per-call, else the baked one — reaches it
     # only if it declares `supports_selection`; the netcdf reader does, and honours
     # it at DECODE time (same blob, same cache key, only the requested hyperslab
     # materialised). Checked before the fetch so a refusal costs nothing.
     effective = select === nothing ? get(p.reader_kwargs, :select, nothing) : select
-    effective === nothing || supports_selection(reader) || throw(ArgumentError(
-        "reader $(typeof(reader)) does not support select/pushdown"))
-    entry = fetch_blob(p.cache, p.url_for(t);
-                       source_loader = p.source_loader, auth_realm = p.auth_realm)
+    effective === nothing || supports_selection(reader) || throw(
+        ArgumentError(
+            "reader $(typeof(reader)) does not support select/pushdown"
+        )
+    )
+    entry = fetch_blob(
+        p.cache, p.url_for(t);
+        source_loader = p.source_loader, auth_realm = p.auth_realm
+    )
     # PROJECTION PUSHDOWN for a whole-file reader that declares a `variables`
     # decode option (the `parquet` reader): the loader's `variables` reach the
     # READER, so only those column chunks come off disk — spec/conformance.md §3
@@ -235,7 +274,7 @@ function _load(p::Provider, t; select = nothing, records = nothing)
     wanted = (p.variables === nothing || isempty(p.variables)) ? nothing : p.variables
     # `:select` is forwarded explicitly (the per-call value wins over the baked
     # one), so it is stripped from the splat rather than passed twice.
-    kw = Dict{Symbol,Any}(k => v for (k, v) in p.reader_kwargs if k !== :select)
+    kw = Dict{Symbol, Any}(k => v for (k, v) in p.reader_kwargs if k !== :select)
     effective === nothing || (kw[:select] = effective)
     if wanted !== nothing && !haskey(kw, :variables)
         opts = reader_option_keys(reader)
@@ -293,10 +332,13 @@ function array_shape(p::Provider, var::AbstractString)
 end
 
 function _select(nds::NativeDataset, want::Vector{String})
-    keep = Dict{String,NativeField}()
+    keep = Dict{String, NativeField}()
     for name in want
-        haskey(nds.variables, name) || throw(ArgumentError(
-            "requested variable '$name' not in blob; present: $(variable_names(nds))"))
+        haskey(nds.variables, name) || throw(
+            ArgumentError(
+                "requested variable '$name' not in blob; present: $(variable_names(nds))"
+            )
+        )
         keep[name] = nds.variables[name]
     end
     return NativeDataset(keep, nds.coords)
@@ -310,8 +352,11 @@ function _tick_index(p::Provider, t::Real)
     i === nothing || return i
     j = searchsortedlast(p.times, tf)
     j >= 1 && return j
-    throw(ArgumentError(
-        "t=$t precedes the provider's first refresh time $(first(p.times))"))
+    throw(
+        ArgumentError(
+            "t=$t precedes the provider's first refresh time $(first(p.times))"
+        )
+    )
 end
 
 # The record index of cadence tick `tick` WITHIN its own file, given that file's
@@ -375,8 +420,10 @@ function _load_ticks(p::Provider, ticks::AbstractVector{<:Integer}; select = not
         fired[] = true
         return Int[_file_record(tk, Int(len)) - 1 for tk in ticks]   # 0-based
     end
-    nds = _load(p, t_url; select = select,
-                records = Dict{String,Any}("dim" => dim, "indices" => resolve))
+    nds = _load(
+        p, t_url; select = select,
+        records = Dict{String, Any}("dim" => dim, "indices" => resolve)
+    )
     # The resolver is not called when the blob has no such dimension. That is the
     # `len <= 0` case of `_file_record`, and it must behave exactly as it always
     # did: nothing was narrowed, so the tick passes through to the slice.
@@ -388,7 +435,7 @@ end
 # now-singular dimension and its coordinate. Used for an internal-axis DISCRETE
 # source (many time records per file).
 function _slice_dim(nds::NativeDataset, dim::String, idx::Integer)
-    vars = Dict{String,NativeField}()
+    vars = Dict{String, NativeField}()
     for (name, f) in nds.variables
         pos = findfirst(==(dim), f.dims)
         if pos === nothing
@@ -414,11 +461,12 @@ end
 # timestamps) so the downstream weight clamps — bracket mode never throws at the
 # end of data.
 
-const _CF_UNIT_SECONDS = Dict{String,Float64}(
+const _CF_UNIT_SECONDS = Dict{String, Float64}(
     "second" => 1.0, "seconds" => 1.0, "sec" => 1.0, "secs" => 1.0, "s" => 1.0,
     "minute" => 60.0, "minutes" => 60.0, "min" => 60.0, "mins" => 60.0,
     "hour" => 3600.0, "hours" => 3600.0, "hr" => 3600.0, "hrs" => 3600.0, "h" => 3600.0,
-    "day" => 86400.0, "days" => 86400.0, "d" => 86400.0)
+    "day" => 86400.0, "days" => 86400.0, "d" => 86400.0
+)
 
 # Parse a CF reference date (the `<ref>` in "<unit> since <ref>") → Unix epoch
 # seconds, or `nothing`. Handles "yyyy-mm-dd[ HH[:MM[:SS]]]" with an optional
@@ -426,8 +474,10 @@ const _CF_UNIT_SECONDS = Dict{String,Float64}(
 function _parse_cf_reference(s)
     str = strip(replace(String(s), 'T' => ' '))
     str = strip(replace(str, r"\s*(Z|UTC|[+-]\d{2}:?\d{2}(:\d{2})?)\s*$" => ""))
-    for fmt in (dateformat"yyyy-mm-dd HH:MM:SS", dateformat"yyyy-mm-dd HH:MM",
-                dateformat"yyyy-mm-dd HH", dateformat"yyyy-mm-dd")
+    for fmt in (
+            dateformat"yyyy-mm-dd HH:MM:SS", dateformat"yyyy-mm-dd HH:MM",
+            dateformat"yyyy-mm-dd HH", dateformat"yyyy-mm-dd",
+        )
         dt = tryparse(DateTime, str, fmt)
         dt === nothing || return datetime2unix(dt)
     end
@@ -485,10 +535,12 @@ _stack_bracket(a0, i0::Integer, a1, i1::Integer, pos::Integer) =
 # (`nds0`,`i0`) and (`nds1`,`i1`) stacked to a size-2 `dim` axis (dims/order/attrs
 # preserved); non-temporal variables and non-`dim` coords pass through from
 # `nds0`; `dim` becomes a 2-element epoch-seconds coordinate `[t0, t1]`.
-function _bracket_build(nds0::NativeDataset, i0::Integer,
-                        nds1::NativeDataset, i1::Integer,
-                        dim::String, t0::Float64, t1::Float64)
-    vars = Dict{String,NativeField}()
+function _bracket_build(
+        nds0::NativeDataset, i0::Integer,
+        nds1::NativeDataset, i1::Integer,
+        dim::String, t0::Float64, t1::Float64
+    )
+    vars = Dict{String, NativeField}()
     for (name, f0) in nds0.variables
         pos = findfirst(==(dim), f0.dims)
         if pos === nothing
@@ -498,19 +550,23 @@ function _bracket_build(nds0::NativeDataset, i0::Integer,
             vars[name] = NativeField(stacked, copy(f0.dims), f0.attrs)
         end
     end
-    coords = Dict{String,NativeField}()
+    coords = Dict{String, NativeField}()
     for (k, v) in nds0.coords
         k == dim && continue                                 # replaced below
         coords[k] = v
     end
-    coords[dim] = NativeField(Float64[t0, t1], [dim],
-        Dict{String,Any}("units" => "seconds since 1970-01-01T00:00:00Z",
-                         "calendar" => "standard"))
+    coords[dim] = NativeField(
+        Float64[t0, t1], [dim],
+        Dict{String, Any}(
+            "units" => "seconds since 1970-01-01T00:00:00Z",
+            "calendar" => "standard"
+        )
+    )
     return NativeDataset(vars, coords)
 end
 
 function _bracket(p::Provider, t::Real; select = nothing)
-    dim  = p.time_dim::String
+    dim = p.time_dim::String
     tick = _tick_index(p, t)                 # floor tick on the GLOBAL cadence
     # Resolve the URL at the TICK time, not at the query time `t`: the record we
     # are about to slice is the tick's, so it must come from the tick's file. The
@@ -585,8 +641,11 @@ function materialize(p::Provider, t::Real; select = nothing)
 end
 
 function materialize(p::Provider; select = nothing)
-    p.cadence == CONST || throw(ArgumentError(
-        "a DISCRETE provider needs a time: materialize(p, t) / refresh(p, t)"))
+    p.cadence == CONST || throw(
+        ArgumentError(
+            "a DISCRETE provider needs a time: materialize(p, t) / refresh(p, t)"
+        )
+    )
     return materialize(p, 0.0; select = select)
 end
 
@@ -631,7 +690,11 @@ online) so later [`materialize`]/[`refresh`] calls hit a warm, offline-readable
 cache. Returns the [`CacheEntry`] for each."""
 function prefetch(p::Provider)
     urls = p.cadence == CONST ? String[p.url_for(0.0)] :
-           unique(String[p.url_for(t) for t in p.times])
-    return CacheEntry[fetch_blob(p.cache, u; source_loader = p.source_loader,
-                                 auth_realm = p.auth_realm) for u in urls]
+        unique(String[p.url_for(t) for t in p.times])
+    return CacheEntry[
+        fetch_blob(
+            p.cache, u; source_loader = p.source_loader,
+            auth_realm = p.auth_realm
+        ) for u in urls
+    ]
 end

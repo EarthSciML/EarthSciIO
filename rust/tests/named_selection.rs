@@ -20,7 +20,8 @@ use earthsciio::{
 };
 use serde_json::json;
 
-const MIXED: &str = "cache/v1/blobs/15/15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef.nc";
+const MIXED: &str =
+    "cache/v1/blobs/15/15b37e1c2dae8dea65eedaab68c5df8f15f007a396dd7b07992ec989588c8aef.nc";
 
 fn netcdf() -> Arc<dyn Reader> {
     FormatRegistry::with_builtins().get("netcdf").unwrap()
@@ -62,13 +63,20 @@ fn a_named_window_is_the_full_read_sliced_by_name() {
         assert_ds_bitwise(&format!("{w}"), &got, &slice_by_name(&full, &s));
     }
     // `{"dims": {}}` selects nothing away.
-    assert_ds_bitwise("dims {}", &read_mixed(&[], &sel(json!({"dims": {}}))).unwrap(), &full);
+    assert_ds_bitwise(
+        "dims {}",
+        &read_mixed(&[], &sel(json!({"dims": {}}))).unwrap(),
+        &full,
+    );
 }
 
 #[test]
 fn a_dimension_no_field_carries_is_an_error_naming_those_present() {
-    let err = read_mixed(&[], &sel(json!({"dims": {"lat": "all", "level": {"indices": [0]}}})))
-        .unwrap_err();
+    let err = read_mixed(
+        &[],
+        &sel(json!({"dims": {"lat": "all", "level": {"indices": [0]}}})),
+    )
+    .unwrap_err();
     let msg = format_detail(&err);
     assert!(msg.contains("level"), "{msg}");
     for present in ["lat", "lev", "lon", "lon_edge", "time"] {
@@ -130,9 +138,16 @@ fn the_read_s_fields_decide_what_a_name_may_mean() {
 
     // `site_id(site, strlen)` consumes `strlen`; selecting along it would
     // truncate every string.
-    let msg = format_detail(&read(&[], json!({"dims": {"strlen": {"slice": [0, 2]}}})).unwrap_err());
-    assert!(msg.contains("strlen") && msg.contains("string LENGTH"), "{msg}");
-    assert!(msg.contains("site"), "must list the dimensions present: {msg}");
+    let msg =
+        format_detail(&read(&[], json!({"dims": {"strlen": {"slice": [0, 2]}}})).unwrap_err());
+    assert!(
+        msg.contains("strlen") && msg.contains("string LENGTH"),
+        "{msg}"
+    );
+    assert!(
+        msg.contains("site"),
+        "must list the dimensions present: {msg}"
+    );
 
     // Along `site` a named window takes strings, in order, repeats kept — text
     // and numbers alike.
@@ -140,7 +155,11 @@ fn the_read_s_fields_decide_what_a_name_may_mean() {
     let full = read(&[], json!({"dims": {}})).unwrap();
     let w = sel(json!({"dims": {"site": {"indices": [2, 0, 2]}}}));
     assert_ds_bitwise("station site window", &got, &slice_by_name(&full, &w));
-    assert_eq!(got.variables["title"].shape, Vec::<usize>::new(), "the scalar is untouched");
+    assert_eq!(
+        got.variables["title"].shape,
+        Vec::<usize>::new(),
+        "the scalar is untouched"
+    );
 
     // Project to the scalar `title` alone: no field of THAT read carries `site`.
     let msg = format_detail(&read(&["title"], json!({"dims": {"site": "all"}})).unwrap_err());
@@ -164,18 +183,26 @@ fn a_named_zarr_window_fetches_only_the_chunks_it_intersects() {
     let zarr = FormatRegistry::with_builtins().get("zarr").unwrap();
     let window = Selection::from_json(&case["select"]).unwrap();
 
-    let got = zarr.read_store(corpus_cache(), url, &vars, &window).expect("only intersected chunks");
+    let got = zarr
+        .read_store(corpus_cache(), url, &vars, &window)
+        .expect("only intersected chunks");
     assert_eq!(got.variables["T3"].shape, vec![3, 2, 2]);
     assert_eq!(got.variables["PS2"].shape, vec![2, 2]);
 
     assert!(
-        zarr.read_store(corpus_cache(), url, &vars, &Selection::All).is_err(),
+        zarr.read_store(corpus_cache(), url, &vars, &Selection::All)
+            .is_err(),
         "an over-fetching read must meet a poisoned chunk"
     );
     // The same window as a DimWindow, through a Provider's baked select.
-    let w = DimWindow::new().all("lev").range("lat", 2, 4).indices("lon", vec![5, 3]);
+    let w = DimWindow::new()
+        .all("lev")
+        .range("lat", 2, 4)
+        .indices("lon", vec![5, 3]);
     assert_eq!(Selection::from(w.clone()), window);
-    let loader = DataSource::new("geosfp", "zarr", url).variables(vars.clone()).select(w.into());
+    let loader = DataSource::new("geosfp", "zarr", url)
+        .variables(vars.clone())
+        .select(w.into());
     let mut p = Provider::new(loader, corpus_cache(), None).unwrap();
     let fields = p.materialize().unwrap();
     assert_eq!(fields["PS2"].data, got.variables["PS2"].data);
@@ -186,9 +213,16 @@ fn a_named_zarr_window_fetches_only_the_chunks_it_intersects() {
         (json!({"dims": {"bogus": "all"}}), "bogus"),
         (json!({"dims": {"lat": {"indices": [9]}}}), "out of range"),
     ] {
-        let msg = format_detail(&zarr.read_store(corpus_cache(), url, &vars, &sel(w)).unwrap_err());
+        let msg = format_detail(
+            &zarr
+                .read_store(corpus_cache(), url, &vars, &sel(w))
+                .unwrap_err(),
+        );
         assert!(msg.contains(needle), "{msg}");
-        assert!(!msg.contains("decode chunk"), "refused before any chunk: {msg}");
+        assert!(
+            !msg.contains("decode chunk"),
+            "refused before any chunk: {msg}"
+        );
     }
 }
 
@@ -208,20 +242,30 @@ fn the_wire_form_takes_exactly_one_spelling() {
     ] {
         assert!(Selection::from_json(&bad).is_err(), "{bad} must be refused");
     }
-    for everything in [json!({}), json!({"all_records": true}), json!({"all_rows": true})] {
+    for everything in [
+        json!({}),
+        json!({"all_records": true}),
+        json!({"all_rows": true}),
+    ] {
         assert_eq!(Selection::from_json(&everything).unwrap(), Selection::All);
     }
     assert_eq!(
         sel(json!({"axes": ["all", {"slice": [1, 3]}, {"indices": [0, 2]}]})),
         Selection::Orthogonal(vec![
             AxisSelect::All,
-            AxisSelect::Range { start: 1, stop: 3, step: 1 },
+            AxisSelect::Range {
+                start: 1,
+                stop: 3,
+                step: 1
+            },
             AxisSelect::Indices(vec![0, 2]),
         ])
     );
     assert_eq!(
-        sel(json!({"dims": {"lat": {"slice": [1, 3]}, "lon": {"indices": [4, 0, 2]},
-                            "lev": {"slice": [0, 3, 2]}, "time": "all"}})),
+        sel(
+            json!({"dims": {"lat": {"slice": [1, 3]}, "lon": {"indices": [4, 0, 2]},
+                            "lev": {"slice": [0, 3, 2]}, "time": "all"}})
+        ),
         DimWindow::new()
             .range("lat", 1, 3)
             .indices("lon", vec![4, 0, 2])

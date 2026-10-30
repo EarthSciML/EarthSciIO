@@ -49,12 +49,12 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 INT_DTYPES = {"int32", "int64", "uint8"}
 
 
-def gen_value(gen: Dict[str, Any], dtype: str, seed: int, r: int, idx: List[int]):
+def gen_value(gen: dict[str, Any], dtype: str, seed: int, r: int, idx: list[int]):
     P = gen["P"]
     base = seed + gen["record_stride"] * r + sum((i + 1) * P[j] for j, i in enumerate(idx))
     if dtype == "uint8":
@@ -73,7 +73,7 @@ def gen_array(gen, dtype, seed, r, shape):
             out.append(gen_value(gen, dtype, seed, r, prefix))
             return
         for i in range(shape[len(prefix)]):
-            rec(prefix + [i])
+            rec([*prefix, i])
 
     rec([])
     return out
@@ -113,11 +113,16 @@ def _manifest_validator():
         import jsonschema
     except ImportError:
         return None
-    path = pathlib.Path(__file__).resolve().parent.parent / "spec" / "schemas" / "output-manifest.schema.json"
+    path = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "spec"
+        / "schemas"
+        / "output-manifest.schema.json"
+    )
     return jsonschema.Draft202012Validator(json.loads(path.read_text()))
 
 
-def check_results(spec, root: pathlib.Path, writer: str) -> List[str]:
+def check_results(spec, root: pathlib.Path, writer: str) -> list[str]:
     errs = []
     validator = _manifest_validator()
     for case in spec["cases"]:
@@ -152,7 +157,7 @@ def check_results(spec, root: pathlib.Path, writer: str) -> List[str]:
     return errs
 
 
-def check_dump(spec, dump) -> List[str]:
+def check_dump(spec, dump) -> list[str]:
     gen = spec["generator"]
     who = f"{dump.get('reader')}<-{dump.get('writer')}"
     errs = []
@@ -169,7 +174,9 @@ def check_dump(spec, dump) -> List[str]:
         sch = case["schema"]
         dimlen = {d: n for d, n in sch["dims"]}
         if got.get("manifest_schema") != exp["manifest_schema"]:
-            errs.append(f"{tag} manifest {got.get('manifest_schema')!r} != {exp['manifest_schema']!r}")
+            errs.append(
+                f"{tag} manifest {got.get('manifest_schema')!r} != {exp['manifest_schema']!r}"
+            )
         if "commit_seq" in exp and got.get("commit_seq") != exp["commit_seq"]:
             errs.append(f"{tag} commit_seq {got.get('commit_seq')} != {exp['commit_seq']}")
         want_idx = [e["index"] for e in exp["records"]]
@@ -185,8 +192,14 @@ def check_dump(spec, dump) -> List[str]:
             per = got.get("records", {}).get(v["name"], {})
             for e in exp["records"]:
                 want = gen_array(gen, v["dtype"], v["seed"], e["r"], shape)
-                _check_array(f"{tag} {v['name']}[{e['index']}]", per.get(str(e["index"])),
-                             v["dtype"], shape, want, errs)
+                _check_array(
+                    f"{tag} {v['name']}[{e['index']}]",
+                    per.get(str(e["index"])),
+                    v["dtype"],
+                    shape,
+                    want,
+                    errs,
+                )
             extra = set(per) - {str(i) for i in want_idx}
             if extra:
                 errs.append(f"{tag} {v['name']}: uncommitted records dumped: {sorted(extra)}")
@@ -198,9 +211,23 @@ def check_dump(spec, dump) -> List[str]:
                 continue
             shape = [dimlen[d] for d in s["dims"]]
             want = gen_array(gen, s["dtype"], s["seed"], 0, shape)
-            _check_array(f"{tag} static {s['name']}", got.get("statics", {}).get(s["name"]),
-                         s["dtype"], shape, want, errs)
-        key = lambda b: (b["scope"], -1 if b["record"] is None else b["record"], b["writer"], b["key"])
+            _check_array(
+                f"{tag} static {s['name']}",
+                got.get("statics", {}).get(s["name"]),
+                s["dtype"],
+                shape,
+                want,
+                errs,
+            )
+
+        def key(b):
+            return (
+                b["scope"],
+                -1 if b["record"] is None else b["record"],
+                b["writer"],
+                b["key"],
+            )
+
         gb = sorted(got.get("blobs", []), key=key)
         eb = sorted(exp["blobs"], key=key)
         if gb != eb:
@@ -208,16 +235,18 @@ def check_dump(spec, dump) -> List[str]:
     return errs
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--spec", required=True)
     ap.add_argument("--results", help="root holding <writer>/<case>/result.json")
-    ap.add_argument("--writer", action="append", default=[], help="writer labels to check results for")
+    ap.add_argument(
+        "--writer", action="append", default=[], help="writer labels to check results for"
+    )
     ap.add_argument("dumps", nargs="*")
     a = ap.parse_args(argv)
     spec = json.loads(pathlib.Path(a.spec).read_text())
 
-    errs: List[str] = []
+    errs: list[str] = []
     if a.results:
         for w in a.writer:
             errs += check_results(spec, pathlib.Path(a.results), w)
@@ -232,8 +261,10 @@ def main(argv: List[str]) -> int:
             print("FAIL", e)
         print(f"v2 write conformance: {len(errs)} failure(s)")
         return 1
-    print(f"v2 write conformance: PASS ({len(a.writer)} writer(s), {len(a.dumps)} dump(s), "
-          f"{n_cases} cases each)")
+    print(
+        f"v2 write conformance: PASS ({len(a.writer)} writer(s), {len(a.dumps)} dump(s), "
+        f"{n_cases} cases each)"
+    )
     return 0
 
 

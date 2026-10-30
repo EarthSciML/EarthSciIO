@@ -68,8 +68,8 @@ import queue
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
-from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Tuple
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any, Callable, NamedTuple
 
 import numpy as np
 
@@ -77,7 +77,7 @@ from .native import NativeDataset
 from .provider import Provider
 from .selection import _WindowUnion
 
-__all__ = ["PrefetchGroup", "Sample", "EpochSample"]
+__all__ = ["EpochSample", "PrefetchGroup", "Sample"]
 
 
 # --------------------------------------------------------------------------- #
@@ -111,9 +111,9 @@ class EpochSample(Mapping):
     ``k``) and :attr:`time` (its start boundary ``B[k]``).
     """
 
-    __slots__ = ("epoch", "time", "_samples")
+    __slots__ = ("_samples", "epoch", "time")
 
-    def __init__(self, epoch: int, time: _dt.datetime, samples: Dict[str, Sample]) -> None:
+    def __init__(self, epoch: int, time: _dt.datetime, samples: dict[str, Sample]) -> None:
         self.epoch = epoch
         self.time = time
         self._samples = samples
@@ -137,12 +137,12 @@ class EpochSample(Mapping):
 
 
 class _Pending:
-    __slots__ = ("event", "result", "error")
+    __slots__ = ("error", "event", "result")
 
     def __init__(self) -> None:
         self.event = threading.Event()
-        self.result: Optional[NativeDataset] = None
-        self.error: Optional[BaseException] = None
+        self.result: NativeDataset | None = None
+        self.error: BaseException | None = None
 
 
 class _FileShare:
@@ -159,12 +159,12 @@ class _FileShare:
 
     CAP = 2
 
-    def __init__(self, provider: Provider, select: Optional[Any]) -> None:
+    def __init__(self, provider: Provider, select: Any | None) -> None:
         self._provider = provider
         self._select = select
         self._lock = threading.Lock()
-        self._done: "OrderedDict[_dt.datetime, NativeDataset]" = OrderedDict()
-        self._pending: Dict[_dt.datetime, _Pending] = {}
+        self._done: OrderedDict[_dt.datetime, NativeDataset] = OrderedDict()
+        self._pending: dict[_dt.datetime, _Pending] = {}
 
     def __call__(self, file_anchor: _dt.datetime) -> NativeDataset:
         with self._lock:
@@ -204,9 +204,7 @@ class _FileShare:
 
 
 def _str_bytes(values: Sequence[Any]) -> int:
-    return sum(
-        len(v) if isinstance(v, bytes) else len(str(v).encode("utf-8")) for v in values
-    )
+    return sum(len(v) if isinstance(v, bytes) else len(str(v).encode("utf-8")) for v in values)
 
 
 def _dataset_nbytes(ds: NativeDataset) -> int:
@@ -240,12 +238,12 @@ def _freeze(data: Any) -> Any:
 def _produce(
     provider: Provider,
     files: _FileShare,
-    union: Optional[_WindowUnion],
+    union: _WindowUnion | None,
     no_windows: bool,
-    transform: Optional[Callable[[str, Any], Any]],
+    transform: Callable[[str, Any], Any] | None,
     key: str,
     t: _dt.datetime,
-) -> Tuple[Any, int]:
+) -> tuple[Any, int]:
     """One member sample: ``(data, bytes before transform)``.
 
     The decode is the Provider's own ``_sample`` — the path ``refresh`` and
@@ -273,7 +271,7 @@ def _produce(
 # -- process workers --------------------------------------------------------- #
 
 #: Per-worker-process state, set once by :func:`_proc_init`.
-_WORKER: Dict[str, Any] = {}
+_WORKER: dict[str, Any] = {}
 
 
 def _proc_init(payload: bytes) -> None:
@@ -291,15 +289,16 @@ def _proc_init(payload: bytes) -> None:
     )
 
 
-def _proc_run(key: str, t: _dt.datetime) -> Tuple[Any, int, Optional[BaseException], float]:
+def _proc_run(key: str, t: _dt.datetime) -> tuple[Any, int, BaseException | None, float]:
     w = _WORKER
     if w["latency"] is not None:
         time.sleep(max(0.0, float(w["latency"]())))
     t0 = time.perf_counter()
     try:
-        data, nbytes = _produce(w["members"][key], w["files"][key], w["union"],
-                                w["no_windows"], w["transform"], key, t)
-        err: Optional[BaseException] = None
+        data, nbytes = _produce(
+            w["members"][key], w["files"][key], w["union"], w["no_windows"], w["transform"], key, t
+        )
+        err: BaseException | None = None
     except Exception as exc:
         data, nbytes, err = None, 0, exc
         try:
@@ -318,8 +317,7 @@ class _Task:
     """One ``(member, anchor)`` sample, decoded once and shared by every held
     slot that needs it."""
 
-    __slots__ = ("key", "anchor", "t", "gen", "done", "data", "error", "nbytes",
-                 "future", "refs")
+    __slots__ = ("anchor", "data", "done", "error", "future", "gen", "key", "nbytes", "refs", "t")
 
     def __init__(self, key: str, anchor: _dt.datetime, t: _dt.datetime, gen: int) -> None:
         self.key = key
@@ -328,27 +326,31 @@ class _Task:
         self.gen = gen
         self.done = False
         self.data: Any = None
-        self.error: Optional[BaseException] = None
+        self.error: BaseException | None = None
         self.nbytes = 0
-        self.future: Optional[_cf.Future] = None
+        self.future: _cf.Future | None = None
         self.refs = 0
 
 
 class _Slot:
     """One position of the order: its epoch and one task per member."""
 
-    __slots__ = ("pos", "epoch", "tasks", "done", "error")
+    __slots__ = ("done", "epoch", "error", "pos", "tasks")
 
     def __init__(self, pos: int, epoch: int) -> None:
         self.pos = pos
         self.epoch = epoch
-        self.tasks: Dict[str, _Task] = {}
+        self.tasks: dict[str, _Task] = {}
         self.done = False
-        self.error: Optional[BaseException] = None
+        self.error: BaseException | None = None
 
 
 _IDLE, _RUNNING, _CANCELLED, _FAILED, _CLOSED = (
-    "idle", "running", "cancelled", "failed", "closed",
+    "idle",
+    "running",
+    "cancelled",
+    "failed",
+    "closed",
 )
 
 
@@ -400,17 +402,17 @@ class PrefetchGroup:
         members: Mapping,
         *,
         depth: int = 2,
-        max_bytes: Optional[int] = None,
-        fetch_ahead: Optional[int] = None,
+        max_bytes: int | None = None,
+        fetch_ahead: int | None = None,
         workers: int = 1,
-        windows: Optional[Sequence[Any]] = None,
-        transform: Optional[Callable[[str, Any], Any]] = None,
+        windows: Sequence[Any] | None = None,
+        transform: Callable[[str, Any], Any] | None = None,
         executor: str = "thread",
-        _decode_latency: Optional[Callable[[], float]] = None,
+        _decode_latency: Callable[[], float] | None = None,
     ) -> None:
         if not isinstance(members, Mapping) or not members:
             raise ValueError("a PrefetchGroup needs a non-empty {key: Provider} map")
-        self._members: Dict[str, Provider] = {}
+        self._members: dict[str, Provider] = {}
         for key, prov in members.items():
             if not isinstance(key, str):
                 raise TypeError(f"member keys are strings, got {key!r}")
@@ -428,14 +430,14 @@ class PrefetchGroup:
                 )
             self._members[key] = prov
         # Byte-wise string order: the order a multi-member failure is reported in.
-        self._keys: List[str] = sorted(self._members)
+        self._keys: list[str] = sorted(self._members)
         self._depth = _positive("depth", depth)
         self._workers = _positive("workers", workers)
         if max_bytes is not None:
             max_bytes = operator.index(max_bytes)
             if max_bytes < 0:
                 raise ValueError(f"max_bytes must be >= 0, got {max_bytes}")
-        self._max_bytes: Optional[int] = max_bytes
+        self._max_bytes: int | None = max_bytes
         if fetch_ahead is None:
             fetch_ahead = self._depth
         fetch_ahead = operator.index(fetch_ahead)
@@ -450,8 +452,8 @@ class PrefetchGroup:
         self._executor = executor
         self._latency = _decode_latency
 
-        self._windows: Optional[List[Any]] = None
-        self._union: Optional[_WindowUnion] = None
+        self._windows: list[Any] | None = None
+        self._union: _WindowUnion | None = None
         if windows is not None:
             self._windows = list(windows)
             for key in self._keys:
@@ -464,7 +466,7 @@ class PrefetchGroup:
         bounds = set()
         for prov in self._members.values():
             bounds.update(prov.refresh_times())
-        self._B: List[_dt.datetime] = sorted(bounds)
+        self._B: list[_dt.datetime] = sorted(bounds)
 
         select = self._union.select if self._union is not None else None
         self._files = {k: _FileShare(p, select) for k, p in self._members.items()}
@@ -472,29 +474,32 @@ class PrefetchGroup:
         self._cv = threading.Condition(threading.RLock())
         self._state = _IDLE
         self._gen = 0
-        self._order: List[int] = []
+        self._order: list[int] = []
         self._head = 0
         self._next = 0
-        self._stop: Optional[int] = None
-        self._slots: Dict[int, _Slot] = {}
-        self._tasks: Dict[Tuple[str, _dt.datetime], _Task] = {}
-        self._last: Dict[str, _Task] = {}
-        self._prev_anchor: Dict[str, _dt.datetime] = {}
-        self._size: Dict[str, int] = {}
+        self._stop: int | None = None
+        self._slots: dict[int, _Slot] = {}
+        self._tasks: dict[tuple[str, _dt.datetime], _Task] = {}
+        self._last: dict[str, _Task] = {}
+        self._prev_anchor: dict[str, _dt.datetime] = {}
+        self._size: dict[str, int] = {}
         self._futures: set = set()
         self._warmed: set = set()
         self._fetch_end = 0
-        self._stats: Dict[str, Any] = {
-            "waited_s": 0.0, "decode_s": 0.0, "peak_bytes": 0, "epochs_decoded": 0,
-            "samples_decoded": 0, "samples_reused": 0, "oversize_epochs": 0,
+        self._stats: dict[str, Any] = {
+            "waited_s": 0.0,
+            "decode_s": 0.0,
+            "peak_bytes": 0,
+            "epochs_decoded": 0,
+            "samples_decoded": 0,
+            "samples_reused": 0,
+            "oversize_epochs": 0,
             "overlap": True,
         }
 
         if executor == "process":
             try:
-                payload = pickle.dumps(
-                    (self._members, self._windows, transform, _decode_latency)
-                )
+                payload = pickle.dumps((self._members, self._windows, transform, _decode_latency))
             except Exception as exc:
                 raise TypeError(
                     "executor='process' decodes in worker processes, so its "
@@ -509,7 +514,7 @@ class PrefetchGroup:
             )
             # Results come back on the pool's management thread; resubmitting
             # from there can deadlock the pool, so a collector thread takes them.
-            self._results: "queue.SimpleQueue" = queue.SimpleQueue()
+            self._results: queue.SimpleQueue = queue.SimpleQueue()
             self._collector = threading.Thread(
                 target=self._collect, name="earthsciio-prefetch-collect", daemon=True
             )
@@ -518,16 +523,16 @@ class PrefetchGroup:
             self._pool = _cf.ThreadPoolExecutor(
                 max_workers=self._workers, thread_name_prefix="earthsciio-prefetch"
             )
-        self._warm_pool: Optional[_cf.ThreadPoolExecutor] = None
+        self._warm_pool: _cf.ThreadPoolExecutor | None = None
 
     # -- the consumer's API ------------------------------------------------- #
 
-    def boundaries(self) -> List[_dt.datetime]:
+    def boundaries(self) -> list[_dt.datetime]:
         """The sorted, de-duplicated union of the members' ``refresh_times``.
         Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right."""
         return list(self._B)
 
-    def start(self, order: Any = "forward", from_: Optional[int] = None) -> None:
+    def start(self, order: Any = "forward", from_: int | None = None) -> None:
         """Declare the order epochs will be taken in, cancelling any previous one.
 
         ``order`` is ``"forward"`` (``0 … n-1``), ``"reverse"`` (``n-1 … 0``, the
@@ -592,7 +597,7 @@ class PrefetchGroup:
                     self._release_locked(task)
                 self._end_order_locked(_FAILED)
                 raise err
-            samples: Dict[str, Sample] = {}
+            samples: dict[str, Sample] = {}
             for key in self._keys:
                 task = slot.tasks[key]
                 changed = self._prev_anchor.get(key) != task.anchor
@@ -657,7 +662,7 @@ class PrefetchGroup:
             share.clear()
         self._last.clear()
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Cumulative statistics since construction (``start`` does not reset
         them): ``waited_s``, ``decode_s``, ``peak_bytes``, ``epochs_decoded``,
         ``samples_decoded``, ``samples_reused``, ``oversize_epochs``,
@@ -665,7 +670,7 @@ class PrefetchGroup:
         with self._cv:
             return dict(self._stats)
 
-    def __enter__(self) -> "PrefetchGroup":
+    def __enter__(self) -> PrefetchGroup:
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -673,7 +678,7 @@ class PrefetchGroup:
 
     # -- internals: order + state ------------------------------------------- #
 
-    def _resolve_order(self, order: Any, from_: Optional[int]) -> List[int]:
+    def _resolve_order(self, order: Any, from_: int | None) -> list[int]:
         n = len(self._B)
         if isinstance(order, str):
             if order == "forward":
@@ -695,11 +700,13 @@ class PrefetchGroup:
                 raise ValueError("an explicit order must name at least one epoch")
             bad = sorted({e for e in seq if not 0 <= e < n})
             if bad:
-                raise ValueError(f"epochs {bad} are out of range: the group has {n} epochs (0..{n - 1})")
+                raise ValueError(
+                    f"epochs {bad} are out of range: the group has {n} epochs (0..{n - 1})"
+                )
         if from_ is not None:
             f = _epoch_index(from_)
             try:
-                seq = seq[seq.index(f):]
+                seq = seq[seq.index(f) :]
             except ValueError:
                 raise ValueError(f"from_={f} is not an epoch of the order") from None
         return seq
@@ -721,8 +728,7 @@ class PrefetchGroup:
                 "resumes past it"
             )
         raise RuntimeError(
-            f"the order is exhausted (all {len(self._order)} entries taken); call "
-            "start() again"
+            f"the order is exhausted (all {len(self._order)} entries taken); call start() again"
         )
 
     def _end_order_locked(self, state: str) -> None:
@@ -744,7 +750,7 @@ class PrefetchGroup:
 
     # -- internals: admission (spec/prefetch.md §3.6) ----------------------- #
 
-    def _held_bytes_locked(self, in_flight: bool) -> Tuple[int, bool]:
+    def _held_bytes_locked(self, in_flight: bool) -> tuple[int, bool]:
         """Bytes of the samples the held slots reference — decoded at their real
         size, in flight (if asked) at their member's estimate — and whether any
         in-flight size is still unknown."""
@@ -760,18 +766,21 @@ class PrefetchGroup:
                     total += est
         return total, unknown
 
-    def _admit_locked(self) -> List[_Task]:
+    def _admit_locked(self) -> list[_Task]:
         """Admit slots, in order, while depth and budget allow; return the new
         tasks for the caller to submit once the lock is released."""
-        todo: List[_Task] = []
+        todo: list[_Task] = []
         if self._state != _RUNNING:
             return todo
-        while (self._stop is None and self._next < len(self._order)
-               and self._next < self._head + self._depth):
+        while (
+            self._stop is None
+            and self._next < len(self._order)
+            and self._next < self._head + self._depth
+        ):
             pos = self._next
             epoch = self._order[pos]
             t = self._B[epoch]
-            need: Dict[str, Tuple[_dt.datetime, Optional[_Task]]] = {}
+            need: dict[str, tuple[_dt.datetime, _Task | None]] = {}
             est, unknown = 0, False
             for key in self._keys:
                 anchor = self._members[key]._anchor_of(t)
@@ -838,7 +847,7 @@ class PrefetchGroup:
 
     # -- internals: workers -------------------------------------------------- #
 
-    def _submit(self, tasks: List[_Task]) -> None:
+    def _submit(self, tasks: list[_Task]) -> None:
         """Hand new tasks to the pool — outside the lock, so a worker finishing
         meanwhile never waits on the consumer."""
         for task in tasks:
@@ -867,6 +876,7 @@ class PrefetchGroup:
                 self._futures.discard(fut)
             if self._executor == "process" and not fut.cancelled():
                 self._results.put((task, fut))
+
         return done
 
     def _run_thread(self, task: _Task) -> None:
@@ -878,10 +888,16 @@ class PrefetchGroup:
             if self._latency is not None:
                 time.sleep(max(0.0, float(self._latency())))
                 t0 = time.perf_counter()
-            data, nbytes = _produce(self._members[task.key], self._files[task.key],
-                                    self._union, self._no_windows, self._transform,
-                                    task.key, task.t)
-            err: Optional[BaseException] = None
+            data, nbytes = _produce(
+                self._members[task.key],
+                self._files[task.key],
+                self._union,
+                self._no_windows,
+                self._transform,
+                task.key,
+                task.t,
+            )
+            err: BaseException | None = None
         except BaseException as exc:  # anything uncaught would leave take() waiting
             data, nbytes, err = None, 0, exc
         self._finish(task, data, nbytes, err, time.perf_counter() - t0)
@@ -900,8 +916,9 @@ class PrefetchGroup:
                 _freeze(data)
             self._finish(task, data, nbytes, err, secs)
 
-    def _finish(self, task: _Task, data: Any, nbytes: int,
-                err: Optional[BaseException], seconds: float) -> None:
+    def _finish(
+        self, task: _Task, data: Any, nbytes: int, err: BaseException | None, seconds: float
+    ) -> None:
         with self._cv:
             self._stats["decode_s"] += seconds
             if task.gen != self._gen or task.done:
@@ -948,7 +965,7 @@ class PrefetchGroup:
         except RuntimeError:
             pass  # the warm pool is shut down: close() is under way
 
-    def _warm_times(self, gen: int, times: List[_dt.datetime]) -> None:
+    def _warm_times(self, gen: int, times: list[_dt.datetime]) -> None:
         for t in times:
             for key in self._keys:
                 prov = self._members[key]

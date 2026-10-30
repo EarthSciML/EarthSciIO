@@ -49,22 +49,22 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 __all__ = [
-    "BloscProfile",
-    "ZstdProfile",
-    "BLOSC_DIAGNOSTIC",
     "BLOSC_CHECKPOINT",
-    "ZSTD_WASM",
-    "OutputVar",
-    "OutputSchema",
-    "IndexedTime",
-    "ZarrWriter",
-    "ZarrWriteHandle",
+    "BLOSC_DIAGNOSTIC",
     "OUTPUT_MANIFEST_SCHEMA",
+    "ZSTD_WASM",
+    "BloscProfile",
+    "IndexedTime",
+    "OutputSchema",
+    "OutputVar",
+    "ZarrWriteHandle",  # noqa: F822 - resolved lazily by the module __getattr__
+    "ZarrWriter",
+    "ZstdProfile",
 ]
 
 OUTPUT_MANIFEST_SCHEMA = "earthsciio/output-manifest/v1"
@@ -115,8 +115,7 @@ def _profile(name: str):
     if name == "wasm":
         return ZSTD_WASM
     raise ValueError(
-        f"unknown codec profile {name!r} "
-        "(expected 'diagnostic', 'checkpoint', or 'wasm')"
+        f"unknown codec profile {name!r} (expected 'diagnostic', 'checkpoint', or 'wasm')"
     )
 
 
@@ -132,9 +131,9 @@ class OutputVar:
     attrs are written verbatim into the array node's ``attributes`` alongside the
     mechanical ``dimension_names``."""
 
-    dims: List[str]
+    dims: list[str]
     dtype: Any
-    attrs: Dict[str, Any] = field(default_factory=dict)
+    attrs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.dims = [str(d) for d in self.dims]
@@ -190,16 +189,16 @@ class OutputSchema:
       length in ``dims`` may be 0 (filled in) or MUST equal ``n_records``.
     """
 
-    dims: List[Tuple[str, int]]
+    dims: list[tuple[str, int]]
     time_dim: str
-    vars: List[Tuple[str, OutputVar]]
-    chunk_shape: Dict[str, int]
-    shard_shape: Dict[str, int]
-    coords: List[Tuple[str, Tuple[Any, Dict[str, Any]]]] = field(default_factory=list)
+    vars: list[tuple[str, OutputVar]]
+    chunk_shape: dict[str, int]
+    shard_shape: dict[str, int]
+    coords: list[tuple[str, tuple[Any, dict[str, Any]]]] = field(default_factory=list)
     profile: str = "diagnostic"
-    attrs: Dict[str, Any] = field(default_factory=dict)
+    attrs: dict[str, Any] = field(default_factory=dict)
     time_dtype: Any = np.float64
-    statics: List[Tuple[str, OutputVar]] = field(default_factory=list)
+    statics: list[tuple[str, OutputVar]] = field(default_factory=list)
     time_mode: Any = "append"
 
     def __post_init__(self) -> None:
@@ -208,39 +207,32 @@ class OutputSchema:
         self.vars = [(str(k), v) for k, v in self.vars]
         self.chunk_shape = {str(k): int(v) for k, v in self.chunk_shape.items()}
         self.shard_shape = {str(k): int(v) for k, v in self.shard_shape.items()}
-        self.coords = [
-            (str(k), (np.asarray(vals), dict(a))) for k, (vals, a) in self.coords
-        ]
+        self.coords = [(str(k), (np.asarray(vals), dict(a))) for k, (vals, a) in self.coords]
         self.attrs = dict(self.attrs)
         self.time_dtype = np.dtype(self.time_dtype)
         self.statics = [(str(k), v) for k, v in self.statics]
         if isinstance(self.time_mode, str):
             if self.time_mode != "append":
                 raise ValueError(
-                    f"time_mode must be 'append' or IndexedTime(times), "
-                    f"got {self.time_mode!r}"
+                    f"time_mode must be 'append' or IndexedTime(times), got {self.time_mode!r}"
                 )
         elif isinstance(self.time_mode, IndexedTime):
             n = self.time_mode.n_records
-            self.dims = [
-                (k, n if k == self.time_dim and v == 0 else v) for k, v in self.dims
-            ]
+            self.dims = [(k, n if k == self.time_dim and v == 0 else v) for k, v in self.dims]
             if self.dim_lengths.get(self.time_dim, n) != n:
                 raise ValueError(
                     f"indexed time mode: dims[{self.time_dim!r}] = "
                     f"{self.dim_lengths[self.time_dim]} != n_records = {n}"
                 )
         else:
-            raise TypeError(
-                f"time_mode must be 'append' or IndexedTime, got {self.time_mode!r}"
-            )
+            raise TypeError(f"time_mode must be 'append' or IndexedTime, got {self.time_mode!r}")
 
     @property
     def indexed(self) -> bool:
         return isinstance(self.time_mode, IndexedTime)
 
     @property
-    def dim_lengths(self) -> Dict[str, int]:
+    def dim_lengths(self) -> dict[str, int]:
         return {k: v for k, v in self.dims}
 
 
@@ -280,9 +272,7 @@ def _open_output_store(base_url: str):
     """
     from zarr.storage import LocalStore
 
-    if base_url.startswith("s3://") or "://" in base_url and not base_url.startswith(
-        "file://"
-    ):
+    if base_url.startswith("s3://") or ("://" in base_url and not base_url.startswith("file://")):
         # Object-store / any fsspec-addressable target (needs the ``s3`` extra).
         from zarr.storage import FsspecStore
 
@@ -320,7 +310,7 @@ class ZarrWriter:
         role: str = "single",
         n_writers: int = 1,
         id: int = 0,
-        region: Optional[Dict[str, Tuple[int, int]]] = None,
+        region: dict[str, tuple[int, int]] | None = None,
     ):
         """Open a store for writing. ``role="single"`` / ``"owner"`` CREATE it
         (group, coordinates, every array's ``zarr.json``; a v2 store also gets
@@ -343,8 +333,8 @@ class ZarrWriter:
         role: str = "single",
         n_writers: int = 1,
         id: int = 0,
-        region: Optional[Dict[str, Tuple[int, int]]] = None,
-        at: Optional[float] = None,
+        region: dict[str, tuple[int, int]] | None = None,
+        at: float | None = None,
     ):
         """Reopen a store after preemption (``spec/writer.md`` §7): in
         ``append`` mode the committed records are truncated to ``t <= at``
@@ -356,14 +346,12 @@ class ZarrWriter:
             base_url, role=role, n_writers=n_writers, id=id, region=region, at=at
         )
 
-    def write_record(self, h, t: float, arrays: Dict[str, Any], region=None) -> int:
+    def write_record(self, h, t: float, arrays: dict[str, Any], region=None) -> int:
         """Append one time record (``append`` mode); returns its index. A
         non-``None`` ``region`` must equal the handle's bound region."""
         return h.write_record(t, arrays, region=region)
 
-    def write_record_at(
-        self, h, index: int, t: float, arrays: Dict[str, Any], region=None
-    ) -> None:
+    def write_record_at(self, h, index: int, t: float, arrays: dict[str, Any], region=None) -> None:
         """Write record ``index`` (``indexed`` mode, any order); ``t`` must equal
         ``times[index]`` bitwise and the record must not be committed."""
         h.write_record_at(index, t, arrays, region=region)
@@ -384,22 +372,22 @@ class ZarrWriter:
         also commits (when anything is pending) — the durable barrier."""
         return h.flush()
 
-    def write_commit(self, h, tokens) -> Dict[str, Any]:
+    def write_commit(self, h, tokens) -> dict[str, Any]:
         """Owner: verify every writer's token and commit (``spec/writer.md``
         §5.3). Raises :class:`~earthsciio.errors.CommitError`, writing nothing,
         on a gap, overlap or divergent writer. Returns the new manifest."""
         return h.commit(tokens)
 
-    def write_invalidate(self, h, indices) -> Dict[str, Any]:
+    def write_invalidate(self, h, indices) -> dict[str, Any]:
         """Owner / single, ``indexed`` mode: mark records uncommitted so they
         may be rewritten."""
         return h.invalidate(indices)
 
-    def write_invalidate_statics(self, h, names) -> Dict[str, Any]:
+    def write_invalidate_statics(self, h, names) -> dict[str, Any]:
         """Owner / single: mark statics uncommitted so they may be rewritten."""
         return h.invalidate_statics(names)
 
-    def write_close(self, h, tokens=()) -> Optional[Dict[str, Any]]:
+    def write_close(self, h, tokens=()) -> dict[str, Any] | None:
         """Finish the handle. Single: flush, then rewrite the manifest. Owner:
         flush, then commit its own token plus the OTHER writers' ``tokens``.
         Both return the manifest dict. Contributor: errors if anything written

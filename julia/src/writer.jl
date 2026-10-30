@@ -121,9 +121,11 @@ struct StubWriter <: Writer
     name::String
     reason::String
 end
-for f in (:write_open!, :write_record!, :write_record_at!, :write_static!,
-          :write_blob!, :write_flush!, :write_commit!, :write_invalidate!,
-          :write_invalidate_statics!, :write_resume, :write_close!)
+for f in (
+        :write_open!, :write_record!, :write_record_at!, :write_static!,
+        :write_blob!, :write_flush!, :write_commit!, :write_invalidate!,
+        :write_invalidate_statics!, :write_resume, :write_close!,
+    )
     @eval $f(w::StubWriter, args...; kwargs...) =
         error("output format '", w.name, "' is a registered STUB: ", w.reason)
 end

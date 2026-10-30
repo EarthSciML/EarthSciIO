@@ -27,9 +27,7 @@ use std::sync::Arc;
 
 use earthsciio::auth::AuthResolver;
 use earthsciio::transport::{Conditional, FetchResult, FetchStatus, FileTransport, Transport};
-use earthsciio::{
-    sha256_hex, Cache, FetchRequest, Manifest, Result, SourceState, MANIFEST_SCHEMA,
-};
+use earthsciio::{sha256_hex, Cache, FetchRequest, Manifest, Result, SourceState, MANIFEST_SCHEMA};
 
 /// The manifest a cache would have written when it ingested `body` from `src` —
 /// the record rung 0 judges the source against.
@@ -427,8 +425,8 @@ fn unreadable_source_abstains_and_serves_the_warm_entry() {
 /// The classification itself, on the three error shapes that matter.
 #[test]
 fn only_a_genuine_absence_reads_as_missing() {
-    use std::os::unix::fs::PermissionsExt;
     use earthsciio::file_source_state;
+    use std::os::unix::fs::PermissionsExt;
 
     let tmp = tempfile::tempdir().unwrap();
     let body = b"corpus".to_vec();
@@ -528,9 +526,7 @@ fn mirrors_do_not_excuse_a_replaced_canonical() {
 
     let mirrors = ["mem://mirror/x.nc"];
     let fetch = |c: &Cache| -> Vec<u8> {
-        let blob = c
-            .fetch(&FetchRequest::new(&url).mirrors(&mirrors))
-            .unwrap();
+        let blob = c.fetch(&FetchRequest::new(&url).mirrors(&mirrors)).unwrap();
         std::fs::read(&blob.path).unwrap()
     };
 
@@ -538,7 +534,11 @@ fn mirrors_do_not_excuse_a_replaced_canonical() {
     assert_eq!(fetch(&cache), b"year,value\n2016,1.0\n".to_vec());
     std::fs::write(&src, b"year,value\n2016,9.0\n").unwrap(); // same length
     assert_eq!(fetch(&cache), b"year,value\n2016,9.0\n".to_vec());
-    assert_eq!(mem_fetches.load(Ordering::SeqCst), 0, "canonical served both");
+    assert_eq!(
+        mem_fetches.load(Ordering::SeqCst),
+        0,
+        "canonical served both"
+    );
 }
 
 // --- 11. the fingerprint memo -----------------------------------------------
@@ -656,5 +656,9 @@ fn a_recent_source_is_rehashed_until_its_mtime_is_safely_past() {
     for _ in 0..3 {
         assert_eq!(rev.state(&src, &m), SourceState::Current);
     }
-    assert_eq!(rev.full_reads(), 4, "one re-hash, then the memo is trusted again");
+    assert_eq!(
+        rev.full_reads(),
+        4,
+        "one re-hash, then the memo is trusted again"
+    );
 }

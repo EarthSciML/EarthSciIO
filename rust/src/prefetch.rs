@@ -327,7 +327,9 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
             return Err(refuse("a PrefetchGroup needs at least one member".into()));
         }
         if self.depth == 0 {
-            return Err(refuse("depth must be at least 1 (it counts the slot take returns next)".into()));
+            return Err(refuse(
+                "depth must be at least 1 (it counts the slot take returns next)".into(),
+            ));
         }
         if self.workers == 0 {
             return Err(refuse("workers must be at least 1".into()));
@@ -421,11 +423,15 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
         };
         for i in 0..self.workers {
             let s = shared.clone();
-            group.threads.push(spawn(format!("esio-prefetch-{i}"), move || worker(s))?);
+            group
+                .threads
+                .push(spawn(format!("esio-prefetch-{i}"), move || worker(s))?);
         }
         if group.shared.config.fetch_ahead > 0 {
             let s = shared.clone();
-            group.threads.push(spawn("esio-prefetch-fetch".into(), move || fetcher(s))?);
+            group
+                .threads
+                .push(spawn("esio-prefetch-fetch".into(), move || fetcher(s))?);
         }
         Ok(group)
     }
@@ -484,7 +490,9 @@ impl<T: Send + Sync + 'static> PrefetchGroup<T> {
             Order::Reverse => (0..n).rev().collect(),
             Order::Explicit(v) => {
                 if v.is_empty() {
-                    return Err(prefetch_err("an explicit order must name at least one epoch".into()));
+                    return Err(prefetch_err(
+                        "an explicit order must name at least one epoch".into(),
+                    ));
                 }
                 if let Some(&bad) = v.iter().find(|&&e| e >= n) {
                     return Err(prefetch_err(format!(
@@ -566,7 +574,10 @@ impl<T: Send + Sync + 'static> PrefetchGroup<T> {
             }
             st.stats.waited_s += waiting.elapsed().as_secs_f64();
         }
-        let head = st.slots.pop_front().expect("the head slot is always admitted");
+        let head = st
+            .slots
+            .pop_front()
+            .expect("the head slot is always admitted");
         debug_assert_eq!(head.pos, st.next);
 
         // A failed member: the first by key order (`keys` is in member order,
@@ -582,9 +593,9 @@ impl<T: Send + Sync + 'static> PrefetchGroup<T> {
                 _ => None,
             };
             st.end_order(Phase::Failed { epoch: k });
-            return Err(err.unwrap_or_else(|| {
-                prefetch_err(format!("take({k}): a member decode failed"))
-            }));
+            return Err(
+                err.unwrap_or_else(|| prefetch_err(format!("take({k}): a member decode failed")))
+            );
         }
 
         let mut samples = BTreeMap::new();
@@ -714,12 +725,16 @@ struct Member {
 /// A member's sample without windows: [`Provider::sample_at`]'s path, fed from
 /// the shared decoded files.
 fn decode_sample(m: &Member, t: OffsetDateTime) -> Result<NativeDataset> {
-    m.provider.sample_from(t, m.provider.baked_select(), &mut &m.files)
+    m.provider
+        .sample_from(t, m.provider.baked_select(), &mut &m.files)
 }
 
 /// A member's sample with windows: [`Provider::sample_windows_at`]'s path.
 fn decode_windows(m: &Member, t: OffsetDateTime) -> Result<Vec<NativeDataset>> {
-    let plan = m.plan.as_ref().expect("a windowed group plans every member");
+    let plan = m
+        .plan
+        .as_ref()
+        .expect("a windowed group plans every member");
     m.provider.sample_windows_from(t, plan, &mut &m.files)
 }
 
@@ -986,7 +1001,9 @@ impl<T> State<T> {
                 break;
             }
             let epoch = self.order[self.admitted];
-            let keys: Vec<CellKey> = (0..cfg.members.len()).map(|i| (i, cfg.anchors[i][epoch])).collect();
+            let keys: Vec<CellKey> = (0..cfg.members.len())
+                .map(|i| (i, cfg.anchors[i][epoch]))
+                .collect();
             // The head slot is always admitted; behind it, a slot must fit.
             if self.admitted > self.next {
                 if let Some(max) = cfg.max_bytes {
@@ -1017,13 +1034,27 @@ impl<T> State<T> {
                 if let Some((a, data, bytes)) = &self.last_taken[k.0] {
                     if *a == k.1 {
                         let status = CellStatus::Ready(data.clone(), *bytes);
-                        self.cells.insert(k, Cell { status, slots: 1, estimate: Some(*bytes) });
+                        self.cells.insert(
+                            k,
+                            Cell {
+                                status,
+                                slots: 1,
+                                estimate: Some(*bytes),
+                            },
+                        );
                         self.stats.samples_reused += 1;
                         continue;
                     }
                 }
                 let estimate = self.last_size[k.0];
-                self.cells.insert(k, Cell { status: CellStatus::Queued, slots: 1, estimate });
+                self.cells.insert(
+                    k,
+                    Cell {
+                        status: CellStatus::Queued,
+                        slots: 1,
+                        estimate,
+                    },
+                );
                 self.queue.push_back((self.generation, k));
             }
             self.slots.push_back(Slot {

@@ -1230,10 +1230,9 @@ fn from_manifest(m: &Value) -> Result<(StreamSchema, Version, CommitState)> {
         .map(|d| {
             // `{name, length}` (Rust, Julia) or `[name, length]` (Python v1)
             Ok(match d.as_array() {
-                Some(p) if p.len() == 2 => (
-                    s(&p[0], "dims.name")?,
-                    u(&p[1], "dims.length")? as usize,
-                ),
+                Some(p) if p.len() == 2 => {
+                    (s(&p[0], "dims.name")?, u(&p[1], "dims.length")? as usize)
+                }
                 _ => (
                     s(&d["name"], "dims.name")?,
                     u(&d["length"], "dims.length")? as usize,
@@ -2167,7 +2166,9 @@ where
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
         {
-            return Err(err(format!("blob key '{key}' must match [A-Za-z0-9._-]+ and not be '.' or '..'")));
+            return Err(err(format!(
+                "blob key '{key}' must match [A-Za-z0-9._-]+ and not be '.' or '..'"
+            )));
         }
         if let (BlobScope::Record(i), Some(n)) = (scope, self.geo.n_indexed()) {
             if i >= n {

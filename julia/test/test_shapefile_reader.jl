@@ -15,15 +15,21 @@ using Shapefile          # triggers EarthSciIOShapefileExt — the decode backen
 import ZipFile
 import JSON
 
-const SHP_CASE = JSON.parsefile(joinpath(@__DIR__, "..", "..", "conformance",
-                                         "corpus", "cases", "shapefile-polygon-zip.json"))
-const SHP_BLOB = joinpath(@__DIR__, "..", "..", "conformance", "corpus",
-                          SHP_CASE["blob_path"])
+const SHP_CASE = JSON.parsefile(
+    joinpath(
+        @__DIR__, "..", "..", "conformance",
+        "corpus", "cases", "shapefile-polygon-zip.json"
+    )
+)
+const SHP_BLOB = joinpath(
+    @__DIR__, "..", "..", "conformance", "corpus",
+    SHP_CASE["blob_path"]
+)
 const SHP_MEMBER = SHP_CASE["decode"]["member"]
 
 # The corpus blob's members, so a test can rezip a variant of them.
 function _shp_members()
-    out = Pair{String,Vector{UInt8}}[]
+    out = Pair{String, Vector{UInt8}}[]
     r = ZipFile.Reader(SHP_BLOB)
     try
         for f in r.files
@@ -55,8 +61,10 @@ end
         @test EarthSciIO.FORMAT_REGISTRY["shapefile"] isa ShapefileReader
     end
 
-    ds = read_native(ShapefileReader(), SHP_BLOB; member = SHP_MEMBER,
-                     numeric_columns = ["CODE"])
+    ds = read_native(
+        ShapefileReader(), SHP_BLOB; member = SHP_MEMBER,
+        numeric_columns = ["CODE"]
+    )
 
     @testset "one row per part, attributes replicated" begin
         # 5 records, one `*`-deleted; record 1 has a mainland + an island.
@@ -84,9 +92,11 @@ end
         @test size(wide.variables["geometry"].data) == (5, 8, 2)
         # The extra slots still repeat the final vertex, so the ring is unchanged.
         @test wide.variables["geometry"].data[3, 8, :] ==
-              wide.variables["geometry"].data[3, 4, :]
-        @test_throws ArgumentError read_native(ShapefileReader(), SHP_BLOB;
-                                               member = SHP_MEMBER, nvert_max = 4)
+            wide.variables["geometry"].data[3, 4, :]
+        @test_throws ArgumentError read_native(
+            ShapefileReader(), SHP_BLOB;
+            member = SHP_MEMBER, nvert_max = 4
+        )
     end
 
     @testset "the stored per-record bbox, replicated to parts" begin
@@ -103,8 +113,10 @@ end
         @test ds.variables["CODE"].data == [1001.0, 17031.0, 17031.0, 6037.0, 36061.0]
         plain = read_native(ShapefileReader(), SHP_BLOB; member = SHP_MEMBER)
         @test eltype(plain.variables["CODE"].data) == String     # a `C` column by default
-        @test_throws KeyError read_native(ShapefileReader(), SHP_BLOB;
-                                          member = SHP_MEMBER, numeric_columns = ["NOPE"])
+        @test_throws KeyError read_native(
+            ShapefileReader(), SHP_BLOB;
+            member = SHP_MEMBER, numeric_columns = ["NOPE"]
+        )
     end
 
     @testset "shape_type and the .prj ride as one-element `meta` fields" begin
@@ -119,15 +131,22 @@ end
             # A single `.shp` member needs no `member` option.
             one = _rezip(joinpath(dir, "one.zip"), members)
             @test read_native(ShapefileReader(), one).variables["n_parts"].data ==
-                  ds.variables["n_parts"].data
+                ds.variables["n_parts"].data
             # Two layers in one archive: ambiguous without `member`.
-            two = _rezip(joinpath(dir, "two.zip"),
-                         vcat(members, [replace(n, "layer/" => "other/") => b
-                                        for (n, b) in members]))
+            two = _rezip(
+                joinpath(dir, "two.zip"),
+                vcat(
+                    members, [
+                        replace(n, "layer/" => "other/") => b
+                            for (n, b) in members
+                    ]
+                )
+            )
             @test_throws KeyError read_native(ShapefileReader(), two)
-            @test read_native(ShapefileReader(), two;
-                              member = "other/emis_polygons.shp"
-                              ).variables["NAME"].data == ds.variables["NAME"].data
+            @test read_native(
+                ShapefileReader(), two;
+                member = "other/emis_polygons.shp"
+            ).variables["NAME"].data == ds.variables["NAME"].data
             @test_throws KeyError read_native(ShapefileReader(), two; member = "nope.shp")
         end
     end
@@ -145,11 +164,15 @@ end
     end
 
     @testset "variable selection" begin
-        sel = read_native(ShapefileReader(), SHP_BLOB; member = SHP_MEMBER,
-                          variables = ["geometry", "EMIS"])
+        sel = read_native(
+            ShapefileReader(), SHP_BLOB; member = SHP_MEMBER,
+            variables = ["geometry", "EMIS"]
+        )
         @test sort(collect(keys(sel.variables))) == ["EMIS", "geometry"]
-        @test_throws KeyError read_native(ShapefileReader(), SHP_BLOB;
-                                          member = SHP_MEMBER, variables = ["nope"])
+        @test_throws KeyError read_native(
+            ShapefileReader(), SHP_BLOB;
+            member = SHP_MEMBER, variables = ["nope"]
+        )
     end
 
     @testset "a .dbf column named like a reader field is refused" begin

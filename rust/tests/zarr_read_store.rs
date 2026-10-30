@@ -11,9 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use earthsciio::{
-    cache_key, ArrayData, AxisSelect, Cache, DataSource, Provider, Selection,
-};
+use earthsciio::{cache_key, ArrayData, AxisSelect, Cache, DataSource, Provider, Selection};
 
 const BASE: &str = "s3://earthsci-fixtures/isrm-mini.zarr";
 
@@ -39,7 +37,11 @@ fn copy_dir(src: &Path, dst: &Path) {
 fn poison(root: &Path, url: &str, bytes: &[u8]) {
     let key = cache_key(url);
     let blob = root.join("v1/blobs").join(&key[..2]).join(&key);
-    assert!(blob.exists(), "expected corpus blob for {url} at {}", blob.display());
+    assert!(
+        blob.exists(),
+        "expected corpus blob for {url} at {}",
+        blob.display()
+    );
     std::fs::write(&blob, bytes).unwrap();
 }
 
@@ -53,7 +55,11 @@ fn read_store_is_lazy_never_touching_unselected_chunks() {
     // field3d/1.2.0 (+ pop1d/0). Poison every other field3d chunk: a non-lazy
     // reader that fetched them would blosc-error.
     for key in ["0.0.0", "0.1.0", "0.2.0", "1.1.0"] {
-        poison(&cache_root, &format!("{BASE}/field3d/{key}"), b"\x00POISON-not-blosc\xff");
+        poison(
+            &cache_root,
+            &format!("{BASE}/field3d/{key}"),
+            b"\x00POISON-not-blosc\xff",
+        );
     }
 
     // verify_on_read=false so poison is only "seen" if actually decoded (a
@@ -98,7 +104,11 @@ fn over_selection_hits_poison_and_errors() {
     let cache_root = scratch.path().join("cache");
     copy_dir(&corpus_cache(), &cache_root);
     // Poison the middle y-chunk (rows 2,3) of layer 1.
-    poison(&cache_root, &format!("{BASE}/field3d/1.1.0"), b"\x00POISON\xff");
+    poison(
+        &cache_root,
+        &format!("{BASE}/field3d/1.1.0"),
+        b"\x00POISON\xff",
+    );
 
     let cache = Cache::builder()
         .data_dir(&cache_root)
@@ -133,7 +143,11 @@ fn per_call_select_preserves_permuted_order_and_is_lazy() {
     for l in 0..3 {
         for s in 0..5 {
             if !(l == 0 && (s == 0 || s == 2)) {
-                poison(&cache_root, &format!("{PBASE}/sr/{l}.{s}.0"), b"\x00POISON-not-blosc\xff");
+                poison(
+                    &cache_root,
+                    &format!("{PBASE}/sr/{l}.{s}.0"),
+                    b"\x00POISON-not-blosc\xff",
+                );
             }
         }
     }
@@ -184,7 +198,9 @@ fn per_call_select_overrides_baked_and_leaves_it_intact() {
         AxisSelect::Indices(vec![2]),
         AxisSelect::All,
     ]);
-    let loader = DataSource::new("isrm", "zarr", PBASE).variables(["sr"]).select(baked);
+    let loader = DataSource::new("isrm", "zarr", PBASE)
+        .variables(["sr"])
+        .select(baked);
     let mut provider = Provider::new(loader, Arc::new(cache), None).unwrap();
 
     // No per-call select ⇒ the baked select applies: source [2] -> [200,201,202,203].
@@ -204,8 +220,8 @@ fn per_call_select_overrides_baked_and_leaves_it_intact() {
     assert_eq!(
         peeked["sr"].data,
         ArrayData::F64(vec![
-            2400.0, 2401.0, 2402.0, 2403.0, 200.0, 201.0, 202.0, 203.0, 900.0, 901.0, 902.0,
-            903.0, 600.0, 601.0, 602.0, 603.0,
+            2400.0, 2401.0, 2402.0, 2403.0, 200.0, 201.0, 202.0, 203.0, 900.0, 901.0, 902.0, 903.0,
+            600.0, 601.0, 602.0, 603.0,
         ])
     );
 
@@ -238,8 +254,11 @@ fn supports_selection_and_array_shape_capability_surface() {
     // whole-file (netcdf) reader: it DOES honour a select, at decode time, but it
     // is not store-backed — that pair is how a caller tells "the download shrank"
     // from "only the decode did". Shape is still unknown without a read.
-    let nloader =
-        DataSource::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc");
+    let nloader = DataSource::new(
+        "era5",
+        "netcdf",
+        "https://data.earthsci.dev/era5/2018/11/20181108.nc",
+    );
     let nprovider = Provider::new(nloader, cache.clone(), None).unwrap();
     assert!(nprovider.supports_selection());
     assert!(!nprovider.store_backed());
@@ -304,12 +323,19 @@ fn netcdf_per_call_select_overrides_the_baked_one() {
     );
     let baked = Selection::Orthogonal(vec![
         AxisSelect::All,
-        AxisSelect::Range { start: 1, stop: 3, step: 1 },
+        AxisSelect::Range {
+            start: 1,
+            stop: 3,
+            step: 1,
+        },
         AxisSelect::Indices(vec![0, 2]),
     ]);
-    let loader =
-        DataSource::new("era5", "netcdf", "https://data.earthsci.dev/era5/2018/11/20181108.nc")
-            .select(baked);
+    let loader = DataSource::new(
+        "era5",
+        "netcdf",
+        "https://data.earthsci.dev/era5/2018/11/20181108.nc",
+    )
+    .select(baked);
     let mut provider = Provider::new(loader, cache, None).unwrap();
     assert!(provider.supports_selection() && !provider.store_backed());
 

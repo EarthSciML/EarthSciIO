@@ -52,17 +52,31 @@ function _moves_table(suffix::AbstractString)
     # The sibling checkout, from the repo root and from a git worktree of it
     # (one directory deeper).
     for up in ("..", joinpath("..", ".."))
-        push!(roots, normpath(joinpath(@__DIR__, "..", "..", up, "moves.rs",
-                                       "characterization", "snapshots")))
+        push!(
+            roots, normpath(
+                joinpath(
+                    @__DIR__, "..", "..", up, "moves.rs",
+                    "characterization", "snapshots"
+                )
+            )
+        )
     end
     for root in roots
         isdir(root) || continue
         dirs = isdir(joinpath(root, "tables")) ? [joinpath(root, "tables")] :
-               sort!(String[joinpath(root, d, "tables") for d in readdir(root)
-                            if isdir(joinpath(root, d, "tables"))])
+            sort!(
+                String[
+                    joinpath(root, d, "tables") for d in readdir(root)
+                    if isdir(joinpath(root, d, "tables"))
+                ]
+            )
         for dir in dirs
-            hits = sort!(String[joinpath(dir, f) for f in readdir(dir)
-                                if endswith(f, "__" * suffix * ".parquet")])
+            hits = sort!(
+                String[
+                    joinpath(dir, f) for f in readdir(dir)
+                        if endswith(f, "__" * suffix * ".parquet")
+                ]
+            )
             isempty(hits) || return hits[1]
         end
     end
@@ -77,9 +91,10 @@ end
         # The declared option set IS the extension method's keyword list, so a
         # Provider can reject an unrecognised `reader_kwargs` key at construction.
         @test Set(EarthSciIO.reader_option_keys(ParquetReader())) ==
-              Set([:variables, :float_columns, :null_int, :null_string])
+            Set([:variables, :float_columns, :null_int, :null_string])
         @test_throws ArgumentError EarthSciIO._check_reader_kwargs(
-            ParquetReader(), "parquet", Dict{Symbol,Any}(:numeric_columns => ["x"]))
+            ParquetReader(), "parquet", Dict{Symbol, Any}(:numeric_columns => ["x"])
+        )
     end
 
     # The dtype table WITHOUT the backend: `_parquet_kind` is the core's copy of
@@ -237,8 +252,10 @@ end
         # back as the field's fill_value (an integer sentinel cannot be NaN, so
         # it survives, exactly as a CF integer fill does); a declared string
         # stands in for a null text cell.
-        ds = read_native(ParquetReader(), f; variables = ["i", "i32", "s"],
-                         null_int = -9, null_string = "NA")
+        ds = read_native(
+            ParquetReader(), f; variables = ["i", "i32", "s"],
+            null_int = -9, null_string = "NA"
+        )
         @test ds["i"].data == Int64[1, -9, 3]
         @test ds["i"].attrs["fill_value"] == -9
         @test eltype(ds["i32"].data) == Int32
@@ -248,8 +265,10 @@ end
 
         # A boolean has no such option: a third state is a float64 column.
         err = try
-            read_native(ParquetReader(), f; variables = ["bo"],
-                        null_int = -9, null_string = "NA")
+            read_native(
+                ParquetReader(), f; variables = ["bo"],
+                null_int = -9, null_string = "NA"
+            )
             nothing
         catch e
             sprint(showerror, e)
@@ -260,8 +279,10 @@ end
 
     @testset "float_columns: a nullable integer, and floats stored as TEXT" begin
         f = _pq("nulls")
-        ds = read_native(ParquetReader(), f; variables = ["i", "dtxt"],
-                         float_columns = ["i", "dtxt"])
+        ds = read_native(
+            ParquetReader(), f; variables = ["i", "dtxt"],
+            float_columns = ["i", "dtxt"]
+        )
         # The integer column is float64 now, so its null folds to NaN and no
         # sentinel is reported.
         @test eltype(ds["i"].data) == Float64
@@ -280,15 +301,17 @@ end
 
         # Anything else unparseable is an error naming column, row and text.
         err = try
-            read_native(ParquetReader(), f; variables = ["badtxt"],
-                        float_columns = ["badtxt"])
+            read_native(
+                ParquetReader(), f; variables = ["badtxt"],
+                float_columns = ["badtxt"]
+            )
             nothing
         catch e
             sprint(showerror, e)
         end
         @test err !== nothing
         @test occursin("\"badtxt\"", err) && occursin("row 1", err) &&
-              occursin("not a number", err)
+            occursin("not a number", err)
     end
 
     # The schema lives in the footer, so an empty table is TYPED, not absent.
@@ -311,7 +334,7 @@ end
         @test ds["d09"].data == [9999999.99, -9999999.99, 0.0, -0.01, 0.01]
         @test ds["d12"].data == [9999999999.99, -9999999999.99, 0.0, -0.01, 0.01]
         @test ds["d18"].data ==
-              [999999.999999, -999999.999999, 0.0, -1.0e-6, 1.0e-6]
+            [999999.999999, -999999.999999, 0.0, -1.0e-6, 1.0e-6]
         for n in variable_names(ds)
             @test eltype(ds[n].data) == Float64
         end
@@ -362,9 +385,13 @@ end
             for scale in 0:prec
                 fix = sign_fix(pt(scale), width)
                 @test fix !== nothing
-                for unscaled in unique(Int64[0, 1, -1, top, -top, top - 1,
-                                             -(top - 1), 10^scale, -(10^scale),
-                                             div(top, 3), -div(top, 3)])
+                for unscaled in unique(
+                        Int64[
+                            0, 1, -1, top, -top, top - 1,
+                            -(top - 1), 10^scale, -(10^scale),
+                            div(top, 3), -div(top, 3),
+                        ]
+                    )
                     abs(unscaled) > top && continue   # not a legal cell here
                     stored = unscaled < 0 ? unscaled + wrap : unscaled
                     # A negative's unsigned fold must still fit `Dec64`'s 16
@@ -500,8 +527,10 @@ end
 
             cachedir = joinpath(dir, "cache")
             mkpath(cachedir)
-            provider = const_provider(Cache(LocalStore(cachedir)), "file://" * path;
-                                      format = "parquet", variables = ["keep"])
+            provider = const_provider(
+                Cache(LocalStore(cachedir)), "file://" * path;
+                format = "parquet", variables = ["keep"]
+            )
             nds = with_logger(NullLogger()) do
                 materialize(provider)
             end
@@ -510,9 +539,11 @@ end
 
             # ...and an EMPTY `variables` on the Provider is "every variable",
             # not "no variables" — it used to select nothing at all.
-            all_p = const_provider(Cache(LocalStore(cachedir)),
-                                   "file://" * _pq("empty");
-                                   format = "parquet", variables = String[])
+            all_p = const_provider(
+                Cache(LocalStore(cachedir)),
+                "file://" * _pq("empty");
+                format = "parquet", variables = String[]
+            )
             @test variable_names(materialize(all_p)) == ["code", "id", "val"]
         end
     end
@@ -553,15 +584,17 @@ end
             # Now the way a document actually reads it: three columns of nine,
             # with the decimal-text rate declared.
             want = ["polProcessID", "SCC", "meanBaseRate"]
-            ds = read_native(ParquetReader(), path; variables = want,
-                             float_columns = ["meanBaseRate"])
+            ds = read_native(
+                ParquetReader(), path; variables = want,
+                float_columns = ["meanBaseRate"]
+            )
             @test variable_names(ds) == sort(want)
             @test eltype(ds["meanBaseRate"].data) == Float64
             @test length(ds["SCC"].data) == n          # the projection keeps every row
             @test all(x -> isfinite(x) && x >= 0, ds["meanBaseRate"].data)
             for i in (1, n ÷ 2, n)
                 @test ds["meanBaseRate"].data[i] ==
-                      parse(Float64, strip(whole["meanBaseRate"].data[i]))
+                    parse(Float64, strip(whole["meanBaseRate"].data[i]))
             end
             @test ds["SCC"].data == whole["SCC"].data  # no reordering
         end

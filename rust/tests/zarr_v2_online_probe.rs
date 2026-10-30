@@ -122,7 +122,10 @@ fn array_shape_reads_v2_metadata_online() {
     let loader = DataSource::new("mini", "zarr", base).variables(["field"]);
     let p = Provider::new(loader, online_cache(tmp.path()), None).expect("provider");
 
-    assert_eq!(p.array_shape("field").expect("array_shape"), Some(vec![3, 4]));
+    assert_eq!(
+        p.array_shape("field").expect("array_shape"),
+        Some(vec![3, 4])
+    );
 }
 
 // --------------------------------------------------------------------------- //
