@@ -30,6 +30,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
     include("test_zarr_stream.jl")   # the streaming writer contract (spec/writer.md, RFC U12)
     include("test_provider.jl")      # cadence + the full offline pipeline; reuses helpers
     include("test_esm.jl")           # esm URL templates + mirror failover (spec/esm-sources.md)
+    include("test_calendar.jl")      # calendar cadences + the temporal Provider (spec/esm-sources.md §2)
     # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11)
     include("test_windows.jl")       # `dims` select, sample_at, with_window, multi-window scenario
     include("test_prefetch.jl")      # PrefetchGroup: equivalence + errors scenarios, API, fallback

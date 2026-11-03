@@ -20,8 +20,37 @@ package version is independent of the `.esm` format version.
   esm templates expanded at the same anchor and tried in order after the
   primary URL.
 
+- **feat:** calendar cadences (`spec/esm-sources.md` §2). A source's frequency
+  and file period are `CalendarPeriod`s (whole months plus whole seconds, read
+  from ISO 8601 durations), so `P1M` and `P1Y` anchors fall on calendar months
+  and years. Every anchor is computed from the start, the day clamped to the
+  month's last day. `SourceTemporal` gains `record_anchor`,
+  `next_record_anchor`, `first_record_anchor_from`, `file_anchor`,
+  `next_file_anchor` and `record_in_file`, pinned by the shared
+  `calendar-cadence` scenario (with small synthetic monthly and yearly files in
+  the corpus).
+
+### Rust
+
+- **breaking:** `SourceTemporal.frequency` and `.file_period` are
+  `CalendarPeriod` values instead of `time::Duration`. `SourceTemporal::new`
+  still accepts a `Duration`. Monthly cadences are no longer approximated by a
+  fixed number of seconds. New `SourceTemporal::locate` / `RecordLocation`, and
+  `Error::BadPeriod` (`esm_period_invalid`).
+
+### Python
+
+- **feat:** `SourceTemporal(frequency=…, file_period=…)` also takes a
+  `CalendarPeriod` or an ISO 8601 string; a `timedelta` works as before.
+
 ### Julia
 
+- **feat:** `Provider(cache, url; format, temporal = SourceTemporal(…), window)`
+  builds a time-varying provider from a cadence and a run window, as Python
+  and Rust do, in Unix seconds (UTC). Each tick reads its own record of its own
+  file by the calendar, rather than `mod1(tick, file length)`, which was wrong
+  whenever the ticks did not start at a file's first record. `refresh_times`
+  returns the anchors in the window.
 - **feat:** mirror failover. `fetch_blob(…; mirrors)` tries each mirror after
   the primary URL and caches the blob under the primary's key, and `Provider`
   takes `mirrors`. As in Python and Rust, rung 0 of the `file://` recheck

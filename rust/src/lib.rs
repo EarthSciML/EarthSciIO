@@ -102,6 +102,8 @@ compile_error!(
 pub mod auth;
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod calendar;
 mod clock;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod datadir;
@@ -150,6 +152,8 @@ pub use format::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 #[cfg(not(target_arch = "wasm32"))]
+pub use calendar::CalendarPeriod;
+#[cfg(not(target_arch = "wasm32"))]
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use esm::{esm_template_names, expand_esm_template, EsmTemplateError};
@@ -174,7 +178,9 @@ pub use offline::{is_offline, OFFLINE_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use prefetch::{EpochSample, Order, PrefetchBuilder, PrefetchGroup, PrefetchStats, Sample};
 #[cfg(not(target_arch = "wasm32"))]
-pub use provider::{DataSource, Provider, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV};
+pub use provider::{
+    DataSource, Provider, RecordLocation, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use s3_config::{
     bucket_options_from_env, options_for_bucket, options_for_url, parse_bucket_options,

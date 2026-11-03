@@ -66,6 +66,14 @@ A data provider over the shared cache.
   * `reader_kwargs` — extra keywords forwarded to [`read_native`] (e.g. the CSV
     reader's `numeric_columns`).
   * `source_loader` / `auth_realm` — recorded in the cache manifest on fetch.
+  * `temporal`, `window` — a [`SourceTemporal`](@ref) and a run window
+    `(start, stop)` in UTC, as in the Python and Rust tracks (spec/esm-sources.md
+    §2.4), in place of `cadence`/`times`/`time_dim`. The ticks are then Unix
+    seconds: the record anchors from the one at or before the window start to
+    the last before its end, each read from its own record of its own file
+    (calendar months and years exact). `url` is a `String`, a function of the
+    file anchor in Unix seconds, or an [`EsmTemplate`](@ref) expanded there.
+    [`refresh_times`] returns the anchors inside the window.
   * `mirrors` — fallback URLs tried in order when the primary fetch fails; the
     blob is still cached under the primary URL's key. With an
     [`EsmTemplate`](@ref) `url`, leave this empty and give the mirrors to the
@@ -84,6 +92,48 @@ struct Provider
     auth_realm::Union{Nothing, String}
     records_per_sample::Union{Nothing, Int}
     mirrors_for::Function
+    plan::Any                     # `nothing`, or the `_TemporalPlan` of a `temporal` provider
+end
+
+# What a provider built from a `SourceTemporal` knows about its ticks
+# (spec/esm-sources.md §2.4): the 0-based record of each tick in its own file,
+# and the anchors `refresh_times` reports (those inside the window).
+struct _TemporalPlan
+    temporal::SourceTemporal
+    records::Vector{Int}
+    refresh::Vector{Float64}
+end
+
+# The ticks of a `temporal` provider over `window` (UTC; `DateTime`s or Unix
+# seconds): from the anchor at or before the window start to the last before
+# its end, plus — for a two-record bracket — the successor of that last one when
+# the data has it, so the last tick in the window brackets as Python and Rust do.
+function _temporal_plan(temporal::SourceTemporal, window)
+    lo = window === nothing ? temporal.start : max(_utc(window[1]), temporal.start)
+    hi = window === nothing ? temporal.stop : _utc(window[2])
+    hi === nothing && throw(
+        ArgumentError(
+            "a temporal provider needs a bounded window: pass window = (start, stop) " *
+                "or give the SourceTemporal a stop"
+        )
+    )
+    temporal.stop === nothing || (hi = min(hi, temporal.stop))
+    ticks = DateTime[]
+    a = record_anchor(temporal, lo)
+    a < temporal.start && (a = first_record_anchor_from(temporal, temporal.start))
+    while a < hi
+        push!(ticks, a)
+        a = next_record_anchor(temporal, a)
+    end
+    isempty(ticks) && throw(
+        ArgumentError("the window [$lo, $hi) holds no record of the source")
+    )
+    if temporal.records_per_sample == 2 && (temporal.stop === nothing || a < temporal.stop)
+        push!(ticks, a)
+    end
+    records = Int[record_in_file(temporal, t, file_anchor(temporal, t)) for t in ticks]
+    refresh = Float64[_unix(t) for t in ticks if lo <= t < hi]
+    return _TemporalPlan(temporal, records, refresh), Float64[_unix(t) for t in ticks]
 end
 
 function Provider(
@@ -92,8 +142,33 @@ function Provider(
         time_dim = nothing, variables = nothing,
         reader_kwargs = NamedTuple(),
         source_loader = nothing, auth_realm = nothing,
-        records_per_sample = nothing, mirrors = String[]
+        records_per_sample = nothing, mirrors = String[],
+        temporal::Union{Nothing, SourceTemporal} = nothing, window = nothing
     )
+    plan = nothing
+    file_url = url
+    if temporal !== nothing
+        (isempty(times) && time_dim === nothing && cadence == CONST) || throw(
+            ArgumentError(
+                "a `temporal` provider computes its own cadence: give no `cadence`, " *
+                    "`times` or `time_dim`"
+            )
+        )
+        plan, times = _temporal_plan(temporal, window)
+        cadence = DISCRETE
+        time_dim = temporal.time_dim
+        records_per_sample === nothing && (records_per_sample = temporal.records_per_sample)
+        # The URL names a FILE: expand it at the tick's file anchor, in Unix seconds.
+        file_url = if url isa AbstractString
+            String(url)
+        else
+            let f = url
+                t -> f(_unix(file_anchor(temporal, t)))
+            end
+        end
+    elseif window !== nothing
+        throw(ArgumentError("`window` applies to a `temporal` provider only"))
+    end
     haskey(FORMAT_REGISTRY, format) || throw(
         ArgumentError(
             "format '$format' is not registered in the format registry; " *
@@ -154,11 +229,11 @@ function Provider(
             )
         )
     end
-    url_for = url isa AbstractString ? (
-            let u = String(url)
+    url_for = file_url isa AbstractString ? (
+            let u = String(file_url)
                 _ -> u
         end
-        ) : url
+        ) : file_url
     literal_mirrors = String[String(m) for m in mirrors]
     if url isa EsmTemplate
         isempty(literal_mirrors) || throw(
@@ -167,7 +242,8 @@ function Provider(
                     "a separate `mirrors` list would not be expanded at the anchor"
             )
         )
-        mirrors_for = t -> esm_mirrors(url, t)
+        mirrors_for = plan === nothing ? (t -> esm_mirrors(url, t)) :
+            (t -> esm_mirrors(url, _unix(file_anchor(temporal, t))))
     else
         mirrors_for = _ -> literal_mirrors
     end
@@ -179,7 +255,7 @@ function Provider(
         source_loader === nothing ? nothing : String(source_loader),
         auth_realm === nothing ? nothing : String(auth_realm),
         records_per_sample === nothing ? nothing : Int(records_per_sample),
-        mirrors_for
+        mirrors_for, plan
     )
 end
 
@@ -228,7 +304,7 @@ The discrete time points at which the data changes and the solver must
 [`refresh`]. Empty for a [`CONST`] provider; the sorted cadence grid for a
 [`DISCRETE`] one. The library exposes these; the user wires them into the
 solver (e.g. `PresetTimeCallback(refresh_times(p), …)`)."""
-refresh_times(p::Provider) = copy(p.times)
+refresh_times(p::Provider) = p.plan === nothing ? copy(p.times) : copy(p.plan.refresh)
 
 """True if `p`'s data is time-invariant ([`CONST`])."""
 is_const(p::Provider) = p.cadence == CONST
@@ -390,6 +466,11 @@ end
 # reports the real out-of-range error rather than a silently wrong record).
 _file_record(tick::Integer, len::Integer) = len <= 0 ? Int(tick) : mod1(Int(tick), Int(len))
 
+# The 1-based record of tick `tick` in its file: from the calendar for a
+# `temporal` provider (spec/esm-sources.md §2.3), else `_file_record`.
+_tick_record(p::Provider, tick::Integer, len::Integer) =
+    p.plan === nothing ? _file_record(tick, len) : p.plan.records[tick] + 1
+
 # --- record pushdown --------------------------------------------------------
 # Can this provider hand its record CHOICE to the reader, instead of decoding the
 # whole cadence axis and slicing afterwards? Three things must hold: the reader
@@ -430,7 +511,7 @@ function _load_ticks(p::Provider, ticks::AbstractVector{<:Integer}; select = not
     if !_records_pushdown(p)
         nds = _load(p, t_url; select = select)
         len = _time_len(nds, dim)
-        return (nds, Int[_file_record(tk, len) for tk in ticks])
+        return (nds, Int[_tick_record(p, tk, len) for tk in ticks])
     end
     # The record a tick names is `mod1(tick, len)`, so the pushdown needs the
     # file's length along `dim` — which only the decode's own open knows. Rather
@@ -441,7 +522,7 @@ function _load_ticks(p::Provider, ticks::AbstractVector{<:Integer}; select = not
     fired = Ref(false)
     resolve = function (len::Integer)
         fired[] = true
-        return Int[_file_record(tk, Int(len)) - 1 for tk in ticks]   # 0-based
+        return Int[_tick_record(p, tk, Int(len)) - 1 for tk in ticks]   # 0-based
     end
     nds = _load(
         p, t_url; select = select,
@@ -451,7 +532,7 @@ function _load_ticks(p::Provider, ticks::AbstractVector{<:Integer}; select = not
     # `len <= 0` case of `_file_record`, and it must behave exactly as it always
     # did: nothing was narrowed, so the tick passes through to the slice.
     fired[] && return (nds, collect(1:length(ticks)))
-    return (nds, Int[_file_record(tk, _time_len(nds, dim)) for tk in ticks])
+    return (nds, Int[_tick_record(p, tk, _time_len(nds, dim)) for tk in ticks])
 end
 
 # Slice `dim` out of every variable that carries it, at record `idx`; drop the
@@ -605,7 +686,9 @@ function _bracket(p::Provider, t::Real; select = nothing)
     # to the floor) or in the next file, read below.
     ticks0 = same_file ? Int[tick, tick + 1] : Int[tick]
     nds0, pos0 = _load_ticks(p, ticks0; select = select)
-    scale = _cf_time_scale(_time_units(nds0, dim))
+    # A `temporal` provider's ticks ARE Unix seconds; a caller-made grid is in
+    # the file's own time unit, converted through its CF units.
+    scale = p.plan === nothing ? _cf_time_scale(_time_units(nds0, dim)) : (0.0, 1.0)
     t0 = _raw_to_epoch(p.times[tick], scale)
 
     if last_tick                             # last tick / past end → degenerate

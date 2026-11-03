@@ -190,7 +190,7 @@ _with_reader_kwargs(p::Provider, kw::Dict{Symbol, Any}) =
     Provider(
     p.cache, p.format, p.cadence, p.times, p.url_for, p.time_dim,
     p.variables, kw, p.source_loader, p.auth_realm, p.records_per_sample,
-    p.mirrors_for
+    p.mirrors_for, p.plan
 )
 
 function _with_select(p::Provider, sel::Dict{String, Any})

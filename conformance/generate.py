@@ -2203,6 +2203,351 @@ def emit_scenarios(mixed_blob_record):
     return blobs
 
 
+# --------------------------------------------------------------------------- #
+# The calendar-cadence scenario (spec/esm-sources.md §2). Anchors are computed
+# here by brute force from the §2.2 rule, independently of every track's
+# provider code: anchor(k) = add_months(start, k*months) + k*seconds, the day
+# clamped to the month's last day, each anchor from `start`.
+CALENDAR_BASE = "https://data.earthsci.dev/calendar"
+
+
+def _cal_dt(iso):
+    import datetime as _dt
+
+    return _dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _cal_s(d):
+    return int(d.timestamp())
+
+
+def _cal_iso(d):
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _cal_add_months(d, n):
+    import calendar as _cal
+
+    m0 = d.month - 1 + n
+    y, m = d.year + m0 // 12, m0 % 12 + 1
+    day = min(d.day, _cal.monthrange(y, m)[1])
+    return d.replace(year=y, month=m, day=day)
+
+
+def _cal_anchor(start, months, seconds, k):
+    import datetime as _dt
+
+    return _cal_add_months(start, k * months) + _dt.timedelta(seconds=k * seconds)
+
+
+def _cal_floor(start, months, seconds, t):
+    # Walk out from a lower bound: brute force, independent of any track.
+    k = -1
+    while _cal_anchor(start, months, seconds, k) > t:
+        k -= 50
+    while _cal_anchor(start, months, seconds, k + 1) <= t:
+        k += 1
+    return k
+
+
+def _cal_ceil(start, months, seconds, t):
+    k = _cal_floor(start, months, seconds, t)
+    return k if _cal_anchor(start, months, seconds, k) == t else k + 1
+
+
+CALENDAR_PERIODS = [
+    ("P1M", 1, 0),
+    ("P1Y", 12, 0),
+    ("P2Y3M", 27, 0),
+    ("PT3H", 0, 10800),
+    ("PT1H", 0, 3600),
+    ("P1D", 0, 86400),
+    ("P2W", 0, 1209600),
+    ("PT90M", 0, 5400),
+    ("P1Y2M3DT4H5M6S", 14, 3 * 86400 + 4 * 3600 + 5 * 60 + 6),
+    ("P0Y1M", 1, 0),
+]
+CALENDAR_BAD_PERIODS = [
+    "P0D",
+    "PT0S",
+    "PT1.5H",
+    "1M",
+    "P",
+    "PT",
+    "P1H",
+    "P1M1Y",
+    "-P1M",
+    "P1DT",
+    "PT1D",
+    "",
+]
+
+CALENDAR_CADENCES = [
+    # (id, start, frequency, file_period, lower, upper, probes, note)
+    (
+        "nei-monthly",
+        "2016-01-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        "2016-02-10T00:00:00Z",
+        "2016-06-01T00:00:00Z",
+        [
+            "2016-02-10T00:00:00Z",
+            "2016-02-29T23:00:00Z",
+            "2016-03-01T00:00:00Z",
+            "2016-05-31T23:59:59Z",
+        ],
+        "NEI 2016 monthly: one record per monthly file",
+    ),
+    (
+        "ceds-yearly-files",
+        "2015-01-01T00:00:00Z",
+        "P1M",
+        "P1Y",
+        "2015-11-01T00:00:00Z",
+        "2016-03-01T00:00:00Z",
+        ["2015-12-15T00:00:00Z", "2016-01-01T00:00:00Z", "2016-02-29T12:00:00Z"],
+        "CEDS-like: twelve monthly records per yearly file",
+    ),
+    (
+        "era5-hourly-in-monthly-files",
+        "2016-01-01T00:00:00Z",
+        "PT1H",
+        "P1M",
+        "2016-02-28T22:00:00Z",
+        "2016-03-01T02:00:00Z",
+        ["2016-02-29T23:30:00Z", "2016-03-01T00:00:00Z"],
+        "ERA5-like: hourly records in monthly files; the record is the hour of the month",
+    ),
+    (
+        "month-end-clamp",
+        "2016-01-31T00:00:00Z",
+        "P1M",
+        "P1M",
+        "2016-01-31T00:00:00Z",
+        "2016-06-01T00:00:00Z",
+        ["2016-02-29T00:00:00Z", "2016-03-30T00:00:00Z"],
+        "each anchor is computed from start, so 31 January visits 29 February and then 31 March",
+    ),
+    (
+        "geosfp-a1-centered",
+        "2013-01-01T00:30:00Z",
+        "PT1H",
+        "P1D",
+        "2016-05-01T22:00:00Z",
+        "2016-05-02T02:00:00Z",
+        ["2016-05-01T23:59:00Z", "2016-05-02T00:30:00Z", "2016-05-02T00:10:00Z"],
+        "GEOS-FP A1: hourly records centered on the half hour in daily files",
+    ),
+    (
+        "geosfp-a3-fixed",
+        "2013-01-01T01:30:00Z",
+        "PT3H",
+        "P1D",
+        "2016-05-01T20:00:00Z",
+        "2016-05-02T05:00:00Z",
+        ["2016-05-01T23:00:00Z", "2016-05-02T01:30:00Z"],
+        "a fixed cadence gives the anchors it always gave",
+    ),
+]
+
+
+def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note):
+    periods = {p: (m, s) for p, m, s in CALENDAR_PERIODS}
+    st = _cal_dt(start)
+    fm, fs = periods[freq]
+    pm, ps = periods[fp]
+    lo, hi = _cal_dt(lower), _cal_dt(upper)
+    times = []
+    k = _cal_ceil(st, fm, fs, lo)
+    while _cal_anchor(st, fm, fs, k) < hi:
+        times.append(k)
+        k += 1
+
+    def at(t):
+        kf = _cal_floor(st, fm, fs, t)
+        a = _cal_anchor(st, fm, fs, kf)
+        kF = _cal_floor(st, pm, ps, a)
+        fa = _cal_anchor(st, pm, ps, kF)
+        rec = kf - _cal_ceil(st, fm, fs, fa)
+        nxt = _cal_anchor(st, fm, fs, kf + 1)
+        return {
+            "t": _cal_iso(t),
+            "t_s": _cal_s(t),
+            "record_anchor_s": _cal_s(a),
+            "file_anchor": _cal_iso(fa),
+            "file_anchor_s": _cal_s(fa),
+            "record": rec,
+            "next_record_anchor_s": _cal_s(nxt),
+        }
+
+    return {
+        "id": cid,
+        "note": note,
+        "start": start,
+        "start_s": _cal_s(st),
+        "frequency": freq,
+        "file_period": fp,
+        "window": [lower, upper],
+        "window_s": [_cal_s(lo), _cal_s(hi)],
+        "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, k)) for k in times],
+        "at": [at(_cal_anchor(st, fm, fs, k)) for k in times] + [at(_cal_dt(p)) for p in probes],
+    }
+
+
+def build_calendar_nei_file(month):
+    """An IOAPI-shaped monthly file: one record on `TSTEP`, no time coordinate.
+    Cell (r, c) of month m is m*100 + r*10 + c."""
+    from netCDF4 import Dataset
+
+    tmp = CORPUS / f".tmp_cal_nei_{month}.nc"
+    ds = Dataset(tmp, "w", format="NETCDF3_CLASSIC")
+    ds.createDimension("TSTEP", None)
+    ds.createDimension("ROW", 2)
+    ds.createDimension("COL", 3)
+    v = ds.createVariable("NOX", "f4", ("TSTEP", "ROW", "COL"))
+    v.units = "moles/s"
+    v[:] = np.fromfunction(lambda t, r, c: month * 100 + r * 10 + c, (1, 2, 3)).astype("f4")
+    ds.close()
+    data = tmp.read_bytes()
+    tmp.unlink()
+    return data
+
+
+def build_calendar_ceds_file(year):
+    """A CEDS-shaped yearly file: twelve monthly records on `time` with a CF
+    time axis. Record m (0-based) of year y is (y - 2015) * 12 + m everywhere."""
+    import datetime as _dt
+
+    from netCDF4 import Dataset
+
+    tmp = CORPUS / f".tmp_cal_ceds_{year}.nc"
+    ds = Dataset(tmp, "w", format="NETCDF3_CLASSIC")
+    ds.createDimension("time", None)
+    ds.createDimension("lat", 2)
+    v = ds.createVariable("time", "f8", ("time",))
+    v.units, v.calendar = "days since 2015-01-01 00:00:00", "standard"
+    base = _dt.datetime(2015, 1, 1)
+    v[:] = np.array([(_dt.datetime(year, m, 1) - base).days for m in range(1, 13)], dtype="f8")
+    v = ds.createVariable("lat", "f8", ("lat",))
+    v[:] = np.array([10.0, 20.0])
+    v = ds.createVariable("SO2", "f8", ("time", "lat"))
+    v.units = "kg m-2 s-1"
+    v[:] = np.array([[(year - 2015) * 12 + m] * 2 for m in range(12)], dtype="f8")
+    ds.close()
+    data = tmp.read_bytes()
+    tmp.unlink()
+    return data
+
+
+def emit_calendar_scenario():
+    """Write the calendar-cadence blobs and scenario (spec/esm-sources.md §2)."""
+    import datetime as _dt
+
+    sdir = CORPUS / "scenarios"
+    sdir.mkdir(parents=True, exist_ok=True)
+    blobs = []
+    nei_template = CALENDAR_BASE + "/nei2016_{sector}_month_{date:%m}.ncf"
+    for m in (1, 2, 3):
+        url = f"{CALENDAR_BASE}/nei2016_agr_month_{m:02d}.ncf"
+        blobs.append(emit_scenario_blob(url, build_calendar_nei_file(m), "nei2016", ext="ncf"))
+    ceds_template = CALENDAR_BASE + "/ceds_so2_{date:%Y}.nc"
+    for y in (2015, 2016):
+        url = f"{CALENDAR_BASE}/ceds_so2_{y}.nc"
+        blobs.append(emit_scenario_blob(url, build_calendar_ceds_file(y), "ceds"))
+
+    def nei_grid(m):
+        return [[float(m * 100 + r * 10 + c) for c in range(3)] for r in range(2)]
+
+    def s(y, m, d=1):
+        return int(_dt.datetime(y, m, d, tzinfo=_dt.timezone.utc).timestamp())
+
+    providers = {
+        "nei_monthly": {
+            "format": "netcdf",
+            "url_template": nei_template,
+            "substitutions": {"sector": "agr"},
+            "variables": ["NOX"],
+            "start": "2016-01-01T00:00:00Z",
+            "start_s": s(2016, 1),
+            "end": "2016-04-01T00:00:00Z",
+            "end_s": s(2016, 4),
+            "frequency": "P1M",
+            "file_period": "P1M",
+            "time_dim": "TSTEP",
+            "window_s": [s(2016, 1), s(2016, 4)],
+            "refresh_times_s": [s(2016, 1), s(2016, 2), s(2016, 3)],
+            "samples": [
+                {"t_s": s(2016, 1, 20), "records_per_sample": 1, "NOX": nei_grid(1)},
+                {"t_s": s(2016, 2, 29), "records_per_sample": 1, "NOX": nei_grid(2)},
+                {"t_s": s(2016, 3, 1), "records_per_sample": 1, "NOX": nei_grid(3)},
+                {
+                    "t_s": s(2016, 2, 15),
+                    "records_per_sample": 2,
+                    "NOX": [nei_grid(2), nei_grid(3)],
+                    "time_s": [s(2016, 2), s(2016, 3)],
+                },
+                {
+                    "t_s": s(2016, 3, 15),
+                    "records_per_sample": 2,
+                    "NOX": [nei_grid(3), nei_grid(3)],
+                    "time_s": [s(2016, 3), s(2016, 3)],
+                },
+            ],
+        },
+        "ceds_yearly_files": {
+            "format": "netcdf",
+            "url_template": ceds_template,
+            "substitutions": {},
+            "variables": ["SO2"],
+            "start": "2015-01-01T00:00:00Z",
+            "start_s": s(2015, 1),
+            "end": "2017-01-01T00:00:00Z",
+            "end_s": s(2017, 1),
+            "frequency": "P1M",
+            "file_period": "P1Y",
+            "time_dim": "time",
+            "window_s": [s(2015, 11), s(2016, 3)],
+            "refresh_times_s": [s(2015, 11), s(2015, 12), s(2016, 1), s(2016, 2)],
+            "samples": [
+                {"t_s": s(2015, 11, 3), "records_per_sample": 1, "SO2": [10.0, 10.0]},
+                {"t_s": s(2016, 2, 29), "records_per_sample": 1, "SO2": [13.0, 13.0]},
+                {
+                    "t_s": s(2015, 12, 15),
+                    "records_per_sample": 2,
+                    "SO2": [[11.0, 11.0], [12.0, 12.0]],
+                    "time_s": [s(2015, 12), s(2016, 1)],
+                },
+            ],
+        },
+    }
+
+    write_json(
+        sdir / "calendar-cadence.json",
+        {
+            "schema": "earthsciio/scenario/v1",
+            "id": "calendar-cadence",
+            "description": (
+                "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO "
+                "duration parses to `months` and `seconds`; each of `bad_periods` is an "
+                "esm_period_invalid error. `cadences`: for start/frequency/file_period, "
+                "refresh_times over the half-open window are `refresh_times_s`, and at "
+                "each `at[].t` the record anchor, the file anchor, the 0-based record in "
+                "its file and the next record's anchor are as given. All times are UTC; "
+                "`*_s` are Unix seconds. `providers`: a provider over the committed blobs "
+                "(offline, the corpus cache), its URL an esm template, returns `samples` "
+                "at `t_s` (array values in file dimension order; with records_per_sample "
+                "2 the time dimension comes first and its coordinate is `time_s`)."
+            ),
+            "blobs": blobs,
+            "periods": [{"iso": p, "months": m, "seconds": sec} for p, m, sec in CALENDAR_PERIODS],
+            "bad_periods": CALENDAR_BAD_PERIODS,
+            "cadences": [_calendar_cadence_case(*c) for c in CALENDAR_CADENCES],
+            "providers": providers,
+        },
+    )
+
+
 def emit_zarr_case(
     case_id, *, loader, base_url, objects, variables, expected, decode, select, notes
 ):
@@ -2798,6 +3143,7 @@ def main() -> None:
         )
     )
 
+    emit_calendar_scenario()
     emit_scenarios(
         {
             "url": GEOSFP_MIXED_URL,
