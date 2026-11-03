@@ -1,0 +1,491 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "json-reader",
+  "description": "The json points reader (spec/registries.md §2, 'JSON points'): each case is a JSON document as text, the reader options and `variables` to decode it with, and either the expected fields (NaN written as null) or the error code the decode must raise. Run by the Python, Julia and Rust test suites. Written by hand (the generator is conformance/gen_json_reader_cases.py); no reader computed these values.",
+  "cases": [
+    {
+      "id": "root-array",
+      "document": "[{\"a\": 1, \"b\": \"x\", \"c\": true}, {\"a\": 2.5, \"b\": \"y\", \"c\": false}]",
+      "expected": {
+        "length": 2,
+        "fields": {
+          "a": {
+            "dtype": "float64",
+            "data": [
+              1.0,
+              2.5
+            ]
+          },
+          "b": {
+            "dtype": "string",
+            "data": [
+              "x",
+              "y"
+            ]
+          },
+          "c": {
+            "dtype": "bool",
+            "data": [
+              true,
+              false
+            ]
+          }
+        }
+      },
+      "note": "The root is the records array; one field per kind."
+    },
+    {
+      "id": "station-discovery",
+      "document": "{\"meta\": {\"name\": \"openaq-api\", \"found\": 2}, \"results\": [{\"id\": 101, \"name\": \"Site A\", \"locality\": null, \"isMobile\": false, \"coordinates\": {\"latitude\": 39.76, \"longitude\": -121.62}, \"sensors\": [{\"id\": 1, \"parameter\": \"pm25\"}]}, {\"id\": 102, \"name\": \"Site B\", \"locality\": \"Chico\", \"isMobile\": false, \"coordinates\": {\"latitude\": 39.5, \"longitude\": -121.5}, \"sensors\": []}]}",
+      "options": {
+        "records_path": [
+          "results"
+        ]
+      },
+      "variables": [
+        "id",
+        "name",
+        "locality",
+        "isMobile",
+        "coordinates.latitude",
+        "coordinates.longitude"
+      ],
+      "expected": {
+        "length": 2,
+        "fields": {
+          "id": {
+            "dtype": "float64",
+            "data": [
+              101.0,
+              102.0
+            ]
+          },
+          "name": {
+            "dtype": "string",
+            "data": [
+              "Site A",
+              "Site B"
+            ]
+          },
+          "locality": {
+            "dtype": "string",
+            "data": [
+              "",
+              "Chico"
+            ]
+          },
+          "isMobile": {
+            "dtype": "bool",
+            "data": [
+              false,
+              false
+            ]
+          },
+          "coordinates.latitude": {
+            "dtype": "float64",
+            "data": [
+              39.76,
+              39.5
+            ]
+          },
+          "coordinates.longitude": {
+            "dtype": "float64",
+            "data": [
+              -121.62,
+              -121.5
+            ]
+          }
+        }
+      },
+      "note": "records_path reaches the array; nested objects flatten with '.'; the array-valued `sensors` is not decoded because `variables` leaves it out."
+    },
+    {
+      "id": "deep-records-path",
+      "document": "{\"data\": {\"items\": [{\"v\": 1}, {\"v\": 2}]}}",
+      "options": {
+        "records_path": [
+          "data",
+          "items"
+        ]
+      },
+      "expected": {
+        "length": 2,
+        "fields": {
+          "v": {
+            "dtype": "float64",
+            "data": [
+              1.0,
+              2.0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-and-null",
+      "document": "[{\"a\": 1, \"s\": \"p\"}, {\"s\": null}, {\"a\": null}]",
+      "expected": {
+        "length": 3,
+        "fields": {
+          "a": {
+            "dtype": "float64",
+            "data": [
+              1.0,
+              null,
+              null
+            ]
+          },
+          "s": {
+            "dtype": "string",
+            "data": [
+              "p",
+              "",
+              ""
+            ]
+          }
+        }
+      },
+      "note": "An absent member is null; null is NaN in a number field and \"\" in a string field."
+    },
+    {
+      "id": "all-null",
+      "document": "[{\"z\": null}, {\"z\": null}]",
+      "expected": {
+        "length": 2,
+        "fields": {
+          "z": {
+            "dtype": "float64",
+            "data": [
+              null,
+              null
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "numeric-columns",
+      "document": "[{\"v\": \"12.5\", \"w\": 1}, {\"v\": \" 3e2 \"}, {\"v\": 7}, {\"v\": null}, {\"v\": \"-.5\"}]",
+      "options": {
+        "numeric_columns": [
+          "v",
+          "not_a_field"
+        ]
+      },
+      "expected": {
+        "length": 5,
+        "fields": {
+          "v": {
+            "dtype": "float64",
+            "data": [
+              12.5,
+              300.0,
+              7.0,
+              null,
+              -0.5
+            ]
+          },
+          "w": {
+            "dtype": "float64",
+            "data": [
+              1.0,
+              null,
+              null,
+              null,
+              null
+            ]
+          }
+        }
+      },
+      "note": "A numeric_columns string cell is parsed after trimming ASCII whitespace; a name no record has is ignored, as in csv."
+    },
+    {
+      "id": "integers-round-to-nearest",
+      "document": "[{\"n\": 9007199254740993}, {\"n\": 123456789012345678901234567890}, {\"n\": -0}, {\"n\": 1e-400}]",
+      "expected": {
+        "length": 4,
+        "fields": {
+          "n": {
+            "dtype": "float64",
+            "data": [
+              9007199254740992.0,
+              1.2345678901234568e+29,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "note": "2^53+1 rounds to 2^53 (ties to even); integers past int64 round too; 1e-400 underflows to 0."
+    },
+    {
+      "id": "empty-array",
+      "document": "[]",
+      "expected": {
+        "length": 0,
+        "fields": {}
+      }
+    },
+    {
+      "id": "empty-object-member",
+      "document": "[{\"a\": {}, \"b\": 1}]",
+      "expected": {
+        "length": 1,
+        "fields": {
+          "b": {
+            "dtype": "float64",
+            "data": [
+              1.0
+            ]
+          }
+        }
+      },
+      "note": "An empty nested object contributes no field."
+    },
+    {
+      "id": "duplicate-member-last-wins",
+      "document": "[{\"a\": 1, \"a\": 2}]",
+      "expected": {
+        "length": 1,
+        "fields": {
+          "a": {
+            "dtype": "float64",
+            "data": [
+              2.0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unicode",
+      "document": "[{\"s\": \"caf\\u00e9 \\ud83d\\ude00\", \"t\": \"über\"}]",
+      "expected": {
+        "length": 1,
+        "fields": {
+          "s": {
+            "dtype": "string",
+            "data": [
+              "café 😀"
+            ]
+          },
+          "t": {
+            "dtype": "string",
+            "data": [
+              "über"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "variables-projection",
+      "document": "[{\"a\": 1, \"b\": [1, 2], \"c\": \"x\"}]",
+      "variables": [
+        "c"
+      ],
+      "expected": {
+        "length": 1,
+        "fields": {
+          "c": {
+            "dtype": "string",
+            "data": [
+              "x"
+            ]
+          }
+        }
+      },
+      "note": "Fields left out of `variables` are not decoded, so `b` may be an array."
+    },
+    {
+      "id": "parse-truncated",
+      "document": "[{\"a\": 1}",
+      "error": "json_parse"
+    },
+    {
+      "id": "parse-nan-literal",
+      "document": "[{\"a\": NaN}]",
+      "error": "json_parse",
+      "note": "NaN is not a JSON literal."
+    },
+    {
+      "id": "parse-infinity-literal",
+      "document": "[{\"a\": -Infinity}]",
+      "error": "json_parse"
+    },
+    {
+      "id": "parse-overflow",
+      "document": "[{\"a\": 1e400}]",
+      "error": "json_parse",
+      "note": "A number past the float64 range is an error, not infinity."
+    },
+    {
+      "id": "parse-trailing",
+      "document": "[] x",
+      "error": "json_parse"
+    },
+    {
+      "id": "parse-trailing-comma",
+      "document": "[{\"a\": 1},]",
+      "error": "json_parse"
+    },
+    {
+      "id": "root-object-without-path",
+      "document": "{\"results\": []}",
+      "error": "json_records_path"
+    },
+    {
+      "id": "records-path-missing-key",
+      "document": "{\"results\": []}",
+      "options": {
+        "records_path": [
+          "data"
+        ]
+      },
+      "error": "json_records_path"
+    },
+    {
+      "id": "records-path-through-array",
+      "document": "{\"results\": [1]}",
+      "options": {
+        "records_path": [
+          "results",
+          "x"
+        ]
+      },
+      "error": "json_records_path"
+    },
+    {
+      "id": "records-path-not-array",
+      "document": "{\"results\": {\"a\": 1}}",
+      "options": {
+        "records_path": [
+          "results"
+        ]
+      },
+      "error": "json_records_path"
+    },
+    {
+      "id": "record-not-object",
+      "document": "[{\"a\": 1}, 2]",
+      "error": "json_record_not_object"
+    },
+    {
+      "id": "nested-array",
+      "document": "[{\"a\": [1, 2]}]",
+      "error": "json_nested_array"
+    },
+    {
+      "id": "mixed-number-string",
+      "document": "[{\"a\": 1}, {\"a\": \"x\"}]",
+      "error": "json_mixed_types"
+    },
+    {
+      "id": "mixed-number-bool",
+      "document": "[{\"a\": 1}, {\"a\": true}]",
+      "error": "json_mixed_types"
+    },
+    {
+      "id": "null-bool",
+      "document": "[{\"a\": true}, {\"a\": null}]",
+      "error": "json_null_bool"
+    },
+    {
+      "id": "absent-bool",
+      "document": "[{\"a\": true}, {}]",
+      "error": "json_null_bool"
+    },
+    {
+      "id": "leaf-and-object",
+      "document": "[{\"a\": 1}, {\"a\": {\"b\": 2}}]",
+      "error": "json_field_conflict"
+    },
+    {
+      "id": "flatten-collision",
+      "document": "[{\"a.b\": 1, \"a\": {\"b\": 2}}]",
+      "error": "json_field_conflict"
+    },
+    {
+      "id": "numeric-text-word",
+      "document": "[{\"v\": \"abc\"}]",
+      "options": {
+        "numeric_columns": [
+          "v"
+        ]
+      },
+      "error": "json_numeric_text"
+    },
+    {
+      "id": "numeric-text-blank",
+      "document": "[{\"v\": \"\"}]",
+      "options": {
+        "numeric_columns": [
+          "v"
+        ]
+      },
+      "error": "json_numeric_text"
+    },
+    {
+      "id": "numeric-text-nan",
+      "document": "[{\"v\": \"nan\"}]",
+      "options": {
+        "numeric_columns": [
+          "v"
+        ]
+      },
+      "error": "json_numeric_text"
+    },
+    {
+      "id": "numeric-text-underscore",
+      "document": "[{\"v\": \"1_000\"}]",
+      "options": {
+        "numeric_columns": [
+          "v"
+        ]
+      },
+      "error": "json_numeric_text"
+    },
+    {
+      "id": "numeric-bool",
+      "document": "[{\"v\": true}]",
+      "options": {
+        "numeric_columns": [
+          "v"
+        ]
+      },
+      "error": "json_numeric_text"
+    },
+    {
+      "id": "variables-missing",
+      "document": "[{\"a\": 1}]",
+      "variables": [
+        "b"
+      ],
+      "error": "json_variables_missing"
+    },
+    {
+      "id": "variables-on-empty",
+      "document": "[]",
+      "variables": [
+        "a"
+      ],
+      "error": "json_variables_missing"
+    },
+    {
+      "id": "records-path-not-list",
+      "document": "{\"results\": []}",
+      "options": {
+        "records_path": "results"
+      },
+      "error": "json_option"
+    },
+    {
+      "id": "numeric-columns-not-list",
+      "document": "[{\"v\": 1}]",
+      "options": {
+        "numeric_columns": "v"
+      },
+      "error": "json_option"
+    }
+  ]
+}

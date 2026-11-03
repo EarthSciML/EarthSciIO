@@ -160,6 +160,7 @@ the oracle [`verify.py`](verify.py).
 | `station-labels-text` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `station-labels-window` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `openaq-points-slice` | csv | ✅ | ✅ | ✅ (three-way) |
+| `openaq-stations-json` | json | ✅ | ✅ | ✅ (three-way) |
 | `ff10-point-slice` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `ff10-zip-egu-glob` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
@@ -172,6 +173,14 @@ The two `station-labels-*` cases are the TEXT ones: they are where a netcdf
 scalar string) and the `string` dtype of the dump schema are cross-checked, and
 where a `select`'s positional axis match is proven to count the DECODED field's
 dims — `char site_id(site, strlen)` is rank 1 on two on-disk dimensions.
+
+The json case is a station-discovery payload: it is where the `records_path`
+and `numeric_columns` options, the flattening of a nested object into dotted
+field names, a boolean field, and a `variables` projection that leaves an
+array-valued field undecoded are cross-checked. The reader's edge cases (parse
+errors, mixed kinds, nulls, the error codes) are the separate
+[`corpus/scenarios/json-reader.json`](corpus/scenarios/json-reader.json), which
+each track's own test suite runs.
 
 The parquet case is the columnar one: it is where the reader OPTIONS
 (`float_columns`, `null_int`, `null_string`) and the `variables` projection are

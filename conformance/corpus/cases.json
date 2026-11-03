@@ -28,6 +28,12 @@
       "blob_path": "cache/v1/blobs/5d/5d359ad5a4446e41a1c522c1f2dc4f4409ad337a2a5b3865dafdbae047b5c587.nc"
     },
     {
+      "id": "openaq-stations-json",
+      "file": "cases/openaq-stations-json.json",
+      "cache_key": "67c8c8781296b78c28e3f7e8e52d807129120700a6694aa7dbbfc5b9526fa189",
+      "blob_path": "cache/v1/blobs/67/67c8c8781296b78c28e3f7e8e52d807129120700a6694aa7dbbfc5b9526fa189.json"
+    },
+    {
       "id": "openaq-points-slice",
       "file": "cases/openaq-points-slice.json",
       "cache_key": "69dd26b950e43cb2182e3b4d02e89e09bfb798b13469183ca2dad15c5794379a",

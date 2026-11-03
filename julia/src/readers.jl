@@ -752,6 +752,222 @@ function read_native(
     return NativeDataset(vars, Dict{String, NativeField}())
 end
 
+# --- JSON reader ------------------------------------------------------------
+
+"""
+    JSONReaderError(code, msg)
+
+A `json` decode failure. `code` is one of the `json_*` codes the three tracks
+share (`json_parse`, `json_records_path`, `json_record_not_object`,
+`json_field_conflict`, `json_nested_array`, `json_mixed_types`, `json_null_bool`,
+`json_numeric_text`, `json_variables_missing`, `json_option`); the message is
+`"<code>: <detail>"`."""
+struct JSONReaderError <: Exception
+    code::String
+    msg::String
+end
+Base.showerror(io::IO, e::JSONReaderError) = print(io, e.code, ": ", e.msg)
+
+"""
+    JSONReader()
+
+The `json` format reader: a JSON array of records becomes a points table, as the
+Python `JSONReader` and the Rust `JsonReader` decode it (one contract, pinned by
+`conformance/corpus/scenarios/json-reader.json`; `spec/registries.md` §2).
+
+The records are the array at `records_path` (object keys from the document root;
+default none, the root itself). Each record must be an object; its fields are its
+leaves, a nested object flattened with its keys joined by `.`
+(`coordinates.latitude`). The fields are the union over the records; a field a
+record lacks is `null` there. Each field is one rank-1 array on `index`; there
+are no coordinates.
+
+A field's type comes from its non-null values: numbers → `Float64` (`null` →
+`NaN`); strings → `String` (`null` → `""`); booleans → `Bool` (a `null` is an
+error); all `null` → `Float64` of `NaN`. Mixed kinds are an error. A field in
+`numeric_columns` is `Float64` whatever its cells: a number as is, `null` → `NaN`,
+a string holding a decimal number (after trimming ASCII whitespace) parsed,
+anything else an error. `variables` projects the fields, and a field that is not
+decoded may hold anything, an array included."""
+struct JSONReader <: Reader end
+
+# The one text a `numeric_columns` string cell may hold: a JSON-number-shaped
+# decimal, so no track accepts `nan`, `inf` or `1_000` that another refuses.
+const _JSON_NUMERIC_TEXT = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+_json_trim(s::AbstractString) = strip(s, [' ', '\t', '\n', '\r'])
+
+function _json_kind(v)
+    v === nothing && return "null"
+    v isa Bool && return "bool"
+    v isa Number && return "number"
+    v isa AbstractString && return "string"
+    v isa AbstractVector && return "array"
+    return "object"
+end
+
+function _json_float(v, field, row)
+    f = Float64(v)
+    isinf(f) && throw(
+        JSONReaderError(
+            "json_parse", "field \"$field\" record $row: number $v is outside the float64 range"
+        )
+    )
+    return f
+end
+
+function _json_str_list(option::String, value)
+    value === nothing && return String[]
+    (value isa AbstractString || !(value isa AbstractVector) || !all(x -> x isa AbstractString, value)) &&
+        throw(JSONReaderError("json_option", "reader option \"$option\" must be an array of strings"))
+    return String[String(x) for x in value]
+end
+
+function _json_flatten!(flat::Dict{String, Any}, objpaths::Set{String}, obj, prefix::String, row::Int)
+    for (k, v) in pairs(obj)
+        name = prefix * String(k)
+        if v isa AbstractDict
+            push!(objpaths, name)
+            _json_flatten!(flat, objpaths, v, name * ".", row)
+            continue
+        end
+        haskey(flat, name) && throw(
+            JSONReaderError(
+                "json_field_conflict", "record $row: field \"$name\" appears twice once flattened"
+            )
+        )
+        flat[name] = v
+    end
+    return flat
+end
+
+function _json_column(name::String, vals::Vector{Any}, numeric::Bool)
+    kinds = Set(_json_kind(v) for v in vals)
+    if "array" in kinds
+        row = findfirst(v -> v isa AbstractVector, vals) - 1
+        throw(
+            JSONReaderError(
+                "json_nested_array",
+                "field \"$name\" record $row is an array; a points field is one value per " *
+                    "record (leave the field out of `variables`)"
+            )
+        )
+    end
+    if numeric
+        out = Vector{Float64}(undef, length(vals))
+        for (i, v) in enumerate(vals)
+            k = _json_kind(v)
+            out[i] = if k == "null"
+                NaN
+            elseif k == "number"
+                _json_float(v, name, i - 1)
+            elseif k == "string" && occursin(_JSON_NUMERIC_TEXT, _json_trim(v))
+                _json_float(parse(Float64, _json_trim(v)), name, i - 1)
+            else
+                throw(
+                    JSONReaderError(
+                        "json_numeric_text",
+                        "field \"$name\" record $(i - 1): cannot read $(repr(v)) as a number"
+                    )
+                )
+            end
+        end
+        return out
+    end
+    present = setdiff(kinds, Set(["null"]))
+    length(present) > 1 && throw(
+        JSONReaderError("json_mixed_types", "field \"$name\" mixes JSON kinds $(sort!(collect(present)))")
+    )
+    kind = isempty(present) ? "null" : only(present)
+    if kind == "number" || kind == "null"
+        return Float64[v === nothing ? NaN : _json_float(v, name, i - 1) for (i, v) in enumerate(vals)]
+    elseif kind == "string"
+        return String[v === nothing ? "" : String(v) for v in vals]
+    end
+    if "null" in kinds
+        row = findfirst(isnothing, vals) - 1
+        throw(
+            JSONReaderError(
+                "json_null_bool",
+                "field \"$name\" record $row is null in a boolean field, which has no missing value"
+            )
+        )
+    end
+    return Bool[v for v in vals]
+end
+
+function read_native(
+        ::JSONReader, path::AbstractString;
+        variables = nothing, records_path = nothing, numeric_columns = nothing
+    )
+    keys_path = _json_str_list("records_path", records_path)
+    numset = Set(_json_str_list("numeric_columns", numeric_columns))
+    raw = read(String(path), String)
+    isvalid(raw) || throw(JSONReaderError("json_parse", "$path: not UTF-8"))
+    doc = try
+        JSON.parse(raw)
+    catch e
+        throw(JSONReaderError("json_parse", "$path: $(sprint(showerror, e))"))
+    end
+    node = doc
+    for (depth, key) in enumerate(keys_path)
+        where = depth == 1 ? "the root" : "records_path $(keys_path[1:(depth - 1)])"
+        node isa AbstractDict || throw(
+            JSONReaderError("json_records_path", "$where is a JSON $(_json_kind(node)), not an object")
+        )
+        haskey(node, key) || throw(
+            JSONReaderError(
+                "json_records_path", "$where has no member \"$key\"; members: $(sort!(String.(collect(keys(node)))))"
+            )
+        )
+        node = node[key]
+    end
+    if !(node isa AbstractVector)
+        where = isempty(keys_path) ? "the root" : "records_path $keys_path"
+        throw(
+            JSONReaderError(
+                "json_records_path", "$where is a JSON $(_json_kind(node)), not an array of records"
+            )
+        )
+    end
+    records = Dict{String, Any}[]
+    objpaths = Set{String}()
+    names = Set{String}()
+    for (i, rec) in enumerate(node)
+        rec isa AbstractDict || throw(
+            JSONReaderError(
+                "json_record_not_object", "record $(i - 1) is a JSON $(_json_kind(rec)), not an object"
+            )
+        )
+        flat = _json_flatten!(Dict{String, Any}(), objpaths, rec, "", i - 1)
+        union!(names, keys(flat))
+        push!(records, flat)
+    end
+    decode = if variables === nothing || isempty(variables)
+        sort!(collect(names))
+    else
+        want = String[String(v) for v in variables]
+        missing_ = sort!(unique(filter(v -> !(v in names), want)))
+        isempty(missing_) || throw(
+            JSONReaderError(
+                "json_variables_missing",
+                "requested variables not in the JSON records: $missing_; present fields: $(sort!(collect(names)))"
+            )
+        )
+        sort!(unique(want))
+    end
+    vars = Dict{String, NativeField}()
+    for name in decode
+        name in objpaths && throw(
+            JSONReaderError(
+                "json_field_conflict", "field \"$name\" is a value in one record and an object in another"
+            )
+        )
+        vals = Any[get(r, name, nothing) for r in records]
+        vars[name] = NativeField(_json_column(name, vals, name in numset), ["index"], Dict{String, Any}())
+    end
+    return NativeDataset(vars, Dict{String, NativeField}())
+end
+
 # --- GeoTIFF reader (TiffImages backend via a weakdep extension) ------------
 
 """

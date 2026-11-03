@@ -76,7 +76,7 @@ export ERA5_PL_DATASET, ERA5_PRESSURE_LEVELS_HPA, ERA5_VARIABLES
 export era5_area, era5_pressure_request, era5_pressure_url
 
 # format readers + native arrays (component b)
-export NetCDFReader, CSVReader, GeoTIFFReader, FF10Reader, ShapefileReader,
+export NetCDFReader, CSVReader, JSONReader, JSONReaderError, GeoTIFFReader, FF10Reader, ShapefileReader,
     ParquetReader, ZarrReader, read_native
 export read_store, store_backed, supports_selection, array_shape, dim_length, reader_option_keys
 export NativeField, NativeDataset, variable_names, coord_names
@@ -136,6 +136,9 @@ function _register_defaults()
     # Provider change.
     register!(FORMAT_REGISTRY, "netcdf", NetCDFReader(); status = :active)
     register!(FORMAT_REGISTRY, "csv", CSVReader(); status = :active)
+    # json (points): a JSON array of records, nested objects flattened with '.',
+    # each field a rank-1 array on `index` (spec/registries.md §2 "JSON points").
+    register!(FORMAT_REGISTRY, "json", JSONReader(); status = :active)
     # GeoTIFF (LANDFIRE / USGS 3DEP rasters): the decode is supplied by the
     # `EarthSciIOTiffImagesExt` weakdep extension (`using TiffImages`); the format
     # is active once that backend is loaded — without it, `read_native` errors with

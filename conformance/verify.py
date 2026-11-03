@@ -150,6 +150,35 @@ def read_csv(path, expected):
     return out, {}
 
 
+def read_json(path, expected, decode=None):
+    """Oracle for the ``json`` points reader, independent of ``JSONReader``: walk
+    ``records_path``, look each expected (flattened) field up by its dotted path,
+    and build the column the expected dtype names (null/absent -> NaN or "")."""
+    decode = decode or {}
+    with open(path, encoding="utf-8") as fh:
+        node = json.load(fh)
+    for key in decode.get("records_path") or []:
+        node = node[key]
+
+    def leaf(rec, dotted):
+        for part in dotted.split("."):
+            if not isinstance(rec, dict) or part not in rec:
+                return None
+            rec = rec[part]
+        return rec
+
+    out = {}
+    for name, spec in expected["variables"].items():
+        vals = [leaf(r, name) for r in node]
+        if spec["dtype"] == "string":
+            out[name] = ["" if v is None else str(v) for v in vals]
+        elif spec["dtype"] == "bool":
+            out[name] = np.array([bool(v) for v in vals], dtype=bool)
+        else:
+            out[name] = np.array([math.nan if v is None else float(v) for v in vals], dtype="f8")
+    return out, {}
+
+
 # FF10 point column schema — copied from Emissions.jl `src/ff10.jl`
 # `FF10_POINT_COLUMNS` (SMOKE names COUNTRY_CD/REGION_CD for the first two).
 _FF10_POINT_COLUMNS = [
@@ -669,6 +698,7 @@ def read_geotiff(path, expected):
 READERS = {
     "netcdf": read_netcdf,
     "csv": read_csv,
+    "json": read_json,
     "ff10": read_ff10,
     "zarr": read_zarr,
     "shapefile": read_shapefile,
@@ -755,6 +785,9 @@ def verify_case(case_path: pathlib.Path) -> list:
         # parquet needs the case's decode block (float_columns + the two null
         # gates); the projection is the expected variable set.
         got, coords = read_parquet(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
+    elif case["format"] == "json":
+        # json needs the case's decode block (records_path).
+        got, coords = read_json(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
     elif case["format"] == "netcdf":
         # netcdf takes the case's orthogonal `select` (the decode-time window);
         # a case without one reads the blob whole, as before.

@@ -22,6 +22,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
     include("test_concurrency.jl")
     # component (b): format readers + cadence provider (esio-9nb.5)
     include("test_readers.jl")       # checks 3, 4; defines the corpus comparison helpers
+    include("test_json_reader.jl")   # json points reader: the shared cross-language cases
     include("test_geotiff_reader.jl")  # gap G3: geotiff reader via the TiffImages weakdep ext
     include("test_shapefile_reader.jl")  # shapefile reader via the Shapefile.jl weakdep ext
     include("test_parquet_reader.jl")  # parquet reader via the Parquet2.jl weakdep ext

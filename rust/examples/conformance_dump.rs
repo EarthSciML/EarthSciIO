@@ -238,6 +238,30 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
         }
         loader = loader.reader_options(options);
     }
+    // json: the case's decode block pins the path to the records and the field
+    // read through numeric_columns; `variables` is the projection, so a field
+    // left out (an array of sensors) is never typed.
+    if fmt == "json" {
+        if let Some(vars) = case.get("variables").and_then(Value::as_array) {
+            loader = loader.variables(
+                vars.iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        let mut options = Map::new();
+        if let Some(dec) = case.get("decode") {
+            for k in ["records_path", "numeric_columns"] {
+                match dec.get(k) {
+                    Some(v) if !v.is_null() => {
+                        options.insert(k.to_string(), v.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        loader = loader.reader_options(options);
+    }
     if fmt == "shapefile" {
         let mut options = Map::new();
         if let Some(dec) = case.get("decode") {

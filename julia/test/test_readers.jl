@@ -117,6 +117,16 @@ end
                     nc = get(dec, "numeric_columns", nothing)
                     nc === nothing || (kw[:numeric_columns] = String.(nc))
                     (; kw...)
+                elseif fmt == "json"
+                    # forward the case's projection, the path to the records and
+                    # the field read through numeric_columns.
+                    dec = case["decode"]
+                    kw = Dict{Symbol, Any}(:records_path => String.(dec["records_path"]))
+                    vars = get(case, "variables", nothing)
+                    vars === nothing || (kw[:variables] = String.(vars))
+                    nc = get(dec, "numeric_columns", nothing)
+                    nc === nothing || (kw[:numeric_columns] = String.(nc))
+                    (; kw...)
                 elseif fmt == "parquet"
                     # forward the case's PROJECTION (`variables`, pushed into the
                     # decode) plus `float_columns` and the two null gates — a

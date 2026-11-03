@@ -32,6 +32,8 @@ mod ff10;
 #[cfg(not(target_arch = "wasm32"))]
 mod geotiff;
 #[cfg(not(target_arch = "wasm32"))]
+mod json_reader;
+#[cfg(not(target_arch = "wasm32"))]
 mod netcdf;
 #[cfg(not(target_arch = "wasm32"))]
 mod parquet;
@@ -54,6 +56,8 @@ pub use csv_reader::CsvReader;
 pub use ff10::Ff10Reader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use geotiff::GeoTiffReader;
+#[cfg(not(target_arch = "wasm32"))]
+pub use json_reader::JsonReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use netcdf::NetcdfReader;
 #[cfg(not(target_arch = "wasm32"))]
@@ -985,7 +989,7 @@ impl FormatRegistry {
     }
 
     /// Registry with the built-in **active** readers: `netcdf`, `geotiff`,
-    /// `csv`, `ff10`, `shapefile`, `parquet` and `zarr`.
+    /// `csv`, `json`, `ff10`, `shapefile`, `parquet` and `zarr`.
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(NetcdfReader::new()));
@@ -994,6 +998,10 @@ impl FormatRegistry {
         // `index`. `numeric_columns`/`delimiter`/`header_row` reach it from a
         // document through `Reader::configured`.
         r.register(Arc::new(CsvReader::new()));
+        // json (points): a JSON array of records, nested objects flattened with
+        // `.`; `records_path`/`numeric_columns` reach it through
+        // `Reader::configured`.
+        r.register(Arc::new(JsonReader::new()));
         // FF10 point (SMOKE/Emissions.jl FF10_POINT): the DEFAULT reader
         // (member=None) decodes a bare `.csv` — the conformance/crosscheck path.
         // A member-configured reader for the zipped tutorial input is injected via

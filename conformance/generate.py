@@ -430,6 +430,104 @@ def window_text_expected(expected: dict) -> dict:
 
 
 # -----------------------------------------------------------------------------
+# Fixture — OpenAQ-like JSON station-discovery payload (transport=file,
+# format=json). The shape of an OpenAQ API v3 `/locations` response: the records
+# sit under `results` beside a `meta` block, coordinates are a nested object, a
+# field is null in one record, and `sensors` is an array the projection leaves
+# out. Contract (spec/registries.md §2 "JSON points"): the leaves of each record
+# flattened with `.`, numbers -> float64, strings -> string (null -> ""),
+# booleans -> bool, all on `index`. The reader-level edge cases are the hand-
+# written scenarios/json-reader.json; this case pins the decode through each
+# track's Provider and the cross-language harness.
+# -----------------------------------------------------------------------------
+JSON_PROJECTION = [
+    "id",
+    "name",
+    "locality",
+    "isMobile",
+    "coordinates.latitude",
+    "coordinates.longitude",
+    "elevation",
+]
+
+
+def build_openaq_json() -> tuple[bytes, dict, dict]:
+    doc = {
+        "meta": {"name": "openaq-api", "page": 1, "limit": 100, "found": 3},
+        "results": [
+            {
+                "id": 2178,
+                "name": "Del Norte",
+                "locality": "Albuquerque",
+                "isMobile": False,
+                "coordinates": {"latitude": 35.1353, "longitude": -106.584702},
+                "elevation": "1527.5",
+                "sensors": [
+                    {"id": 3917, "parameter": {"name": "pm25", "units": "\u00b5g/m\u00b3"}}
+                ],
+            },
+            {
+                "id": 2179,
+                "name": "South Valley",
+                "locality": None,
+                "isMobile": False,
+                "coordinates": {"latitude": 35.0167, "longitude": -106.6575},
+                "elevation": 1490,
+                "sensors": [],
+            },
+            {
+                "id": 8118,
+                "name": 'Mobile unit "7"',
+                "isMobile": True,
+                "coordinates": {"latitude": 35.0844, "longitude": -106.6504},
+                "elevation": None,
+                "sensors": [{"id": 1}, {"id": 2}],
+            },
+        ],
+    }
+    data = (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+    def f64(vals):
+        return {
+            "dtype": "float64",
+            "dims": ["index"],
+            "shape": [len(vals)],
+            "fill_value": None,
+            "data": vals,
+        }
+
+    def text(vals):
+        return {
+            "dtype": "string",
+            "dims": ["index"],
+            "shape": [len(vals)],
+            "fill_value": None,
+            "data": vals,
+        }
+
+    expected = {
+        "variables": {
+            "id": f64([2178.0, 2179.0, 8118.0]),
+            "name": text(["Del Norte", "South Valley", 'Mobile unit "7"']),
+            "locality": text(["Albuquerque", "", ""]),
+            "isMobile": {
+                "dtype": "bool",
+                "dims": ["index"],
+                "shape": [3],
+                "fill_value": None,
+                "data": [False, False, True],
+            },
+            "coordinates.latitude": f64([35.1353, 35.0167, 35.0844]),
+            "coordinates.longitude": f64([-106.584702, -106.6575, -106.6504]),
+            "elevation": f64([1527.5, 1490.0, None]),
+        },
+        "coords": {},
+    }
+    decode = {"records_path": ["results"], "numeric_columns": ["elevation"]}
+    return data, expected, decode
+
+
+# -----------------------------------------------------------------------------
 # Fixture 2 — OpenAQ-like CSV points slice (transport=file, format=csv).
 #
 # Demonstrates a SECOND reader plugging into the FORMAT registry and yielding
@@ -2448,6 +2546,37 @@ def main() -> None:
                 "track that counted on-disk dimensions would bind this selector to "
                 '`titlelen` as well and hand back "h" for `title` — a wrong '
                 "STRING, invisible to every shape assertion.",
+            ),
+        )
+    )
+
+    json_data, json_expected, json_decode = build_openaq_json()
+    summary.append(
+        (
+            "openaq-stations-json",
+            *emit_case(
+                "openaq-stations-json",
+                loader="openaq",
+                kind="points",
+                fmt="json",
+                transport="file",
+                store="local",
+                resolved_url="https://api.openaq.org/v3/locations?bbox=-106.8,34.9,-106.4,35.3",
+                ext="json",
+                data=json_data,
+                expected=json_expected,
+                decode=json_decode,
+                select={"all_rows": True},
+                variables=JSON_PROJECTION,
+                notes="OpenAQ API v3 /locations-shaped JSON station-discovery payload. "
+                "The records are under `results` (records_path), beside a `meta` "
+                "block; `coordinates` is a nested object read as the flattened "
+                "fields `coordinates.latitude`/`coordinates.longitude`; `locality` "
+                'is null in one record and absent from another (both ""); '
+                "`isMobile` is a boolean field; `elevation` mixes a decimal "
+                "STRING, an integer and a null, so it reads only through "
+                "numeric_columns (the null is NaN); and `sensors`, an array per "
+                "record, is left out of `variables` and so never decoded.",
             ),
         )
     )

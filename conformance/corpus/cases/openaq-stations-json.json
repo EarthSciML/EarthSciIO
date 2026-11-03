@@ -1,0 +1,146 @@
+{
+  "schema": "earthsciio/cache-case/v1",
+  "id": "openaq-stations-json",
+  "loader": "openaq",
+  "kind": "points",
+  "format": "json",
+  "transport": "file",
+  "store": "local",
+  "resolved_url": "https://api.openaq.org/v3/locations?bbox=-106.8,34.9,-106.4,35.3",
+  "cache_key": "67c8c8781296b78c28e3f7e8e52d807129120700a6694aa7dbbfc5b9526fa189",
+  "blob_path": "cache/v1/blobs/67/67c8c8781296b78c28e3f7e8e52d807129120700a6694aa7dbbfc5b9526fa189.json",
+  "manifest_path": "cache/v1/meta/67c8c8781296b78c28e3f7e8e52d807129120700a6694aa7dbbfc5b9526fa189.json",
+  "content_sha256": "59c50330a26420ec8e8c52d7629cb46c2b108df37ff77f8283a88aef6b19f06c",
+  "bytes": 1075,
+  "select": {
+    "all_rows": true
+  },
+  "decode": {
+    "records_path": [
+      "results"
+    ],
+    "numeric_columns": [
+      "elevation"
+    ]
+  },
+  "expected": {
+    "variables": {
+      "id": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          2178.0,
+          2179.0,
+          8118.0
+        ]
+      },
+      "name": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          "Del Norte",
+          "South Valley",
+          "Mobile unit \"7\""
+        ]
+      },
+      "locality": {
+        "dtype": "string",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          "Albuquerque",
+          "",
+          ""
+        ]
+      },
+      "isMobile": {
+        "dtype": "bool",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          false,
+          false,
+          true
+        ]
+      },
+      "coordinates.latitude": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          35.1353,
+          35.0167,
+          35.0844
+        ]
+      },
+      "coordinates.longitude": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          -106.584702,
+          -106.6575,
+          -106.6504
+        ]
+      },
+      "elevation": {
+        "dtype": "float64",
+        "dims": [
+          "index"
+        ],
+        "shape": [
+          3
+        ],
+        "fill_value": null,
+        "data": [
+          1527.5,
+          1490.0,
+          null
+        ]
+      }
+    },
+    "coords": {}
+  },
+  "notes": "OpenAQ API v3 /locations-shaped JSON station-discovery payload. The records are under `results` (records_path), beside a `meta` block; `coordinates` is a nested object read as the flattened fields `coordinates.latitude`/`coordinates.longitude`; `locality` is null in one record and absent from another (both \"\"); `isMobile` is a boolean field; `elevation` mixes a decimal STRING, an integer and a null, so it reads only through numeric_columns (the null is NaN); and `sensors`, an array per record, is left out of `variables` and so never decoded.",
+  "variables": [
+    "id",
+    "name",
+    "locality",
+    "isMobile",
+    "coordinates.latitude",
+    "coordinates.longitude",
+    "elevation"
+  ]
+}

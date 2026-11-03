@@ -328,6 +328,16 @@
       }
     },
     {
+      "name": "json_reader",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "JSONReader",
+        "julia": "JSONReader",
+        "rust": "JsonReader"
+      }
+    },
+    {
       "name": "netcdf_reader",
       "kind": "type",
       "tier": "stable",
