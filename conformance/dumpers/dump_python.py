@@ -178,6 +178,9 @@ def dump_case(case: dict[str, Any]) -> dict[str, Any]:
         # numeric_columns is REQUIRED by the loader spec (digit-only text columns
         # like location_id must stay strings); the corpus case pins the list.
         reader_kwargs["numeric_columns"] = list(case["decode"]["numeric_columns"])
+        # delimiter and the 0-based header_row are forwarded as the case pins them.
+        reader_kwargs["delimiter"] = case["decode"].get("delimiter")
+        reader_kwargs["header_row"] = case["decode"].get("header_row")
     elif fmt == "ff10":
         # FF10 point: the case pins the 42 numeric columns, the schema kind, and
         # the zip member selection — member (singular), members/member_glob

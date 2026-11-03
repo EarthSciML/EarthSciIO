@@ -137,6 +137,24 @@ fn encode_coord(c: &Coord) -> Value {
     Value::Object(m)
 }
 
+/// A case's `decode` block narrowed to the named non-null keys, as a loader
+/// would declare them in `reader_options` (mirrors `declared_options` in
+/// `tests/conformance_decode.rs`).
+fn declared_options(case: &Value, keys: &[&str]) -> Map<String, Value> {
+    let mut options = Map::new();
+    if let Some(dec) = case.get("decode") {
+        for k in keys {
+            match dec.get(*k) {
+                Some(v) if !v.is_null() => {
+                    options.insert((*k).to_string(), v.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    options
+}
+
 /// Run the Rust Provider over one corpus case and encode its native arrays. Skips
 /// (without error) a case whose format has no reader, so the harness reports the
 /// gap instead of failing.
@@ -187,18 +205,10 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
                     .collect::<Vec<_>>(),
             );
         }
-        let mut options = Map::new();
-        if let Some(dec) = case.get("decode") {
-            for k in ["float_columns", "null_int", "null_string"] {
-                match dec.get(k) {
-                    Some(v) if !v.is_null() => {
-                        options.insert(k.to_string(), v.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        loader = loader.reader_options(options);
+        loader = loader.reader_options(declared_options(
+            case,
+            &["float_columns", "null_int", "null_string"],
+        ));
     }
     // Whole-file, but selection-capable (netcdf): a case carrying a `select` —
     // positional `axes` or named `dims` — is a DECODE-TIME window: the same blob
@@ -218,39 +228,20 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
             .collect();
         loader = loader.variables(vars).select(parse_selection(case));
     }
+    // The csv case's decode block pins the numeric columns (a digit-only id
+    // column stays text), the delimiter and the 0-based header row — the
+    // loader's `reader_options`, resolved by `Reader::configured`.
+    if fmt == "csv" {
+        loader = loader.reader_options(declared_options(
+            case,
+            &["numeric_columns", "delimiter", "header_row"],
+        ));
+    }
     // The shapefile case pins its zip member + the code column the model wants
     // numeric. Both reach the reader the way a DOCUMENT delivers them — the
     // loader's `reader_options`, resolved by `Reader::configured`.
-    // csv: the case's decode block pins the numeric columns (a digit-only id
-    // column stays text), the delimiter and the 0-based header row — the
-    // loader's `reader_options`, as for shapefile below.
-    if fmt == "csv" {
-        let mut options = Map::new();
-        if let Some(dec) = case.get("decode") {
-            for k in ["numeric_columns", "delimiter", "header_row"] {
-                match dec.get(k) {
-                    Some(v) if !v.is_null() => {
-                        options.insert(k.to_string(), v.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        loader = loader.reader_options(options);
-    }
     if fmt == "shapefile" {
-        let mut options = Map::new();
-        if let Some(dec) = case.get("decode") {
-            for k in ["member", "numeric_columns"] {
-                match dec.get(k) {
-                    Some(v) if !v.is_null() => {
-                        options.insert(k.to_string(), v.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        loader = loader.reader_options(options);
+        loader = loader.reader_options(declared_options(case, &["member", "numeric_columns"]));
     }
     let mut provider = Provider::with_formats(loader, Arc::new(cache), None, formats)
         .expect("provider over corpus");

@@ -157,8 +157,15 @@ function dump_case(corpus, case)
     provider = if fmt == "csv"
         # numeric_columns is REQUIRED (digit-only text like location_id must stay
         # a string); the corpus case pins the list.
-        nc = String.(case["decode"]["numeric_columns"])
-        const_provider(cache, url; format = fmt, reader_kwargs = (; numeric_columns = nc))
+        # delimiter and the 0-based header_row are forwarded as the case pins them.
+        dec = case["decode"]
+        const_provider(
+            cache, url; format = fmt, reader_kwargs = (;
+                numeric_columns = String.(dec["numeric_columns"]),
+                delimiter = get(dec, "delimiter", nothing),
+                header_row = get(dec, "header_row", nothing),
+            )
+        )
     elseif fmt == "ff10"
         # FF10 point: the case pins the 42 numeric columns, schema kind, and the
         # zip member selection — member (singular), members/member_glob (multi-

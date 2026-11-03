@@ -69,10 +69,10 @@
         {"name": "geotiff", "extensions": ["tif", "tiff"], "content_types": ["image/tiff"], "status": "active", "notes": "Raster bands via GDAL; Python ships first, Julia/Rust may lag (R5). No binary fixture committed yet (no GDAL/git-lfs here)."},
         {
           "name": "csv",
-          "extensions": ["csv"],
+          "extensions": ["csv", "txt"],
           "content_types": ["text/csv"],
           "status": "active",
-          "notes": "Points readers: numeric columns->float64 1-D arrays, others->string, all on the single dim `index`, no coordinates. Blank lines skipped. A numeric cell that does not parse (a blank one included) is an error.",
+          "notes": "Points readers: numeric columns->float64 1-D arrays, others->string, all on the single dim `index`, no coordinates. Text is UTF-8 in every track (never the locale encoding) and a leading byte-order mark is dropped. Blank lines skipped. A numeric cell that does not parse (a blank one included) is an error. A header that repeats a column name is an error (one column would silently replace another), as is a `numeric_columns` entry the header lacks. A null option value means the option is unset.",
           "reader_options": [
             {
               "name": "variables",
@@ -102,7 +102,7 @@
               "name": "header_row",
               "form": "int",
               "tracks": ["python", "julia", "rust"],
-              "purpose": "The non-blank row holding the column names; rows before it are dropped. 0-based in Python and Rust (default 0), 1-based in Julia (default 1)."
+              "purpose": "The 0-based non-blank row holding the column names (default 0), the same index in every track; rows before it are dropped."
             }
           ]
         },
