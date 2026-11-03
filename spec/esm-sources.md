@@ -149,3 +149,59 @@ a `SourceTemporal` and a run `window`, as Python and Rust do:
 (UTC), the ticks are the anchors from the one at or before the window start to
 the last before its end, the record of each tick is §2.3's, and
 `refresh_times` returns the anchors in the window, as in Python and Rust.
+
+## 3. A provider from an esm data source
+
+Fixture:
+[`../conformance/corpus/scenarios/esm-sources.json`](../conformance/corpus/scenarios/esm-sources.json).
+
+Every track builds a provider straight from one `data_sources` entry:
+
+| Track | Call |
+|---|---|
+| Python | `provider_from_esm(name, entry, cache, *, variables, substitutions=None, url_override=None, records_per_sample=None, window=None)`; `source_from_esm(…)` returns the `DataSource` alone |
+| Julia | `provider_from_esm(name, entry, cache; variables, substitutions, url_override, records_per_sample, window)` |
+| Rust | `DataSource::from_esm(name, &entry, &EsmSourceOptions { variables, substitutions, url_override, records_per_sample })`, then `Provider::new(source, cache, window)` |
+
+`entry` is the entry's JSON value as a document carries it after EarthSciAST
+has loaded it, so its locations are already absolute (esm-spec §8.2.1) and a
+mount's `url_substitutions` already applied (§4.7). `window` is the run window
+in UTC.
+
+### 3.1 What is read
+
+| Entry field | Reading |
+|---|---|
+| `metadata.esio_format` | the reader name (`netcdf`, `zarr`, …). This is a convention, not an esm-spec field; it moves to the field the format defines when there is one |
+| `source.url_template`, `source.mirrors` | esm templates (§1), expanded at each file anchor with `substitutions`. `{var}` is bound to the variable when exactly one is read and the caller did not bind it |
+| `temporal` | absent, or without `start`: a time-invariant provider. Otherwise `start`, `end` (the exclusive end of the data), `frequency` and `file_period` (§2; either alone stands for both) and `time_variable` (the record dimension, default `time`) |
+| `temporal.records_per_file` | when an integer, it must equal the number of records in the first file (§2.3); `"auto"` is not checked |
+| `reader_options` | the reader's decode options, checked against the reader when the provider is built |
+
+`url_override` replaces `url_template` and drops the mirrors (a deployment's
+local copy). It is an esm template too, so it cannot carry
+`${EARTHSCIDATADIR}` (whose `{…}` would read as a substitution): a caller
+expands that itself. `records_per_sample` (1 or 2) is the consumer's choice and is not
+read from the entry, since esm-spec §8 has no field for it yet.
+
+### 3.2 What is not read here
+
+`select`, `codes`, `record_filter`, `extent` and a parameter's
+`unit_conversion` say what a source's values mean to the model; the document
+binding (EarthSciAST's `providers_from_document`) applies them to what this
+provider returns. `kind` needs nothing from EarthSciIO: a `points` source is
+read by a table reader (`csv`, `parquet`, `ff10`, `shapefile`) like any other.
+`determinism`, `reference` and the rest of `metadata` are not read.
+
+### 3.3 Errors
+
+The message contains the code and the source's name.
+
+| Code | When |
+|---|---|
+| `esm_source_no_format` | no `metadata.esio_format` |
+| `esm_source_url` | no `url_template`; a template that is neither a URL nor substitution-led (a relative path EarthSciAST did not resolve); a `${…}` in a template (esm-spec §8.2.1) |
+| `esm_source_temporal` | a `start` with neither `frequency` nor `file_period`; an instant that cannot be read |
+| `esm_source_records_per_file` | `records_per_file` disagrees with the cadence |
+| `esm_period_invalid` | a period that §2.1 refuses |
+| `esm_template_*` | §1.3, e.g. a substitution nothing bound |

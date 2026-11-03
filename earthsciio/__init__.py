@@ -63,6 +63,7 @@ from .errors import (
     Unsupported,
 )
 from .esm import EsmTemplate, EsmTemplateError, esm_template_names, expand_esm_template
+from .esm_source import EsmSourceError, provider_from_esm, source_from_esm
 from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
 from .native import NativeDataset, NativeField
 from .prefetch import EpochSample, PrefetchGroup, Sample
@@ -142,6 +143,7 @@ __all__ = [
     "EarthSciIOError",
     "EpochSample",
     # esm data-source URL templates (spec/esm-sources.md)
+    "EsmSourceError",
     "EsmTemplate",
     "EsmTemplateError",
     "FF10Reader",
@@ -195,6 +197,7 @@ __all__ = [
     "file_source_state",
     "format_registry",
     "parse_rfc3339",
+    "provider_from_esm",
     "range_keyed_url",
     "reader_option_names",
     "register_format_readers",
@@ -203,6 +206,7 @@ __all__ = [
     "resolve_revalidate_file",
     "sha256_bytes",
     "sha256_file",
+    "source_from_esm",
     "store_registry",
     "supports_selection",
     # the three registry singletons

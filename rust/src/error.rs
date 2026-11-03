@@ -178,6 +178,18 @@ pub enum Error {
         /// Why it is not a period.
         detail: String,
     },
+
+    /// An esm `data_sources` entry EarthSciIO cannot read
+    /// (`spec/esm-sources.md` §3.3). The message carries `code` and the
+    /// source's name.
+    EsmSource {
+        /// An `esm_source_*` code, or `esm_period_invalid`.
+        code: &'static str,
+        /// The data source's name.
+        source: String,
+        /// What is wrong with it.
+        detail: String,
+    },
 }
 
 impl Error {
@@ -249,6 +261,11 @@ impl std::fmt::Display for Error {
             }
             Error::Commit { detail } => write!(f, "commit refused: {detail}"),
             Error::Prefetch { detail } => write!(f, "prefetch: {detail}"),
+            Error::EsmSource {
+                code,
+                source,
+                detail,
+            } => write!(f, "{code}: data source {source:?}: {detail}"),
             Error::BadPeriod { period, detail } => {
                 write!(
                     f,

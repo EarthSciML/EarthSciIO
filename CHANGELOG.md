@@ -30,6 +30,18 @@ package version is independent of the `.esm` format version.
   `calendar-cadence` scenario (with small synthetic monthly and yearly files in
   the corpus).
 
+- **feat:** a provider straight from an esm `data_sources` entry
+  (`spec/esm-sources.md` §3): Python `provider_from_esm` / `source_from_esm`,
+  Julia `provider_from_esm`, Rust `DataSource::from_esm(name, &entry,
+  &EsmSourceOptions { variables, substitutions, url_override,
+  records_per_sample })`. Each reads the reader name from
+  `metadata.esio_format`, the URL template and mirrors as esm templates (binding
+  `{var}` when one variable is read), the calendar `temporal` block (checking
+  `records_per_file` against the cadence) and `reader_options`. A source it
+  cannot read fails with an `esm_source_*` code and the source's name. Pinned by
+  the shared `esm-sources` scenario, which includes reseact's GEOS-FP A1 and
+  NEI 2016 entries.
+
 ### Rust
 
 - **breaking:** `SourceTemporal.frequency` and `.file_period` are
