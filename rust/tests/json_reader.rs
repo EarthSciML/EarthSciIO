@@ -85,7 +85,8 @@ fn every_shared_case_decodes_as_specified() {
                 }
                 ("float64", ArrayData::F64(v)) => v.iter().zip(data).all(|(g, e)| match e {
                     Value::Null => g.is_nan(),
-                    e => e.as_f64() == Some(*g),
+                    // Bitwise, so -0.0 never passes for an expected 0.0.
+                    e => e.as_f64().map(f64::to_bits) == Some(g.to_bits()),
                 }),
                 _ => false,
             };
@@ -104,6 +105,23 @@ fn registered_under_json() {
     assert!(!r.supports_selection());
     let bad = json!({"record_path": ["results"]});
     assert!(r.configured(bad.as_object().unwrap()).is_err());
+}
+
+#[test]
+fn a_direct_select_is_refused_not_ignored() {
+    // The Provider refuses a window before the fetch; a direct caller must not
+    // get the whole table back believing it is a window.
+    let dir = tempfile::tempdir().unwrap();
+    let blob = dir.path().join("x.json");
+    std::fs::write(&blob, r#"[{"a": 1}]"#).unwrap();
+    let sel = Selection::from_json(&json!({"axes": [{"indices": [0]}]})).unwrap();
+    match JsonReader::new().read_native(&blob, &[], &sel) {
+        Err(Error::Format { format, detail }) => {
+            assert_eq!(format, "json");
+            assert!(detail.starts_with("json_option: "), "{detail}");
+        }
+        other => panic!("expected json_option, got {other:?}"),
+    }
 }
 
 #[test]

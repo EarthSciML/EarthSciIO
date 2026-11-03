@@ -58,7 +58,9 @@ def test_shared_case(tmp_path: Path, case: dict) -> None:
             if exp is None:
                 assert math.isnan(got)
             else:
-                assert got == exp
+                # Bitwise, so a -0.0 against an expected 0.0 fails (the sign of a
+                # zero is part of the contract: it is always +0.0).
+                assert got == exp and math.copysign(1.0, got) == math.copysign(1.0, exp)
 
 
 def test_registered_under_json() -> None:
@@ -82,6 +84,18 @@ def test_provider_reads_json_with_options(tmp_path: Path) -> None:
     nds = Provider(loader, Cache(root=tmp_path / "cache")).materialize()
     assert set(nds.variables) == {"coordinates.latitude", "name"}
     assert nds.variables["name"].data == ["Site A", "Site B"]
+
+
+def test_a_direct_select_or_unknown_option_is_json_option(tmp_path: Path) -> None:
+    """``select`` is not a json option (supports_selection is false): called
+    directly, the reader refuses it, and any other unknown keyword, with the
+    json_option code Rust's JsonReader raises, rather than swallowing it."""
+    blob = tmp_path / "x.json"
+    blob.write_text('[{"a": 1}]', "utf-8")
+    for kw in ({"select": {"axes": [{"indices": [0]}]}}, {"record_path": ["results"]}):
+        with pytest.raises(JSONReaderError) as info:
+            JSONReader().read_native(str(blob), None, **kw)
+        assert info.value.code == "json_option"
 
 
 def test_unknown_option_refused_at_construction(tmp_path: Path) -> None:

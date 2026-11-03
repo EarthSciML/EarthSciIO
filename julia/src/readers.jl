@@ -812,7 +812,42 @@ function _json_float(v, field, row)
             "json_parse", "field \"$field\" record $row: number $v is outside the float64 range"
         )
     )
-    return f
+    # A zero is +0.0 whatever its sign: Rust's parser cannot tell `-0` from
+    # `-0.0`, so no track keeps the sign of either.
+    return iszero(f) ? 0.0 : f
+end
+
+# The deepest nesting of arrays/objects a document may have (the root array is
+# depth 1): Rust's serde_json stops at 127, and all three tracks hold to it.
+const _JSON_MAX_DEPTH = 127
+
+# Refuse what JSON.jl lets through but the contract calls a parse error, checked
+# over the WHOLE document whether or not a field is decoded: a number outside
+# the float64 range (JSON.jl hands back a BigFloat/BigInt for one) and a lone
+# UTF-16 surrogate in a string or member name (JSON.jl hands back an invalid
+# String). Iterative, so a deep document costs no stack.
+function _json_check_tree(doc)
+    stack = Any[doc]
+    while !isempty(stack)
+        node = pop!(stack)
+        if node isa AbstractDict
+            for (k, v) in pairs(node)
+                isvalid(String(k)) || throw(
+                    JSONReaderError("json_parse", "member name $(repr(k)) holds a lone UTF-16 surrogate")
+                )
+                push!(stack, v)
+            end
+        elseif node isa AbstractVector
+            append!(stack, node)
+        elseif node isa AbstractString
+            isvalid(node) || throw(
+                JSONReaderError("json_parse", "string $(repr(node)) holds a lone UTF-16 surrogate")
+            )
+        elseif (node isa BigFloat || node isa BigInt) && isinf(Float64(node))
+            throw(JSONReaderError("json_parse", "number $node is outside the float64 range"))
+        end
+    end
+    return nothing
 end
 
 function _json_str_list(option::String, value)
@@ -899,15 +934,19 @@ function read_native(
         ::JSONReader, path::AbstractString;
         variables = nothing, records_path = nothing, numeric_columns = nothing
     )
+    # No `select` keyword: `supports_selection` is false, so the Provider refuses
+    # a `select` before the fetch (and an option this method does not declare is
+    # refused at Provider construction, `reader_option_keys`).
     keys_path = _json_str_list("records_path", records_path)
     numset = Set(_json_str_list("numeric_columns", numeric_columns))
     raw = read(String(path), String)
     isvalid(raw) || throw(JSONReaderError("json_parse", "$path: not UTF-8"))
     doc = try
-        JSON.parse(raw)
+        JSON.parse(raw; maxdepth = _JSON_MAX_DEPTH)
     catch e
         throw(JSONReaderError("json_parse", "$path: $(sprint(showerror, e))"))
     end
+    _json_check_tree(doc)
     node = doc
     for (depth, key) in enumerate(keys_path)
         where = depth == 1 ? "the root" : "records_path $(keys_path[1:(depth - 1)])"

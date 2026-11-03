@@ -111,19 +111,13 @@
           "extensions": ["json"],
           "content_types": ["application/json"],
           "status": "active",
-          "notes": "Points readers (e.g. station discovery payloads): a JSON (RFC 8259) array of records, found at `records_path`, becomes a points table. Each record is an object; its leaves are the fields, a nested object flattened with its keys joined by `.`. The fields are the union over the records, each one rank-1 array on the single dim `index`, no coordinates; a field a record lacks is null there. Type from the non-null values: numbers->float64 (null->NaN), strings->string (null->\"\"), booleans->bool (null is an error), all null->float64 NaN; mixed kinds are an error. An integer becomes the nearest float64; a number outside the float64 range, and the non-JSON literals NaN/Infinity, are parse errors. A field that is decoded may not hold an array (leave it out of `variables`). Duplicate member names: the last one wins. Errors carry json_* codes shared by the three tracks; conformance/corpus/scenarios/json-reader.json pins the decode.",
+          "notes": "Points readers (e.g. station discovery payloads): a JSON (RFC 8259) array of records, found at `records_path`, becomes a points table. Each record is an object; its leaves are the fields, a nested object flattened with its keys joined by `.`. The fields are the union over the records, each one rank-1 array on the single dim `index`, no coordinates; a field a record lacks is null there. Type from the non-null values: numbers->float64 (null->NaN), strings->string (null->\"\"), booleans->bool (null is an error), all null->float64 NaN; mixed kinds are an error. An integer becomes the nearest float64, and a zero is +0.0 whatever its sign. These are parse errors (json_parse) anywhere in the document, whether or not the field holding them is decoded: a number outside the float64 range, the non-JSON literals NaN/Infinity, a lone UTF-16 surrogate escape (\\ud800 unpaired) in a string or member name, and nesting of arrays/objects deeper than 127 levels (the root array is level 1). supports_selection is false: the Provider refuses a select before the fetch, and the reader called directly refuses one with json_option. A field that is decoded may not hold an array (leave it out of `variables`). Duplicate member names: the last one wins. Errors carry json_* codes shared by the three tracks; conformance/corpus/scenarios/json-reader.json pins the decode.",
           "reader_options": [
             {
               "name": "variables",
               "form": "[string]",
               "tracks": ["python", "julia", "rust"],
               "purpose": "Projection over the flattened field names (`coordinates.latitude`): only these fields are decoded, so a field left out may hold anything. A name no record has is an error (json_variables_missing) listing the fields present. Empty or absent: every field."
-            },
-            {
-              "name": "select",
-              "form": "(none)",
-              "tracks": ["python"],
-              "purpose": "Taken by the Python reader's signature only to refuse it: json supports no selection (supports_selection false)."
             },
             {
               "name": "records_path",

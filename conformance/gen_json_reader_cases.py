@@ -220,6 +220,91 @@ cases = [
         options={"records_path": "results"},
     ),
     err("numeric-columns-not-list", '[{"v": 1}]', "json_option", options={"numeric_columns": "v"}),
+    err(
+        "records-path-not-list-int",
+        '[{"v": 1}]',
+        "json_option",
+        options={"records_path": 5},
+        note="An option that is not an array is json_option, whatever it is.",
+    ),
+    err(
+        "records-path-object",
+        '{"results": [{"v": 1}]}',
+        "json_option",
+        options={"records_path": {"results": 1}},
+        note="An object is not an array of strings (its keys are not the path).",
+    ),
+    # --- parse errors anywhere in the document, decoded or not ---------------
+    ok(
+        "signed-zero-is-positive",
+        '[{"n": -0, "v": "-0.0"}, {"n": -0.0, "v": "-0"}, {"n": 0, "v": "+0e5"}]',
+        3,
+        {"n": F(0.0, 0.0, 0.0), "v": F(0.0, 0.0, 0.0)},
+        options={"numeric_columns": ["v"]},
+        note="A zero is +0.0 whatever its sign, an integer, a float or a numeric_columns string "
+        "(the harnesses compare bitwise).",
+    ),
+    err(
+        "out-of-range-float-undecoded",
+        '[{"a": 1, "big": 1e400}]',
+        "json_parse",
+        variables=["a"],
+        note="A number outside the float64 range is a parse error even in a field left out of "
+        "`variables`.",
+    ),
+    err(
+        "out-of-range-integer-undecoded",
+        '[{"a": 1, "big": 1' + "0" * 400 + "}]",
+        "json_parse",
+        variables=["a"],
+    ),
+    err(
+        "out-of-range-negative-in-array",
+        '[{"a": 1, "xs": [1, -1e309]}]',
+        "json_parse",
+        variables=["a"],
+    ),
+    err(
+        "lone-high-surrogate",
+        '[{"s": "\\ud800"}]',
+        "json_parse",
+        note="An unpaired UTF-16 surrogate escape is undefined text: refused, not passed on.",
+    ),
+    err(
+        "lone-low-surrogate-undecoded",
+        '[{"a": 1, "s": "x\\udc00y"}]',
+        "json_parse",
+        variables=["a"],
+    ),
+    err("lone-surrogate-in-member-name", '[{"a": 1, "\\ud800": 2}]', "json_parse", variables=["a"]),
+    ok(
+        "surrogate-pair",
+        '[{"s": "\\ud83d\\ude00"}]',
+        1,
+        {"s": S("\U0001f600")},
+        note="A high+low pair is one code point.",
+    ),
+    ok(
+        "nesting-127-levels",
+        '[{"a": 1, "d": ' + "[" * 125 + "]" * 125 + "}]",
+        1,
+        {"a": F(1.0)},
+        variables=["a"],
+        note="Root array (1) + record (2) + 125 arrays: 127 levels, the deepest allowed.",
+    ),
+    err(
+        "nesting-128-levels",
+        '[{"a": 1, "d": ' + "[" * 126 + "]" * 126 + "}]",
+        "json_parse",
+        variables=["a"],
+        note="One level past 127 is a parse error in every track (serde_json's limit).",
+    ),
+    err(
+        "nesting-very-deep",
+        "[" * 5000 + "]" * 5000,
+        "json_parse",
+        note="Far past any recursion limit: still json_parse, never a stack error.",
+    ),
 ]
 ids = [c["id"] for c in cases]
 assert len(ids) == len(set(ids))

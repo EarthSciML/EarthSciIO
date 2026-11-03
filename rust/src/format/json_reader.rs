@@ -177,7 +177,9 @@ fn finite(f: f64, field: &str, row: usize, shown: &dyn std::fmt::Display) -> Res
             format!("field {field:?} record {row}: number {shown} is outside the float64 range"),
         ));
     }
-    Ok(f)
+    // A zero is +0.0 whatever its sign: serde_json parses the integer `-0` to
+    // -0.0 and cannot tell it from `-0.0`, so no track keeps the sign of either.
+    Ok(if f == 0.0 { 0.0 } else { f })
 }
 
 fn number(n: &serde_json::Number, field: &str, row: usize) -> Result<f64> {
@@ -187,10 +189,12 @@ fn number(n: &serde_json::Number, field: &str, row: usize) -> Result<f64> {
     finite(f, field, row, n)
 }
 
-fn flatten(
-    obj: &serde_json::Map<String, Value>,
+/// A record's leaves, borrowed from the parsed document: a field that is never
+/// decoded (a large `sensors` array) is never copied.
+fn flatten<'a>(
+    obj: &'a serde_json::Map<String, Value>,
     prefix: &str,
-    flat: &mut HashMap<String, Value>,
+    flat: &mut HashMap<String, &'a Value>,
     objpaths: &mut HashSet<String>,
     row: usize,
 ) -> Result<()> {
@@ -207,7 +211,7 @@ fn flatten(
                 format!("record {row}: field {name:?} appears twice once flattened"),
             ));
         }
-        flat.insert(name, v.clone());
+        flat.insert(name, v);
     }
     Ok(())
 }
@@ -325,10 +329,17 @@ impl Reader for JsonReader {
         &self,
         blob_path: &Path,
         variables: &[String],
-        _select: &Selection,
+        select: &Selection,
     ) -> Result<NativeDataset> {
-        // `supports_selection` is false: the Provider never hands this reader
-        // a window; row selection is esm-spec §8.9.2 work downstream.
+        // `supports_selection` is false, so the Provider refuses a window before
+        // the fetch; a direct caller gets the json_option the other tracks raise.
+        // Row selection is esm-spec §8.9.2 work downstream.
+        if !matches!(select, Selection::All) {
+            return Err(json_err(
+                "json_option",
+                "the json reader supports no selection (supports_selection is false)",
+            ));
+        }
         let bytes = std::fs::read(blob_path)
             .map_err(|e| json_err("json_parse", format!("open {}: {e}", blob_path.display())))?;
         let text = std::str::from_utf8(&bytes).map_err(|e| {
@@ -376,7 +387,7 @@ impl Reader for JsonReader {
             )
         })?;
 
-        let mut flats: Vec<HashMap<String, Value>> = Vec::with_capacity(records.len());
+        let mut flats: Vec<HashMap<String, &Value>> = Vec::with_capacity(records.len());
         let mut objpaths: HashSet<String> = HashSet::new();
         let mut names: BTreeSet<String> = BTreeSet::new();
         for (i, rec) in records.iter().enumerate() {
@@ -417,7 +428,7 @@ impl Reader for JsonReader {
                     format!("field {name:?} is a value in one record and an object in another"),
                 ));
             }
-            let vals: Vec<Option<&Value>> = flats.iter().map(|f| f.get(&name)).collect();
+            let vals: Vec<Option<&Value>> = flats.iter().map(|f| f.get(&name).copied()).collect();
             let (dtype, data) = column(&name, &vals, self.numeric_columns.contains(&name))?;
             out.insert(
                 name,

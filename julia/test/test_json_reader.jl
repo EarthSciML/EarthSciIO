@@ -57,7 +57,7 @@ end
                     else
                         @test f.data isa Vector{Float64}
                         for (got, exp) in zip(f.data, spec["data"])
-                            exp === nothing ? (@test isnan(got)) : (@test got == Float64(exp))
+                            exp === nothing ? (@test isnan(got)) : (@test got === Float64(exp))
                         end
                     end
                 end

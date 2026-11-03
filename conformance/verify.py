@@ -29,6 +29,7 @@ import itertools
 import json
 import math
 import pathlib
+import re
 import sys
 
 import numpy as np
@@ -167,15 +168,40 @@ def read_json(path, expected, decode=None):
             rec = rec[part]
         return rec
 
+    numeric = set(decode.get("numeric_columns") or [])
+    # The decimal text a numeric_columns string cell may hold (registries.json
+    # "json"), written out again here rather than imported from the reader.
+    decimal = re.compile(r"[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?")
+
+    def refuse(name, i, v, want):
+        raise ValueError(f"json oracle: field {name!r} record {i}: {v!r} is not {want}")
+
+    def as_float(name, i, v):
+        if v is None:
+            return math.nan
+        if isinstance(v, bool):
+            refuse(name, i, v, "a number")
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str) and name in numeric and decimal.fullmatch(v.strip(" \t\n\r")):
+            return float(v.strip(" \t\n\r"))
+        refuse(name, i, v, "a number")
+
     out = {}
     for name, spec in expected["variables"].items():
         vals = [leaf(r, name) for r in node]
         if spec["dtype"] == "string":
-            out[name] = ["" if v is None else str(v) for v in vals]
+            for i, v in enumerate(vals):
+                if v is not None and not isinstance(v, str):
+                    refuse(name, i, v, "a string")
+            out[name] = ["" if v is None else v for v in vals]
         elif spec["dtype"] == "bool":
-            out[name] = np.array([bool(v) for v in vals], dtype=bool)
+            for i, v in enumerate(vals):
+                if not isinstance(v, bool):
+                    refuse(name, i, v, "a boolean (a bool field has no missing value)")
+            out[name] = np.array(vals, dtype=bool)
         else:
-            out[name] = np.array([math.nan if v is None else float(v) for v in vals], dtype="f8")
+            out[name] = np.array([as_float(name, i, v) for i, v in enumerate(vals)], dtype="f8")
     return out, {}
 
 

@@ -622,6 +622,13 @@ class CSVReader:
 #: what one language's float parser accepts beyond this differs from the next.
 _JSON_NUMERIC_TEXT = _re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _ASCII_WS = " \t\n\r"
+#: The deepest nesting of arrays/objects a document may have (the root array is
+#: depth 1). Rust's serde_json stops at 127; all three tracks hold to it, so a
+#: document one track reads is never a parse error in another.
+_JSON_MAX_DEPTH = 127
+#: A UTF-16 surrogate left over in a decoded string: a lone ``\ud800`` escape,
+#: which RFC 8259 leaves undefined. Rust refuses it; so do Python and Julia.
+_JSON_SURROGATE = _re.compile("[\ud800-\udfff]")
 
 
 class JSONReaderError(ValueError):
@@ -645,8 +652,40 @@ def _json_float(text: str) -> float:
 
 def _json_int(text: str) -> Any:
     # Keep the integer exact here; it becomes float64 (nearest, ties to even)
-    # when a field is built, as in the Julia and Rust readers.
-    return int(text)
+    # when a field is built, as in the Julia and Rust readers. Its RANGE is
+    # checked now, at parse time, whether or not the field is ever decoded: an
+    # out-of-range number anywhere in the document is a parse error.
+    v = int(text)
+    try:
+        float(v)
+    except OverflowError:
+        raise JSONReaderError(
+            "json_parse", f"number {text[:40]}... is outside the float64 range"
+        ) from None
+    return v
+
+
+def _json_check_tree(doc: Any) -> None:
+    """Refuse what the parser let through but the contract calls a parse error:
+    nesting deeper than ``_JSON_MAX_DEPTH`` and a lone UTF-16 surrogate in a
+    string or a member name. Iterative, so depth costs no stack."""
+    stack: list[tuple[Any, int]] = [(doc, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, (dict, list)):
+            if depth > _JSON_MAX_DEPTH:
+                raise JSONReaderError("json_parse", f"nesting deeper than {_JSON_MAX_DEPTH} levels")
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if _JSON_SURROGATE.search(k):
+                        raise JSONReaderError(
+                            "json_parse", f"member name {k!r} holds a lone UTF-16 surrogate"
+                        )
+                    stack.append((v, depth + 1))
+            else:
+                stack.extend((v, depth + 1) for v in node)
+        elif isinstance(node, str) and _JSON_SURROGATE.search(node):
+            raise JSONReaderError("json_parse", f"string {node!r} holds a lone UTF-16 surrogate")
 
 
 def _json_kind(v: Any) -> str:
@@ -664,8 +703,6 @@ def _json_kind(v: Any) -> str:
 
 
 def _json_to_float(v: Any, field: str, row: int) -> float:
-    if isinstance(v, float):
-        return v
     try:
         f = float(v)
     except OverflowError:
@@ -674,7 +711,9 @@ def _json_to_float(v: Any, field: str, row: int) -> float:
         raise JSONReaderError(
             "json_parse", f"field {field!r} record {row}: number {v} is outside the float64 range"
         )
-    return f
+    # A zero is +0.0 whatever its sign: Rust's parser cannot tell `-0` from
+    # `-0.0`, so no track keeps the sign of either.
+    return 0.0 if f == 0.0 else f
 
 
 class JSONReader:
@@ -716,16 +755,21 @@ class JSONReader:
         self,
         handle: Any,
         variables: Sequence[str] | None = None,
-        select: Any | None = None,
         *,
         records_path: Sequence[str] | None = None,
         numeric_columns: Sequence[str] | None = None,
-        **_: Any,
+        **unknown: Any,
     ) -> NativeDataset:
-        """Decode a JSON blob into a :class:`NativeDataset` of points."""
-        if select is not None:
+        """Decode a JSON blob into a :class:`NativeDataset` of points.
+
+        There is no ``select``: ``supports_selection`` is false, so the Provider
+        refuses one before the fetch. Any option not named here, ``select``
+        included, is ``json_option`` (as Rust's ``JsonReader`` refuses it)."""
+        if unknown:
             raise JSONReaderError(
-                "json_option", "the json reader supports no selection (supports_selection is false)"
+                "json_option",
+                f"unknown reader option(s) {sorted(unknown)}; json takes records_path, "
+                "numeric_columns",
             )
         path_keys = _json_str_list("records_path", records_path)
         numset = (
@@ -750,6 +794,11 @@ class JSONReader:
             raise
         except ValueError as e:
             raise JSONReaderError("json_parse", f"{handle}: {e}") from None
+        except RecursionError:
+            raise JSONReaderError(
+                "json_parse", f"{handle}: nesting deeper than {_JSON_MAX_DEPTH} levels"
+            ) from None
+        _json_check_tree(doc)
 
         node: Any = doc
         for depth, key in enumerate(path_keys):
@@ -813,7 +862,7 @@ class JSONReader:
 def _json_str_list(option: str, value: Any) -> list[str]:
     if value is None:
         return []
-    if isinstance(value, str) or not all(isinstance(x, str) for x in value):
+    if not isinstance(value, (list, tuple)) or not all(isinstance(x, str) for x in value):
         raise JSONReaderError(
             "json_option", f"reader option {option!r} must be an array of strings"
         )
