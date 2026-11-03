@@ -85,6 +85,9 @@ export NativeField, NativeDataset, variable_names, coord_names
 export Provider, const_provider, discrete_provider, Cadence, CONST, DISCRETE
 export materialize, refresh, refresh_times, prefetch, is_const
 
+# esm data-source URL templates (spec/esm-sources.md)
+export EsmTemplate, EsmTemplateError, expand_esm_template, esm_template_names, esm_mirrors
+
 # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11).
 # `take!`, `isready` and `close` are Base functions the group adds methods to.
 export sample_at, DimWindow, select_form, with_window, sample_windows_at
@@ -105,6 +108,7 @@ include("readers.jl")
 include("zarr.jl")
 include("zarr_write.jl")
 include("zarr_stream.jl")
+include("esm.jl")
 include("provider.jl")
 include("windows.jl")
 include("prefetch.jl")

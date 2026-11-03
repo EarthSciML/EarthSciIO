@@ -183,7 +183,7 @@ class _FileShare:
             return pend.result  # type: ignore[return-value]
         try:
             pend.result = self._provider._read_file(
-                self._provider.loader.resolve_url(file_anchor), select=self._select
+                self._provider._resolve(file_anchor), select=self._select
             )
             return pend.result
         except BaseException as exc:

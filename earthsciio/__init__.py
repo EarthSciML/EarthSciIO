@@ -61,6 +61,7 @@ from .errors import (
     UnknownReaderOption,
     Unsupported,
 )
+from .esm import EsmTemplate, EsmTemplateError, esm_template_names, expand_esm_template
 from .manifest import Manifest, parse_rfc3339, utc_now_rfc3339
 from .native import NativeDataset, NativeField
 from .prefetch import EpochSample, PrefetchGroup, Sample
@@ -136,6 +137,9 @@ __all__ = [
     # errors — registry seam
     "EarthSciIOError",
     "EpochSample",
+    # esm data-source URL templates (spec/esm-sources.md)
+    "EsmTemplate",
+    "EsmTemplateError",
     "FF10Reader",
     "FetchError",
     "GeoTIFFReader",
@@ -181,6 +185,8 @@ __all__ = [
     "dim_length",
     "encode_cds_url",
     "era5",
+    "esm_template_names",
+    "expand_esm_template",
     "file_source_is_current",
     "file_source_state",
     "format_registry",

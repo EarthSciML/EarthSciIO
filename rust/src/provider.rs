@@ -28,7 +28,7 @@
 //! uses [`time::OffsetDateTime`] for one consistent time type across the core.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use time::{Duration, OffsetDateTime};
 
@@ -206,6 +206,12 @@ pub struct DataSource {
     pub url_template: String,
     /// Failover mirrors sharing the same cache identity.
     pub mirrors: Vec<String>,
+    /// `Some` when `url_template` and every mirror are **esm templates**
+    /// (`spec/esm-sources.md` §1): the substitutions their `{name}` tokens are
+    /// bound to. Each is expanded at the file anchor, the mirrors at the same
+    /// anchor as the primary URL. `None` keeps the `time` format-description
+    /// syntax and literal mirrors.
+    pub esm_substitutions: Option<BTreeMap<String, String>>,
     /// Auth realm to fetch under (resolved by the cache's auth registry).
     pub auth_realm: Option<String>,
     /// Spatial/orthogonal selection for any reader that answers
@@ -262,6 +268,7 @@ impl DataSource {
             temporal: None,
             url_template: url_template.into(),
             mirrors: Vec::new(),
+            esm_substitutions: None,
             auth_realm: None,
             select: Selection::All,
             reader_options: serde_json::Map::new(),
@@ -338,6 +345,25 @@ impl DataSource {
         self
     }
 
+    /// Read `url_template` and the mirrors as **esm templates**
+    /// (`spec/esm-sources.md` §1), with `substitutions` binding their `{name}`
+    /// tokens. An unbound or reserved name is refused when the [`Provider`] is
+    /// built.
+    pub fn esm_template<I, K, V>(mut self, substitutions: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.esm_substitutions = Some(
+            substitutions
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        );
+        self
+    }
+
     /// Fetch under an auth realm.
     pub fn auth_realm(mut self, realm: impl Into<String>) -> Self {
         self.auth_realm = Some(realm.into());
@@ -370,6 +396,11 @@ pub struct Provider {
     /// [`StoreAccess::Cached`]) so it cannot change mid-run and so the
     /// environment is read once rather than per object.
     store_access: StoreAccess,
+    /// The expanded mirrors of each primary URL resolved so far, for an esm
+    /// template loader: its mirrors are expanded at the SAME anchor as the
+    /// primary (`spec/esm-sources.md` §1.5), and the fetch sees only the URL.
+    /// Shared with the [`with_window`](Self::with_window) copies.
+    mirror_memo: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl Provider {
@@ -403,6 +434,11 @@ impl Provider {
         // HERE rather than at the first read. Falling back to the cache would
         // silently restore the disk cost the caller explicitly asked to avoid —
         // which on a 20 GiB ephemeral disk is a failure, not a slow success.
+        if let Some(subs) = &loader.esm_substitutions {
+            for t in std::iter::once(&loader.url_template).chain(loader.mirrors.iter()) {
+                crate::esm::check_esm_template(t, subs)?;
+            }
+        }
         let store_access = loader.store_access.unwrap_or_else(StoreAccess::from_env);
         if store_access == StoreAccess::Direct
             && reader.store_backed()
@@ -428,6 +464,7 @@ impl Provider {
             coords: HashMap::new(),
             current_anchor: None,
             files: Vec::new(),
+            mirror_memo: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -671,6 +708,7 @@ impl Provider {
             coords: HashMap::new(),
             current_anchor: None,
             files: Vec::new(),
+            mirror_memo: self.mirror_memo.clone(),
         })
     }
 
@@ -781,6 +819,23 @@ impl Provider {
     /// whose canonical JSON legitimately contains `[...]` arrays (e.g. `area`,
     /// `variable`) that must NOT be read as `time` format components.
     fn resolve_url(&self, anchor: OffsetDateTime) -> Result<String> {
+        if let Some(subs) = &self.loader.esm_substitutions {
+            let url =
+                crate::esm::expand_esm_template(&self.loader.url_template, Some(anchor), subs)?;
+            if !self.loader.mirrors.is_empty() {
+                let mirrors = self
+                    .loader
+                    .mirrors
+                    .iter()
+                    .map(|m| crate::esm::expand_esm_template(m, Some(anchor), subs))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                self.mirror_memo
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(url.clone(), mirrors);
+            }
+            return Ok(url);
+        }
         let tmpl = &self.loader.url_template;
         if !tmpl.contains('[') || tmpl.starts_with("cds://") {
             return Ok(tmpl.clone());
@@ -799,7 +854,17 @@ impl Provider {
     /// Fetch (or reuse) the blob for `url` through the cache, with the loader's
     /// provenance, mirrors, and auth realm.
     fn fetch_blob(&self, url: &str) -> Result<crate::CachedBlob> {
-        let mirrors: Vec<&str> = self.loader.mirrors.iter().map(String::as_str).collect();
+        let expanded: Vec<String> = if self.loader.esm_substitutions.is_some() {
+            self.mirror_memo
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(url)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            self.loader.mirrors.clone()
+        };
+        let mirrors: Vec<&str> = expanded.iter().map(String::as_str).collect();
         let mut req = FetchRequest::new(url)
             .loader(&self.loader.name)
             .mirrors(&mirrors);

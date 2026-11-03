@@ -4,6 +4,30 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
+## Unreleased
+
+### All tracks
+
+- **feat:** esm URL templates (`spec/esm-sources.md` §1). `expand_esm_template`
+  expands an esm `source.url_template` — `{date:<format>}` with the directives
+  `%Y %y %m %d %j %H %M %S %%`, and custom `{name}` substitutions such as
+  `{sector}` — identically in Python, Julia and Rust, pinned by the shared
+  `esm-url-templates` scenario. `esm_template_names` lists the substitutions
+  a template needs. Errors carry an `esm_template_*` code; an unbound
+  substitution is an error, never a URL with braces in it.
+- **feat:** a provider takes an esm template as its URL (Python `EsmTemplate`,
+  Julia `EsmTemplate`, Rust `DataSource::esm_template`), with mirrors that are
+  esm templates expanded at the same anchor and tried in order after the
+  primary URL.
+
+### Julia
+
+- **feat:** mirror failover. `fetch_blob(…; mirrors)` tries each mirror after
+  the primary URL and caches the blob under the primary's key, and `Provider`
+  takes `mirrors`. As in Python and Rust, rung 0 of the `file://` recheck
+  serves a present blob whose primary source is missing when mirrors were
+  given (`spec/cache-format.md` §4.1).
+
 ## v0.2.0
 
 Changes since v0.1.4. A minor bump because the writers now reject

@@ -65,7 +65,12 @@ A data provider over the shared cache.
     `nothing` returns all.
   * `reader_kwargs` — extra keywords forwarded to [`read_native`] (e.g. the CSV
     reader's `numeric_columns`).
-  * `source_loader` / `auth_realm` — recorded in the cache manifest on fetch."""
+  * `source_loader` / `auth_realm` — recorded in the cache manifest on fetch.
+  * `mirrors` — fallback URLs tried in order when the primary fetch fails; the
+    blob is still cached under the primary URL's key. With an
+    [`EsmTemplate`](@ref) `url`, leave this empty and give the mirrors to the
+    template: they are esm templates expanded at the same anchor
+    (spec/esm-sources.md §1.5)."""
 struct Provider
     cache::Cache
     format::String
@@ -78,6 +83,7 @@ struct Provider
     source_loader::Union{Nothing, String}
     auth_realm::Union{Nothing, String}
     records_per_sample::Union{Nothing, Int}
+    mirrors_for::Function
 end
 
 function Provider(
@@ -86,7 +92,7 @@ function Provider(
         time_dim = nothing, variables = nothing,
         reader_kwargs = NamedTuple(),
         source_loader = nothing, auth_realm = nothing,
-        records_per_sample = nothing
+        records_per_sample = nothing, mirrors = String[]
     )
     haskey(FORMAT_REGISTRY, format) || throw(
         ArgumentError(
@@ -153,6 +159,18 @@ function Provider(
                 _ -> u
         end
         ) : url
+    literal_mirrors = String[String(m) for m in mirrors]
+    if url isa EsmTemplate
+        isempty(literal_mirrors) || throw(
+            ArgumentError(
+                "an EsmTemplate url carries its own mirrors (EsmTemplate(t; mirrors = …)); " *
+                    "a separate `mirrors` list would not be expanded at the anchor"
+            )
+        )
+        mirrors_for = t -> esm_mirrors(url, t)
+    else
+        mirrors_for = _ -> literal_mirrors
+    end
     return Provider(
         cache, String(format), cadence, tvec, url_for,
         time_dim === nothing ? nothing : String(time_dim),
@@ -160,9 +178,17 @@ function Provider(
         kw,
         source_loader === nothing ? nothing : String(source_loader),
         auth_realm === nothing ? nothing : String(auth_realm),
-        records_per_sample === nothing ? nothing : Int(records_per_sample)
+        records_per_sample === nothing ? nothing : Int(records_per_sample),
+        mirrors_for
     )
 end
+
+# Fetch (or reuse) the blob of the file for time `t`, with its mirrors.
+_fetch_at(p::Provider, t) = fetch_blob(
+    p.cache, p.url_for(t);
+    source_loader = p.source_loader, auth_realm = p.auth_realm,
+    mirrors = p.mirrors_for(t)
+)
 
 # The loader's declared decode options, checked against the bound reader AT
 # CONSTRUCTION (spec/registries.md §2.1). An unrecognised option is an ERROR
@@ -253,10 +279,7 @@ function _load(p::Provider, t; select = nothing, records = nothing)
             "reader $(typeof(reader)) does not support select/pushdown"
         )
     )
-    entry = fetch_blob(
-        p.cache, p.url_for(t);
-        source_loader = p.source_loader, auth_realm = p.auth_realm
-    )
+    entry = _fetch_at(p, t)
     # PROJECTION PUSHDOWN for a whole-file reader that declares a `variables`
     # decode option (the `parquet` reader): the loader's `variables` reach the
     # READER, so only those column chunks come off disk — spec/conformance.md §3
@@ -689,12 +712,13 @@ decoding. Lets a caller pull all blobs up front (e.g. before a solve, or while
 online) so later [`materialize`]/[`refresh`] calls hit a warm, offline-readable
 cache. Returns the [`CacheEntry`] for each."""
 function prefetch(p::Provider)
-    urls = p.cadence == CONST ? String[p.url_for(0.0)] :
-        unique(String[p.url_for(t) for t in p.times])
-    return CacheEntry[
-        fetch_blob(
-            p.cache, u; source_loader = p.source_loader,
-            auth_realm = p.auth_realm
-        ) for u in urls
-    ]
+    ts = Float64[]
+    seen = Set{String}()
+    for t in (p.cadence == CONST ? Float64[0.0] : p.times)
+        u = p.url_for(t)
+        u in seen && continue
+        push!(seen, u)
+        push!(ts, t)
+    end
+    return CacheEntry[_fetch_at(p, t) for t in ts]
 end
