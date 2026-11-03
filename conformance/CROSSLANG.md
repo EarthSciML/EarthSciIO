@@ -97,9 +97,9 @@ disjoint subsets).
                   "units": "hours since 2018-11-08 00:00:00", "calendar": "gregorian" }
       }
     },
-    "openaq-points-slice": {               // a track with no reader for the format
-      "format": "csv", "status": "skipped",
-      "reason": "no active reader registered for format 'csv' in the Rust track"
+    "some-case": {                         // a track with no reader for the format
+      "format": "json", "status": "skipped",
+      "reason": "no active reader registered for format 'json' in the Rust track"
     }
   }
 }
@@ -159,7 +159,7 @@ the oracle [`verify.py`](verify.py).
 | `era5-grid-sub-tile` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `station-labels-text` | netcdf | ✅ | ✅ | ✅ (three-way) |
 | `station-labels-window` | netcdf | ✅ | ✅ | ✅ (three-way) |
-| `openaq-points-slice` | csv | ✅ | ✅ | ⊘ no reader |
+| `openaq-points-slice` | csv | ✅ | ✅ | ✅ (three-way) |
 | `ff10-point-slice` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `ff10-zip-egu-glob` | ff10 | ✅ | ✅ | ✅ (three-way) |
 | `isrm-zarr-tile` | zarr | ✅ | ✅ | ✅ (three-way) |
@@ -177,11 +177,9 @@ The parquet case is the columnar one: it is where the reader OPTIONS
 (`float_columns`, `null_int`, `null_string`) and the `variables` projection are
 cross-checked, and where the `fill_value` normalisation above is exercised.
 
-The Rust track has no `csv` reader yet, so the CSV case is a logged Rust skip
-(mirrors [`rust/tests/conformance_decode.rs`](../rust/tests/conformance_decode.rs)),
-cross-checked Python↔Julia. Every other case carries the full three-way proof.
-When the Rust `csv` reader lands, the dumper reports `csv` in its `readers` and the
-coverage gate **automatically requires** it to decode the CSV case — no edit here.
+Every case carries the full three-way proof. The CSV case was a logged Rust
+skip until the Rust `csv` reader landed; since a track that reports a format in
+its `readers` must decode every case of it, the coverage gate now requires it.
 
 ### The `permuted-order-tile` selection gate (Phase 1)
 

@@ -157,9 +157,9 @@ pub use format::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use format::{
-    write_zarr_v3, ArrayData, AxisSelect, Coord, DType, DimWindow, Ff10Reader, FormatRegistry,
-    GeoTiffReader, NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader, Records,
-    Selection, ShapefileReader, ZarrReader,
+    write_zarr_v3, ArrayData, AxisSelect, Coord, CsvReader, DType, DimWindow, Ff10Reader,
+    FormatRegistry, GeoTiffReader, NativeDataset, NativeField, NetcdfReader, ParquetReader, Reader,
+    Records, Selection, ShapefileReader, ZarrReader,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use key::{cache_key, cache_key_range, sha256_file, sha256_hex};

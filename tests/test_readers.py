@@ -819,3 +819,26 @@ def test_ff10_zip_case_decodes_to_oracle_arrays(offline_cache):
             _assert_string(nds[name], spec["data"], name)
         else:
             _assert_numeric(nds[name], spec["data"], name)
+
+
+def test_csv_header_and_option_errors(tmp_path):
+    reader = CSVReader()
+    dup = tmp_path / "dup.csv"
+    dup.write_text("id,value,value\n1,2,3\n")
+    with pytest.raises(ValueError, match="repeats"):
+        reader.read_native(str(dup))
+    ok = tmp_path / "ok.csv"
+    ok.write_text("lat,lon\n1,2\n")
+    with pytest.raises(KeyError, match="longtitude"):
+        reader.read_native(str(ok), numeric_columns=["lat", "longtitude"])
+    # None options are unset.
+    nds = reader.read_native(str(ok), numeric_columns=None, delimiter=None, header_row=None)
+    assert list(nds["lat"].data) == [1.0]
+
+
+def test_csv_is_utf8_with_bom_dropped(tmp_path):
+    p = tmp_path / "bom.csv"
+    p.write_bytes("\ufeffid,name\n1,S\u00e3o Paulo\n".encode("utf-8"))
+    nds = CSVReader().read_native(str(p), numeric_columns=["id"])
+    assert list(nds["id"].data) == [1.0]
+    assert nds["name"].data == ["S\u00e3o Paulo"]

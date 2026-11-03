@@ -26,6 +26,8 @@
 //! store, and on wasm32 that store is [`OpfsStore`]. See `crate`'s module docs.
 
 #[cfg(not(target_arch = "wasm32"))]
+mod csv_reader;
+#[cfg(not(target_arch = "wasm32"))]
 mod ff10;
 #[cfg(not(target_arch = "wasm32"))]
 mod geotiff;
@@ -46,6 +48,8 @@ mod zarr_store;
 pub mod zarr_stream;
 mod zarr_write;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use csv_reader::CsvReader;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ff10::Ff10Reader;
 #[cfg(not(target_arch = "wasm32"))]
@@ -980,13 +984,16 @@ impl FormatRegistry {
         Self::default()
     }
 
-    /// Registry with the built-in **active** readers: `netcdf` (NetCDF-3
-    /// classic) and `geotiff` (single-/multi-band raster). Further readers
-    /// (csv/zarr) register the same way.
+    /// Registry with the built-in **active** readers: `netcdf`, `geotiff`,
+    /// `csv`, `ff10`, `shapefile`, `parquet` and `zarr`.
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(NetcdfReader::new()));
         r.register(Arc::new(GeoTiffReader::new()));
+        // csv (points table): numeric columns float64, the rest strings, all on
+        // `index`. `numeric_columns`/`delimiter`/`header_row` reach it from a
+        // document through `Reader::configured`.
+        r.register(Arc::new(CsvReader::new()));
         // FF10 point (SMOKE/Emissions.jl FF10_POINT): the DEFAULT reader
         // (member=None) decodes a bare `.csv` — the conformance/crosscheck path.
         // A member-configured reader for the zipped tutorial input is injected via

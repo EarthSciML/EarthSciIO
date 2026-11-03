@@ -4,6 +4,32 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
+## Unreleased
+
+### Rust
+
+- **feat:** a `csv` reader (`CsvReader`), registered under `csv`, which
+  `spec/registries.md` already listed as active. It decodes as the Python and
+  Julia readers do: `numeric_columns` (else a column is numeric when every cell
+  parses), `delimiter`, `header_row`, every other column a string field, all on
+  `index`, and a `variables` projection. The cross-language case
+  `openaq-points-slice` now has three-way equality.
+
+### All tracks (csv)
+
+- **breaking (Julia):** the csv reader's `header_row` is now 0-based (default
+  0), as it is in Python and Rust, so one document picks the same row in every
+  track. A Julia caller passing `header_row = n` must now pass `n - 1`.
+- **fix:** a csv header that repeats a column name is an error instead of one
+  column silently replacing the other, and a `numeric_columns` entry the header
+  lacks is an error instead of being ignored.
+- **fix:** csv text is read as UTF-8 in every track (Python used the locale
+  encoding) and a leading byte-order mark is dropped (Python and Julia kept it
+  in the first column name).
+- **fix:** a `null` csv option is unset in every track. Rust errors now name the
+  file line rather than a count of non-blank rows.
+- `spec/registries.json` lists `txt` as a csv extension, as the readers do.
+
 ## v0.2.0
 
 Changes since v0.1.4. A minor bump because the writers now reject

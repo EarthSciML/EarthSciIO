@@ -323,7 +323,8 @@
       "tier": "stable",
       "bindings": {
         "python": "CSVReader",
-        "julia": "CSVReader"
+        "julia": "CSVReader",
+        "rust": "CsvReader"
       }
     },
     {

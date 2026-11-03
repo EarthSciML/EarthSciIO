@@ -721,25 +721,49 @@ fields have a single dimension `index`; there are no coordinates.
 the reader falls back to best-effort inference (every value parses as a float),
 which the loader/`.esm` node should override. Quoted fields with embedded
 delimiters are not handled (the points corpus has none); add that when a loader
-needs it."""
+needs it.
+
+`header_row` is the **0-based** non-blank row holding the column names (default
+0), the same index in every track; rows before it are dropped. The text is UTF-8
+and a leading byte-order mark is dropped. A header that repeats a column name,
+or a `numeric_columns` entry the header lacks, is an error. A `nothing` option
+is unset."""
 struct CSVReader <: Reader end
 
 _parses_float(s::AbstractString) = tryparse(Float64, strip(s)) !== nothing
 
 function read_native(
         ::CSVReader, path::AbstractString;
-        numeric_columns = nothing, delimiter::AbstractString = ",",
-        header_row::Integer = 1
+        numeric_columns = nothing, delimiter = ",", header_row = 0
     )
+    delimiter = delimiter === nothing ? "," : String(delimiter)
+    header_row = header_row === nothing ? 0 : Int(header_row)
+    header_row >= 0 || throw(ArgumentError("header_row must be >= 0 (0-based); got $header_row"))
     rows = Vector{String}[]
-    for ln in eachline(String(path))
+    for (i, ln) in enumerate(eachline(String(path)))
+        i == 1 && (ln = chopprefix(ln, "\ufeff"))   # a UTF-8 byte-order mark
         isempty(ln) && continue
         push!(rows, String.(split(rstrip(ln, ['\r']), delimiter)))
     end
     isempty(rows) && return NativeDataset()
-    header = rows[header_row]
-    body = rows[(header_row + 1):end]
+    header_row < length(rows) || throw(
+        ArgumentError(
+            "header_row $header_row is past the $(length(rows)) non-blank rows of $path"
+        )
+    )
+    header = rows[header_row + 1]                   # 0-based, as in every track
+    body = rows[(header_row + 2):end]
+    dups = sort!(unique([h for h in header if count(==(h), header) > 1]))
+    isempty(dups) || throw(
+        ArgumentError("CSV header repeats column names $dups; every column needs a distinct name")
+    )
     numset = numeric_columns === nothing ? nothing : Set(String.(collect(numeric_columns)))
+    if numset !== nothing
+        missing = sort!([c for c in numset if !(c in header)])
+        isempty(missing) || throw(
+            KeyError("numeric_columns not in CSV: $missing; present columns: $header")
+        )
+    end
 
     vars = Dict{String, NativeField}()
     for (j, col) in enumerate(header)

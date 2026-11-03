@@ -8,9 +8,9 @@
 //! is component (b)." The corpus `expected` arrays are the cross-language oracle
 //! — equality here is what "matching the Python and Julia tracks" means.
 //!
-//! Cases whose format has no Rust reader yet (e.g. `csv`) are skipped with a
+//! Cases whose format has no Rust reader yet are skipped with a
 //! note, so the test runs every decodable case today and picks up new readers
-//! (csv/geotiff/zarr) automatically as they register — no edit here.
+//! automatically as they register — no edit here.
 
 // Native-only: this tier drives the cache, the transports and the format
 // readers, none of which exist on wasm32 (see the crate's module docs).
@@ -166,6 +166,15 @@ fn decodes_every_corpus_case_to_match_expected() {
                     .configured(&options)
                     .expect("configured shapefile reader")
                 {
+                    Some(configured) => configured,
+                    None => reader,
+                }
+            } else if format == "csv" {
+                // The csv case pins its numeric columns (a digit-only id column
+                // stays text), the delimiter and the 0-based header row.
+                let options =
+                    declared_options(&case, &["numeric_columns", "delimiter", "header_row"]);
+                match reader.configured(&options).expect("configured csv reader") {
                     Some(configured) => configured,
                     None => reader,
                 }
