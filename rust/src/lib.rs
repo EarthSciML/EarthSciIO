@@ -132,6 +132,8 @@ pub mod store;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod test_env;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod time_axis;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod validate;
@@ -190,6 +192,8 @@ pub use s3_config::{
     bucket_options_from_env, options_for_bucket, options_for_url, parse_bucket_options,
     stated_region, stated_signing, BUCKET_OPTIONS_ENV,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use time_axis::{decode_coord_times, decode_time_axis};
 
 /// The 0.1.1 spelling of [`DataSource`]. From `.esm` 1.0.0 the declaration is a
 /// `data_sources` entry, not a `data_loaders` one, and its consumers spell it

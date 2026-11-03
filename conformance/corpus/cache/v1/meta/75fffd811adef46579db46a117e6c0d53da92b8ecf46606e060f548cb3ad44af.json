@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 392,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "e7827fbf5350bb0ed3bc68be7d8ed9bd7a0412cee3c3f6bb391d617199253e7b",
+  "source_loader": "timeaxis",
+  "url": "https://data.earthsci.dev/timeaxis/irregular.20240301.nc"
+}

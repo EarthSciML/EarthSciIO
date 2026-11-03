@@ -1,0 +1,1076 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "decoded-time-axis",
+  "description": "Finding a record by the file's own time axis (spec/esm-sources.md section 2.5). `decode`: a raw CF time axis (`values` stored as `dtype`, a null value is NaN) with its `units` and `calendar` decodes to `seconds` (Unix seconds, UTC, floored), or is not decoded (`seconds` null). `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (`T` in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`), and every entry of `errors` is an error. `files[].times_s` are the times each file really holds.",
+  "blobs": [
+    {
+      "url": "https://data.earthsci.dev/timeaxis/trimmed.20240301.nc",
+      "cache_key": "565ab1830084d8738bf5b6718e899ab59544f6826035745b2f4eaefde417f25b",
+      "blob_path": "cache/v1/blobs/56/565ab1830084d8738bf5b6718e899ab59544f6826035745b2f4eaefde417f25b.nc",
+      "content_sha256": "e1e6e0cb145adcd7847bb08b6c90b088a843cb3eb13ad9132aab1c8532a61793",
+      "bytes": 708
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/trimmed.20240302.nc",
+      "cache_key": "b3fd2c50b20f73cb6e751ff7e7d223e4af6eddc4eee26d7478d8f65cc07f0712",
+      "blob_path": "cache/v1/blobs/b3/b3fd2c50b20f73cb6e751ff7e7d223e4af6eddc4eee26d7478d8f65cc07f0712.nc",
+      "content_sha256": "56723e7cf0c46452f235955a2ad7dcb61e016444b7c1d7dbf9e1fe3fc24bdebd",
+      "bytes": 872
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/trimmed.20240303.nc",
+      "cache_key": "8f55e0cc6d23ca8de8d343585c3f968b007f57e009f35d5eaf86ba80dcd90585",
+      "blob_path": "cache/v1/blobs/8f/8f55e0cc6d23ca8de8d343585c3f968b007f57e009f35d5eaf86ba80dcd90585.nc",
+      "content_sha256": "82b4822733598406e62ae91df832acda51a643e32e618f456672a235f893392c",
+      "bytes": 652
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/irregular.20240301.nc",
+      "cache_key": "75fffd811adef46579db46a117e6c0d53da92b8ecf46606e060f548cb3ad44af",
+      "blob_path": "cache/v1/blobs/75/75fffd811adef46579db46a117e6c0d53da92b8ecf46606e060f548cb3ad44af.nc",
+      "content_sha256": "e7827fbf5350bb0ed3bc68be7d8ed9bd7a0412cee3c3f6bb391d617199253e7b",
+      "bytes": 392
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/noleap.20240301.nc",
+      "cache_key": "c7d1d9ac73ab450fb85bbe6ae66c81342038a1e7b767928acc832393cd91d5f3",
+      "blob_path": "cache/v1/blobs/c7/c7d1d9ac73ab450fb85bbe6ae66c81342038a1e7b767928acc832393cd91d5f3.nc",
+      "content_sha256": "bf076832cff266dc9d87d33045bce7faf50ae933a670002b60e18606d0bfe1f6",
+      "bytes": 728
+    }
+  ],
+  "decode": [
+    {
+      "id": "int-hours",
+      "values": [
+        0,
+        1,
+        24
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 00:00:00",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462064400,
+        1462147200
+      ]
+    },
+    {
+      "id": "float-days",
+      "values": [
+        0.0,
+        0.5,
+        1.25
+      ],
+      "dtype": "float64",
+      "units": "days since 2015-01-01",
+      "calendar": null,
+      "seconds": [
+        1420070400,
+        1420113600,
+        1420178400
+      ]
+    },
+    {
+      "id": "iso-z-minutes",
+      "values": [
+        0,
+        30,
+        90
+      ],
+      "dtype": "int64",
+      "units": "minutes since 2016-05-01T00:30:00Z",
+      "calendar": "gregorian",
+      "seconds": [
+        1462062600,
+        1462064400,
+        1462068000
+      ]
+    },
+    {
+      "id": "offset-reference",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 00:00:00 +01:00",
+      "calendar": "standard",
+      "seconds": [
+        1462057200,
+        1462060800
+      ]
+    },
+    {
+      "id": "compact-offset",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 00:00:00 -0130",
+      "calendar": "standard",
+      "seconds": [
+        1462066200,
+        1462069800
+      ]
+    },
+    {
+      "id": "utc-suffix",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "seconds since 2016-05-01 00:00:00 UTC",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462060801
+      ]
+    },
+    {
+      "id": "short-reference",
+      "values": [
+        0,
+        2
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-5-1 06",
+      "calendar": "standard",
+      "seconds": [
+        1462082400,
+        1462089600
+      ]
+    },
+    {
+      "id": "loose-time",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 6:5:7",
+      "calendar": "standard",
+      "seconds": [
+        1462082707,
+        1462086307
+      ]
+    },
+    {
+      "id": "fractional-offset",
+      "values": [
+        0
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 06:00:00.5 +01:00",
+      "calendar": "standard",
+      "seconds": [
+        1462078800
+      ]
+    },
+    {
+      "id": "fractional-reference",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01 06:30:00.25",
+      "calendar": "standard",
+      "seconds": [
+        1462084200,
+        1462087800
+      ]
+    },
+    {
+      "id": "upper-case-unit",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "HOURS since 2016-05-01",
+      "calendar": "Standard",
+      "seconds": [
+        1462060800,
+        1462064400
+      ]
+    },
+    {
+      "id": "singular-unit",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hour since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462064400
+      ]
+    },
+    {
+      "id": "hr-alias",
+      "values": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64",
+      "units": "hr since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462064400,
+        1462068000
+      ]
+    },
+    {
+      "id": "min-alias",
+      "values": [
+        0,
+        90
+      ],
+      "dtype": "int64",
+      "units": "mins since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462066200
+      ]
+    },
+    {
+      "id": "s-alias",
+      "values": [
+        0,
+        59,
+        61
+      ],
+      "dtype": "int64",
+      "units": "s since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462060859,
+        1462060861
+      ]
+    },
+    {
+      "id": "d-alias",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "d since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462147200
+      ]
+    },
+    {
+      "id": "msec-alias",
+      "values": [
+        0,
+        1500,
+        2000
+      ],
+      "dtype": "int64",
+      "units": "msec since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462060801,
+        1462060802
+      ]
+    },
+    {
+      "id": "nanoseconds",
+      "values": [
+        0,
+        1500000000
+      ],
+      "dtype": "int64",
+      "units": "nanoseconds since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462060801
+      ]
+    },
+    {
+      "id": "float-truncates",
+      "values": [
+        0.9999999,
+        1.5,
+        -0.5
+      ],
+      "dtype": "float64",
+      "units": "seconds since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462060800,
+        1462060801,
+        1462060799
+      ]
+    },
+    {
+      "id": "negative",
+      "values": [
+        -1,
+        -25
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-02",
+      "calendar": "standard",
+      "seconds": [
+        1462143600,
+        1462057200
+      ]
+    },
+    {
+      "id": "unsorted",
+      "values": [
+        5,
+        1,
+        3
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01",
+      "calendar": "standard",
+      "seconds": [
+        1462078800,
+        1462064400,
+        1462071600
+      ]
+    },
+    {
+      "id": "epoch-seconds",
+      "values": [
+        1709251200,
+        1709254800
+      ],
+      "dtype": "int64",
+      "units": "seconds since 1970-01-01",
+      "calendar": null,
+      "seconds": [
+        1709251200,
+        1709254800
+      ]
+    },
+    {
+      "id": "proleptic",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "days since 2000-01-01",
+      "calendar": "proleptic_gregorian",
+      "seconds": [
+        946684800,
+        946771200
+      ]
+    },
+    {
+      "id": "noleap",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "days since 2000-01-01",
+      "calendar": "noleap",
+      "seconds": null
+    },
+    {
+      "id": "360-day",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "days since 2000-01-01",
+      "calendar": "360_day",
+      "seconds": null
+    },
+    {
+      "id": "julian",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "days since 2000-01-01",
+      "calendar": "julian",
+      "seconds": null
+    },
+    {
+      "id": "months",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "months since 2016-01-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "years",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "years since 2016-01-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "no-since",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "no-units",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": null,
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "bad-reference",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since yesterday",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "bad-month",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-13-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "bad-day",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-02-30",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "bad-hour",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "hours since 2016-01-01 25:00",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "week-unit",
+      "values": [
+        0,
+        1
+      ],
+      "dtype": "int64",
+      "units": "weeks since 2016-01-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "missing-value",
+      "values": [
+        0.0,
+        null
+      ],
+      "dtype": "float64",
+      "units": "hours since 2016-05-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "out-of-range",
+      "values": [
+        0,
+        200000
+      ],
+      "dtype": "int64",
+      "units": "days since 1970-01-01",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "empty",
+      "values": [],
+      "dtype": "int64",
+      "units": "hours since 2016-05-01",
+      "calendar": "standard",
+      "seconds": []
+    }
+  ],
+  "providers": {
+    "trimmed": {
+      "note": "Hourly records in daily files. The first file lacks its first three records, the second counts in float minutes from T0, and the third lacks its last four records.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/trimmed.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-04T00:00:00Z",
+      "end_s": 1709510400,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709510400
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/trimmed.20240301.nc",
+          "times_s": [
+            1709262000,
+            1709265600,
+            1709269200,
+            1709272800,
+            1709276400,
+            1709280000,
+            1709283600,
+            1709287200,
+            1709290800,
+            1709294400,
+            1709298000,
+            1709301600,
+            1709305200,
+            1709308800,
+            1709312400,
+            1709316000,
+            1709319600,
+            1709323200,
+            1709326800,
+            1709330400,
+            1709334000
+          ],
+          "units": "hours since 2024-03-01 00:00:00",
+          "calendar": "standard"
+        },
+        {
+          "url": "https://data.earthsci.dev/timeaxis/trimmed.20240302.nc",
+          "times_s": [
+            1709337600,
+            1709341200,
+            1709344800,
+            1709348400,
+            1709352000,
+            1709355600,
+            1709359200,
+            1709362800,
+            1709366400,
+            1709370000,
+            1709373600,
+            1709377200,
+            1709380800,
+            1709384400,
+            1709388000,
+            1709391600,
+            1709395200,
+            1709398800,
+            1709402400,
+            1709406000,
+            1709409600,
+            1709413200,
+            1709416800,
+            1709420400
+          ],
+          "units": "minutes since 2024-03-01T00:00:00Z",
+          "calendar": "gregorian"
+        },
+        {
+          "url": "https://data.earthsci.dev/timeaxis/trimmed.20240303.nc",
+          "times_s": [
+            1709424000,
+            1709427600,
+            1709431200,
+            1709434800,
+            1709438400,
+            1709442000,
+            1709445600,
+            1709449200,
+            1709452800,
+            1709456400,
+            1709460000,
+            1709463600,
+            1709467200,
+            1709470800,
+            1709474400,
+            1709478000,
+            1709481600,
+            1709485200,
+            1709488800,
+            1709492400
+          ],
+          "units": "seconds since 1970-01-01",
+          "calendar": null
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 1,
+          "note": "05:00 is the third record of the trimmed first file",
+          "T": [
+            50.0,
+            51.0
+          ]
+        },
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 2,
+          "note": "05:00 is the third record of the trimmed first file",
+          "T": [
+            [
+              50.0,
+              51.0
+            ],
+            [
+              60.0,
+              61.0
+            ]
+          ],
+          "time_s": [
+            1709269200,
+            1709272800
+          ]
+        },
+        {
+          "t_s": 1709271000,
+          "records_per_sample": 1,
+          "note": "a time between records snaps to the record before",
+          "T": [
+            50.0,
+            51.0
+          ]
+        },
+        {
+          "t_s": 1709271000,
+          "records_per_sample": 2,
+          "note": "a time between records snaps to the record before",
+          "T": [
+            [
+              50.0,
+              51.0
+            ],
+            [
+              60.0,
+              61.0
+            ]
+          ],
+          "time_s": [
+            1709269200,
+            1709272800
+          ]
+        },
+        {
+          "t_s": 1709334000,
+          "records_per_sample": 1,
+          "note": "the last record of the first file; its successor is in the next file",
+          "T": [
+            230.0,
+            231.0
+          ]
+        },
+        {
+          "t_s": 1709334000,
+          "records_per_sample": 2,
+          "note": "the last record of the first file; its successor is in the next file",
+          "T": [
+            [
+              230.0,
+              231.0
+            ],
+            [
+              240.0,
+              241.0
+            ]
+          ],
+          "time_s": [
+            1709334000,
+            1709337600
+          ]
+        },
+        {
+          "t_s": 1709362800,
+          "records_per_sample": 1,
+          "note": "the minutes axis of the second file",
+          "T": [
+            310.0,
+            311.0
+          ]
+        },
+        {
+          "t_s": 1709362800,
+          "records_per_sample": 2,
+          "note": "the minutes axis of the second file",
+          "T": [
+            [
+              310.0,
+              311.0
+            ],
+            [
+              320.0,
+              321.0
+            ]
+          ],
+          "time_s": [
+            1709362800,
+            1709366400
+          ]
+        },
+        {
+          "t_s": 1709492400,
+          "records_per_sample": 1,
+          "note": "the last record of the file trimmed at its end",
+          "T": [
+            670.0,
+            671.0
+          ]
+        },
+        {
+          "t_s": 1709492400,
+          "records_per_sample": 2,
+          "note": "the last record of the file trimmed at its end",
+          "T": [
+            [
+              670.0,
+              671.0
+            ],
+            [
+              670.0,
+              671.0
+            ]
+          ],
+          "time_s": [
+            1709492400,
+            1709492400
+          ]
+        },
+        {
+          "t_s": 1709254800,
+          "records_per_sample": 1,
+          "note": "before the first record of a trimmed file: the cadence offset (record 1, which holds 04:00) is used, as the Python track does",
+          "T": [
+            40.0,
+            41.0
+          ]
+        },
+        {
+          "t_s": 1709254800,
+          "records_per_sample": 2,
+          "note": "before the first record of a trimmed file: the cadence offset (record 1, which holds 04:00) is used, as the Python track does",
+          "T": [
+            [
+              40.0,
+              41.0
+            ],
+            [
+              50.0,
+              51.0
+            ]
+          ],
+          "time_s": [
+            1709254800,
+            1709258400
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "t_s": 1709499600,
+          "records_per_sample": 1,
+          "note": "after the last record of a file trimmed at its end: the cadence offset is past the file's end, an error"
+        },
+        {
+          "t_s": 1709499600,
+          "records_per_sample": 2,
+          "note": "after the last record of a file trimmed at its end: the cadence offset is past the file's end, an error"
+        }
+      ]
+    },
+    "irregular": {
+      "note": "One daily file whose axis is irregular and out of order: records at 00, 01, 03, 12 and 06 hours, in that order.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/irregular.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-02T00:00:00Z",
+      "end_s": 1709337600,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709337600
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/irregular.20240301.nc",
+          "times_s": [
+            1709251200,
+            1709254800,
+            1709262000,
+            1709294400,
+            1709272800
+          ],
+          "units": "hours since 2024-03-01",
+          "calendar": "proleptic_gregorian"
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709253000,
+          "records_per_sample": 1,
+          "note": "00:30 snaps to the 00:00 record",
+          "T": [
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "t_s": 1709253000,
+          "records_per_sample": 2,
+          "note": "00:30 snaps to the 00:00 record",
+          "T": [
+            [
+              0.0,
+              1.0
+            ],
+            [
+              10.0,
+              11.0
+            ]
+          ],
+          "time_s": [
+            1709251200,
+            1709254800
+          ]
+        },
+        {
+          "t_s": 1709258400,
+          "records_per_sample": 1,
+          "note": "02:00 is between the 01:00 and 03:00 records: the 01:00 one",
+          "T": [
+            10.0,
+            11.0
+          ]
+        },
+        {
+          "t_s": 1709258400,
+          "records_per_sample": 2,
+          "note": "02:00 is between the 01:00 and 03:00 records: the 01:00 one",
+          "T": [
+            [
+              10.0,
+              11.0
+            ],
+            [
+              30.0,
+              31.0
+            ]
+          ],
+          "time_s": [
+            1709258400,
+            1709262000
+          ]
+        },
+        {
+          "t_s": 1709276400,
+          "records_per_sample": 1,
+          "note": "07:00: the 06:00 record, the last in file order",
+          "T": [
+            60.0,
+            61.0
+          ]
+        },
+        {
+          "t_s": 1709276400,
+          "records_per_sample": 2,
+          "note": "07:00: the 06:00 record, the last in file order",
+          "T": [
+            [
+              60.0,
+              61.0
+            ],
+            [
+              60.0,
+              61.0
+            ]
+          ],
+          "time_s": [
+            1709276400,
+            1709280000
+          ]
+        },
+        {
+          "t_s": 1709294400,
+          "records_per_sample": 1,
+          "note": "the last time in the file, stored fourth",
+          "T": [
+            120.0,
+            121.0
+          ]
+        },
+        {
+          "t_s": 1709294400,
+          "records_per_sample": 2,
+          "note": "the last time in the file, stored fourth",
+          "T": [
+            [
+              120.0,
+              121.0
+            ],
+            [
+              60.0,
+              61.0
+            ]
+          ],
+          "time_s": [
+            1709294400,
+            1709298000
+          ]
+        }
+      ],
+      "errors": [
+        {
+          "t_s": 1709298000,
+          "records_per_sample": 1,
+          "note": "after the axis: the cadence offset (13) is past the file, an error"
+        },
+        {
+          "t_s": 1709298000,
+          "records_per_sample": 2,
+          "note": "after the axis: the cadence offset (13) is past the file, an error"
+        }
+      ]
+    },
+    "noleap": {
+      "note": "A daily file missing its first two records on the noleap calendar, which no track decodes: the record is the cadence offset, so it is the wrong one.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/noleap.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-02T00:00:00Z",
+      "end_s": 1709337600,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709337600
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/noleap.20240301.nc",
+          "times_s": [
+            1709258400,
+            1709262000,
+            1709265600,
+            1709269200,
+            1709272800,
+            1709276400,
+            1709280000,
+            1709283600,
+            1709287200,
+            1709290800,
+            1709294400,
+            1709298000,
+            1709301600,
+            1709305200,
+            1709308800,
+            1709312400,
+            1709316000,
+            1709319600,
+            1709323200,
+            1709326800,
+            1709330400,
+            1709334000
+          ],
+          "units": "hours since 2024-03-01 00:00:00",
+          "calendar": "noleap"
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 1,
+          "note": "an axis not decoded: the cadence offset (record 5, which holds 07:00)",
+          "T": [
+            70.0,
+            71.0
+          ]
+        },
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 2,
+          "note": "an axis not decoded: the cadence offset (record 5, which holds 07:00)",
+          "T": [
+            [
+              70.0,
+              71.0
+            ],
+            [
+              80.0,
+              81.0
+            ]
+          ],
+          "time_s": [
+            1709269200,
+            1709272800
+          ]
+        }
+      ],
+      "errors": []
+    }
+  }
+}

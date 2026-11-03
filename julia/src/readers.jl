@@ -180,7 +180,13 @@ opens it again to read — and on a GEOS-FP A1 file that second open (16.9 ms)
 costs MORE than the records it saves (21.4 ms whole → 18.5 ms selected). With the
 callable there is exactly ONE open, and the `mod1` still runs in the caller's own
 closure. A blob with no `dim` at all does not call the resolver and makes no
-selection, which is what a caller that had probed would have found."""
+selection, which is what a caller that had probed would have found.
+
+A two-argument callable `(len, axis) -> indices` is also handed `dim`'s own
+coordinate, read raw with its `units`, `calendar`, `_FillValue` and
+`missing_value` (a `NativeField`, or `nothing` when the blob has no such
+variable), so the [`Provider`] can find its record by the file's own time axis
+(spec/esm-sources.md §2.5) in the same open."""
 struct NetCDFReader <: Reader end
 
 # Widened capability (spec/registries.md §2): "honours `select` without
@@ -527,7 +533,23 @@ end
 # `Union{Function,Type}` misses a callable STRUCT — which would then fall through
 # to the list branch and die inside `iterate` with a bare `MethodError` instead of
 # being resolved as the documented callable.
-_records_resolver(x) = applicable(x, 1)
+_records_resolver(x) = applicable(x, 1) || applicable(x, 1, nothing)
+
+# The `records` dimension's own coordinate, read raw with its CF attributes
+# (and `_FillValue`/`missing_value`), for a two-argument resolver
+# `(len, axis) -> indices`; `nothing` when the blob has no such variable. This is
+# what lets a cadence owner find its record by the file's own time axis
+# (spec/esm-sources.md §2.5) within the one open.
+function _netcdf_axis_field(ds, d::String)
+    haskey(ds, d) || return nothing
+    v = ds[d]
+    _netcdf_is_text(v) && return nothing
+    attrs = _carry_attrs(v.attrib)
+    for k in ("_FillValue", "missing_value")
+        haskey(v.attrib, k) && (attrs[k] = v.attrib[k])
+    end
+    return NativeField(_to_file_order(Array(v.var)), _netcdf_file_dims(v), attrs)
+end
 
 # Fold a `records` pushdown into the dimension→indices map `sel` built from
 # `select`. The two vocabularies meet here on purpose: a record selection IS a
@@ -559,7 +581,14 @@ function _netcdf_merge_records(ds, sel, records)
         )
     end
     len = Int(ds.dim[d])
-    idxs = Int[Int(i) for i in (_records_resolver(want) ? want(len) : want)]
+    picked = if !_records_resolver(want)
+        want
+    elseif applicable(want, len, nothing)
+        want(len, _netcdf_axis_field(ds, d))
+    else
+        want(len)
+    end
+    idxs = Int[Int(i) for i in picked]
     isempty(idxs) && throw(
         ArgumentError(
             "records asks for no records of '$d'; an empty selection is an error, " *

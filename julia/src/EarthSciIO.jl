@@ -98,6 +98,7 @@ export EsmTemplate, EsmTemplateError, expand_esm_template, esm_template_names, e
 
 # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11).
 # `take!`, `isready` and `close` are Base functions the group adds methods to.
+export decode_time_axis
 export sample_at, DimWindow, select_form, with_window, sample_windows_at
 export PrefetchGroup, Sample, EpochSample, boundaries, start!, cancel!, stats
 
@@ -118,6 +119,7 @@ include("zarr_write.jl")
 include("zarr_stream.jl")
 include("esm.jl")
 include("calendar.jl")
+include("time_axis.jl")
 include("provider.jl")
 include("esm_source.jl")
 include("windows.jl")

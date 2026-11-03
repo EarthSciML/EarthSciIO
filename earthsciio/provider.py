@@ -1002,10 +1002,34 @@ def _decode_file_times(coord: NativeField) -> list[_dt.datetime] | None:
         )
         if not np.issubdtype(decoded.dtype, np.datetime64):
             return None  # cftime (non-standard calendar) — fall back
+        if np.isnat(decoded).any():
+            return None  # a missing entry (NaN, or a masked _FillValue) — fall back
         objs = decoded.astype("datetime64[s]").astype(object).ravel().tolist()
         return [_to_naive_utc(d) for d in objs]
     except Exception:
         return None
+
+
+def decode_time_axis(
+    values: Any, units: str | None, calendar: str | None = None
+) -> list[int] | None:
+    """The Unix seconds (UTC, floored to the second) of a raw CF time axis, or
+    ``None`` when it cannot be decoded (``spec/esm-sources.md`` §2.5).
+
+    This is the decode :class:`Provider` uses to find a record in a file by the
+    file's own time axis. ``None`` means the provider falls back to the
+    cadence offset: no ``units``, units without ``since``, a calendar other
+    than ``standard``/``gregorian``/``proleptic_gregorian``, a missing entry,
+    or a date outside the years 1678 to 2261."""
+    attrs: dict[str, Any] = {}
+    if units is not None:
+        attrs["units"] = units
+    if calendar is not None:
+        attrs["calendar"] = calendar
+    times = _decode_file_times(NativeField(np.asarray(values), ("time",), attrs))
+    if times is None:
+        return None
+    return [int((d - _EPOCH_NAIVE).total_seconds()) for d in times]
 
 
 def _record_at_or_before(times: list[_dt.datetime], anchor: _dt.datetime) -> int | None:

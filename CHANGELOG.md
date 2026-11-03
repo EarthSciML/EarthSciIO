@@ -42,6 +42,16 @@ package version is independent of the `.esm` format version.
   the shared `esm-sources` scenario, which includes reseact's GEOS-FP A1 and
   NEI 2016 entries.
 
+- **feat:** a time-varying provider finds a record in its file by the file's
+  own CF time axis when it can decode one, and by the cadence offset otherwise
+  (`spec/esm-sources.md` §2.5). Python already did; Julia and Rust now do the
+  same, rule by rule, so a file that lacks some records or whose records are
+  off the cadence is read right in every track. `decode_time_axis` (all three
+  tracks; Rust also `decode_coord_times`) exposes the CF decode. Pinned by the
+  shared `decoded-time-axis` scenario, with small synthetic trimmed, irregular
+  and noleap files in the corpus. Python's decode no longer fails on an axis
+  with a missing entry; it falls back to the cadence offset.
+
 ### Rust
 
 - **breaking:** `SourceTemporal.frequency` and `.file_period` are
@@ -57,6 +67,10 @@ package version is independent of the `.esm` format version.
 
 ### Julia
 
+- **feat:** the `netcdf` reader's `records` option takes a two-argument
+  resolver `(len, axis) -> indices`, handed the dimension's own raw coordinate
+  inside the one open; the temporal `Provider` uses it to find records by the
+  file's time axis.
 - **feat:** `Provider(cache, url; format, temporal = SourceTemporal(…), window)`
   builds a time-varying provider from a cadence and a run window, as Python
   and Rust do, in Unix seconds (UTC). Each tick reads its own record of its own

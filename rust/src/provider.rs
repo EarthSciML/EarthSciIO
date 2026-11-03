@@ -1072,7 +1072,7 @@ impl Provider {
         let temporal = &cadence.temporal;
         let file_anchor = temporal.file_anchor(anchor);
         let file = files.file(self, file_anchor, select)?;
-        let rec = temporal.record_in_file(anchor, file_anchor);
+        let rec = crate::time_axis::record_index(&file, temporal, anchor, file_anchor);
         Ok(NativeDataset {
             variables: slice_record_buffers(&file, temporal.time_dim.as_str(), rec)?,
             coords: file.coords.clone(),
@@ -1095,10 +1095,11 @@ impl Provider {
         let temporal = &cadence.temporal;
         let time_dim = temporal.time_dim.as_str();
 
-        // rec0 = the floor (at-or-before) record in file0, as the single path does.
+        // rec0 = the floor (at-or-before) record in file0, as the single path does:
+        // by the file's own time axis when it decodes (spec/esm-sources.md §2.5).
         let file0_anchor = temporal.file_anchor(anchor);
         let file0 = files.file(self, file0_anchor, select)?;
-        let rec0 = temporal.record_in_file(anchor, file0_anchor);
+        let rec0 = crate::time_axis::record_index(&file0, temporal, anchor, file0_anchor);
         let file0_len = time_len(&file0, time_dim);
 
         // Successor rec1: rec0+1 in the same file, else record 0 of the next file.
@@ -1114,7 +1115,12 @@ impl Provider {
                 // failure at the seam is treated as end-of-data, not an error).
                 let next_file_anchor = temporal.file_anchor(next_anchor);
                 if let Ok(file1) = files.file(self, next_file_anchor, select) {
-                    let r1 = temporal.record_in_file(next_anchor, next_file_anchor);
+                    let r1 = crate::time_axis::record_index(
+                        &file1,
+                        temporal,
+                        next_anchor,
+                        next_file_anchor,
+                    );
                     if r1 < time_len(&file1, time_dim) {
                         succ = Some((file1, r1));
                     }

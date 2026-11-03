@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 652,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "82b4822733598406e62ae91df832acda51a643e32e618f456672a235f893392c",
+  "source_loader": "timeaxis",
+  "url": "https://data.earthsci.dev/timeaxis/trimmed.20240303.nc"
+}

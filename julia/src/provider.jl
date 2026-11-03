@@ -100,6 +100,7 @@ end
 # and the anchors `refresh_times` reports (those inside the window).
 struct _TemporalPlan
     temporal::SourceTemporal
+    ticks::Vector{DateTime}
     records::Vector{Int}
     refresh::Vector{Float64}
 end
@@ -133,7 +134,7 @@ function _temporal_plan(temporal::SourceTemporal, window)
     end
     records = Int[record_in_file(temporal, t, file_anchor(temporal, t)) for t in ticks]
     refresh = Float64[_unix(t) for t in ticks if lo <= t < hi]
-    return _TemporalPlan(temporal, records, refresh), Float64[_unix(t) for t in ticks]
+    return _TemporalPlan(temporal, ticks, records, refresh), Float64[_unix(t) for t in ticks]
 end
 
 function Provider(
@@ -705,6 +706,96 @@ function _bracket(p::Provider, t::Real; select = nothing)
     return _bracket_build(nds0, pos0[1], nds1, pos1[1], dim, t0, t1)
 end
 
+# --- a `temporal` provider: records found by the file's own time axis --------
+# spec/esm-sources.md §2.5, the Python track's `Provider._sample` and
+# `_sample_bracket` step for step. The record of an anchor in its file is
+# `_axis_record`: by the file's decoded time axis when the anchor lies in its
+# span, else the cadence offset. A trimmed or irregular file is read right.
+
+# Decode the file covering `anchor`, letting `choose(len, axis)` pick its 0-based
+# records from the file's length along `time_dim` and that dimension's own
+# coordinate; return `(nds, positions)`, `positions[k]` being where the k-th
+# chosen record sits along `time_dim` in `nds`. With a reader that takes a
+# `records` pushdown, `choose` runs inside the reader's one open and only the
+# chosen records are decoded.
+function _load_located(p::Provider, anchor::DateTime, choose; select = nothing)
+    dim = p.time_dim::String
+    t_url = _unix(anchor)
+    if !_records_pushdown(p)
+        nds = _load(p, t_url; select = select)
+        idx = choose(_time_len(nds, dim), get(nds.coords, dim, nothing))
+        return (nds, Int[i + 1 for i in idx])
+    end
+    fired = Ref(false)
+    n = Ref(0)
+    resolve = function (len::Integer, axis)
+        fired[] = true
+        r = choose(Int(len), axis)
+        n[] = length(r)
+        return r
+    end
+    nds = _load(
+        p, t_url; select = select,
+        records = Dict{String, Any}("dim" => dim, "indices" => resolve)
+    )
+    fired[] && return (nds, collect(1:n[]))
+    # No `time_dim` in the blob: nothing was narrowed (as `_load_ticks`).
+    return (nds, Int[i + 1 for i in choose(0, nothing)])
+end
+
+function _temporal_sample(p::Provider, t::Real; select = nothing)
+    plan = p.plan::_TemporalPlan
+    temporal = plan.temporal
+    dim = p.time_dim::String
+    anchor = plan.ticks[_tick_index(p, t)]
+    fa = file_anchor(temporal, anchor)
+    if p.records_per_sample != 2
+        nds, pos = _load_located(
+            p, anchor, (len, axis) -> Int[_axis_record(temporal, axis, anchor, fa)];
+            select = select
+        )
+        return _slice_dim(nds, dim, pos[1])
+    end
+    # The bracket: the floor record and its successor — the next record of the
+    # same file when it has one, else the record of the next anchor in the file
+    # covering it. With no successor (the end of the data, a successor file that
+    # cannot be read, or a successor record outside its file) the floor record
+    # is held: `[rec0, rec0]` with equal times.
+    nxt = next_record_anchor(temporal, anchor)
+    has_succ = temporal.stop === nothing || nxt < temporal.stop
+    same = Ref(false)
+    choose0 = function (len, axis)
+        r = _axis_record(temporal, axis, anchor, fa)
+        if has_succ && r + 1 < len
+            same[] = true
+            return Int[r, r + 1]
+        end
+        return Int[r]
+    end
+    nds0, pos0 = _load_located(p, anchor, choose0; select = select)
+    t0 = _unix(anchor)
+    same[] && return _bracket_build(nds0, pos0[1], nds0, pos0[2], dim, t0, _unix(nxt))
+    if has_succ
+        fa1 = file_anchor(temporal, nxt)
+        succ = try
+            ok = Ref(false)
+            choose1 = function (len, axis)
+                r = _axis_record(temporal, axis, nxt, fa1)
+                ok[] = 0 <= r < len
+                return ok[] ? Int[r] : Int[0]
+            end
+            nds1, pos1 = _load_located(p, nxt, choose1; select = select)
+            ok[] ? (nds1, pos1[1]) : nothing
+        catch err
+            err isa InterruptException && rethrow()
+            nothing
+        end
+        succ === nothing ||
+            return _bracket_build(nds0, pos0[1], succ[1], succ[2], dim, t0, _unix(nxt))
+    end
+    return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, t0, t0)
+end
+
 """
     materialize(p::Provider, t::Real; select=nothing) -> NativeDataset
     materialize(p::Provider; select=nothing) -> NativeDataset
@@ -726,6 +817,7 @@ provider. Any reader that answers [`supports_selection`] can honour it — the
 materialising only the requested hyperslab of the blob it already fetched;
 passing `select` to a reader that cannot is an `ArgumentError`."""
 function materialize(p::Provider, t::Real; select = nothing)
+    p.plan === nothing || return _temporal_sample(p, t; select = select)
     if p.records_per_sample == 2 && p.time_dim !== nothing
         return _bracket(p, t; select = select)
     end
