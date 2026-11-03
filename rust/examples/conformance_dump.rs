@@ -11,9 +11,9 @@
 //! Dump schema — `earthsciio/native-dump/v1` (see `conformance/CROSSLANG.md`).
 //! Rust's [`ArrayData`] is already row-major (C order) per `shape`, so no permute
 //! is needed; a masked / `_FillValue` cell is `null` (== NaN); strings verbatim.
-//! A case whose `format` has no reader in this track (e.g. `csv` — the Rust track
-//! ships `netcdf` only) is `status="skipped"` (explicit, never dropped) so the
-//! comparator can tell a real coverage gap from a bug.
+//! A case whose `format` has no reader in this track is `status="skipped"`
+//! (explicit, never dropped) so the comparator can tell a real coverage gap from
+//! a bug.
 //!
 //! Usage:  cargo run --example conformance_dump -- [out.json]   # default: stdout
 
@@ -139,7 +139,7 @@ fn encode_coord(c: &Coord) -> Value {
 
 /// Run the Rust Provider over one corpus case and encode its native arrays. Skips
 /// (without error) a case whose format has no reader, so the harness reports the
-/// gap instead of failing — the Rust track ships `netcdf` only today.
+/// gap instead of failing.
 fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Value {
     let fmt = case["format"].as_str().unwrap();
     if base_formats.get(fmt).is_none() {
@@ -221,6 +221,23 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
     // The shapefile case pins its zip member + the code column the model wants
     // numeric. Both reach the reader the way a DOCUMENT delivers them — the
     // loader's `reader_options`, resolved by `Reader::configured`.
+    // csv: the case's decode block pins the numeric columns (a digit-only id
+    // column stays text), the delimiter and the 0-based header row — the
+    // loader's `reader_options`, as for shapefile below.
+    if fmt == "csv" {
+        let mut options = Map::new();
+        if let Some(dec) = case.get("decode") {
+            for k in ["numeric_columns", "delimiter", "header_row"] {
+                match dec.get(k) {
+                    Some(v) if !v.is_null() => {
+                        options.insert(k.to_string(), v.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        loader = loader.reader_options(options);
+    }
     if fmt == "shapefile" {
         let mut options = Map::new();
         if let Some(dec) = case.get("decode") {

@@ -55,6 +55,19 @@ fn rust_offers(reader: &Arc<dyn Reader>, name: &str) -> bool {
         "variables" => true,
         "select" => reader.supports_selection(),
         "records" => reader.supports_records(),
+        // Decode options a reader takes through `Reader::configured`: real when
+        // the reader accepts the option with a well-formed value (a reader that
+        // takes none refuses every non-empty option set).
+        "numeric_columns" | "delimiter" | "header_row" => {
+            let value = match name {
+                "numeric_columns" => serde_json::json!(["a"]),
+                "delimiter" => serde_json::json!(";"),
+                _ => serde_json::json!(0),
+            };
+            let mut opts = serde_json::Map::new();
+            opts.insert(name.to_string(), value);
+            reader.configured(&opts).is_ok()
+        }
         other => panic!(
             "spec/registries.json declares reader option '{other}' for the rust \
              track, but this test does not know what capability would make it \
