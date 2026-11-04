@@ -140,9 +140,9 @@ With `f` the frequency and `F` the file period, both anchored at `start`:
 | next record (two-record bracket) | `anchor_f(floor_f(t) + 1)` |
 
 A fixed-length cadence (`months = 0`) gives exactly the anchors it gave
-before. The Python track still prefers the file's own time axis to locate a
-record when it can decode one (provider.py `_record_index`); the rule above is
-what all three compute otherwise, and what they agree on.
+before. The record index in its file is the cadence offset: it is what every
+track uses when the file has no time axis it can decode. When it has one, the
+record is found on that axis instead (§2.5).
 
 ### 2.4 Julia
 
@@ -154,7 +154,65 @@ a `SourceTemporal` and a run `window`, as Python and Rust do:
 (UTC). `refresh_times` returns §2.3's refresh times over the window, `upper`
 being the window end (else `stop`) and never clipped to `stop`, as in Python
 and Rust. A sample at any time from `start` on, inside the window or not, is
-located by §2.3 on the calendar, as in Python and Rust.
+located by §2.3 on the calendar, its record in the covering file found as in
+§2.5, as in Python and Rust.
+
+### 2.5 The file's own time axis
+
+Fixture:
+[`../conformance/corpus/scenarios/decoded-time-axis.json`](../conformance/corpus/scenarios/decoded-time-axis.json),
+written by `conformance/gen_time_axis.py`.
+
+The cadence offset of §2.3 is exact for whole files, but wrong for a file
+that lacks some records (a trimmed file) or whose records are not on the
+cadence. So every track finds the record of an anchor `a` in the file covering
+it this way (Python `provider._record_index`, Julia `_axis_record`, Rust
+`time_axis::record_index`):
+
+1. Take the file's coordinate named `time_dim`. If there is none, or it does
+   not decode (below), or it is empty, use the cadence offset.
+2. If `a` lies between the axis's earliest and latest times (inclusive), the
+   record is the latest one at or before `a`; of equal times, the first in file
+   order. The axis need not be sorted.
+3. Otherwise use the cadence offset. A cadence offset outside the file is an
+   error; one inside it is read, even before a trimmed file's first record.
+
+The two-record bracket's successor is the record of the next anchor in the
+file covering it (the same file or the next one), found as above, so a record
+and its time agree: in a file with a gap the successor of the last record
+before the gap is that record again, never the one after the gap. When the
+successor's file cannot be read or its record is outside that file, the floor
+record is held (`[r, r]`, equal times). The bracket's time coordinate is
+always the two anchors, never the file's own times.
+
+**Decoding.** `decode_time_axis(values, units, calendar)` (Python and Julia;
+Rust `decode_time_axis(&values, units, calendar, fill)`) gives the axis as
+Unix seconds, floored, or nothing. It is the Python track's decode (xarray's
+`decode_cf_datetime`), which the other two reproduce:
+
+| Part | Rule |
+|---|---|
+| `units` | `<unit> since <reference>`, split at the last ` since ` with text on both sides; each part trimmed. No `units`, or no such split: not decoded |
+| `calendar` | absent is `standard`. `standard`, `gregorian` and `proleptic_gregorian`, in any case, decode; any other calendar does not |
+| unit, first reading | lower-cased, with an `s` added when it does not end in one: `nanoseconds`, `microseconds`, `milliseconds`, `seconds`, `minutes`, `hours`, `days`. An integer is multiplied exactly; a float is multiplied in double precision and truncated to the nanosecond. Used when the reference and every time fit in signed 64-bit nanoseconds |
+| unit, second reading | otherwise, the lower-cased unit is one of `microsecond(s)`, `millisecond(s)`, `msec(s)`, `ms`, `second(s)`, `sec(s)`, `s`, `minute(s)`, `min(s)`, `hour(s)`, `hr(s)`, `h`, `day(s)`, `d`, and the value is rounded to the nearest microsecond and added to the reference as cftime reads it (below). Every date must fall in the years 1678 to 2261. Any other unit (`weeks`, `months`, `years`, …): not decoded |
+| reference | `Y-M-D` with a year of one to four digits (a shorter year only when no other run of four digits follows), then optionally `T` or spaces and a time `HH`, `H:M`, `H:M:S` or `H:M:S.f…`, then optionally spaces and `Z`, `UTC`, `GMT` or an offset `±HH`, `±HHMM`, `±HH:MM`, which is subtracted. The first reading (pandas) needs a four-digit year, reads the date on the proleptic Gregorian calendar and applies every part. The second (cftime) reads the date on the calendar: on `standard` and `gregorian` a date before 1582-10-15 is a Julian date (there is no year 0, and 1582-10-05 to 10-14 do not exist), on `proleptic_gregorian` it is Gregorian (year 0 exists); it reads a time only when it has minutes and is one character (`T` or a space) after the date, and a `Z` or `±` zone only when it is at most one space after that, so otherwise the rest counts as midnight UTC; it cuts a fraction to the microsecond. An impossible date or time: not decoded |
+| values | a NaN, or a value equal to the axis's `_FillValue` or `missing_value` (Julia and Rust; Python's reader has already masked it to NaN): not decoded. A `scale_factor`/`add_offset` is applied to the stored values after that check (Julia; the Python and Rust readers have already unpacked the axis) |
+| result | the reference plus each value, floored to whole seconds |
+
+Python accepts more reference spellings than the table lists, through pandas
+(`2016/01/01`, `20160101`, a month name, …); Julia and Rust do not decode those,
+so on such a file they fall back to the cadence offset where Python does not.
+Python also reads a bare one-digit hour (`2016-05-01 6`) as midnight; Julia and
+Rust refuse it. A short year followed by another run of four digits
+(`1-1-1 00:00:00.0000`, `1-1-1 06:30 -0130`) is not padded by xarray, so pandas
+reads it its own way (as 2001, when the values fit); Julia and Rust do not
+decode it. None of these differences is in the fixture.
+
+In Julia the record is chosen inside the `netcdf` reader's one open: the
+`records` option takes a two-argument resolver `(len, axis) -> indices`, which
+is handed the file's raw `time_dim` coordinate with its attributes
+([registries.md](registries.md) §2, the `netcdf` reader's `records`).
 
 ## 3. A provider from an esm data source
 

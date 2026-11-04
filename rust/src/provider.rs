@@ -39,6 +39,7 @@ use crate::format::{
     ArrayData, AxisSelect, Coord, DType, FormatRegistry, NativeDataset, NativeField, Reader,
     Selection,
 };
+use crate::time_axis::AxisMemo;
 
 /// A run window `(start, end)` — half-open `[start, end)`.
 pub type Window = (OffsetDateTime, OffsetDateTime);
@@ -462,6 +463,9 @@ pub struct Provider {
     /// [`StoreAccess::Cached`]) so it cannot change mid-run and so the
     /// environment is read once rather than per object.
     store_access: StoreAccess,
+    /// The decoded time axes of the files being read, so a file's axis is
+    /// decoded once, not once per anchor (`spec/esm-sources.md` §2.5).
+    axis_memo: AxisMemo,
 }
 
 /// A file to fetch: its primary URL and the mirrors resolved at the SAME anchor
@@ -541,6 +545,7 @@ impl Provider {
             coords: HashMap::new(),
             current_anchor: None,
             files: Vec::new(),
+            axis_memo: AxisMemo::default(),
         })
     }
 
@@ -784,6 +789,7 @@ impl Provider {
             coords: HashMap::new(),
             current_anchor: None,
             files: Vec::new(),
+            axis_memo: AxisMemo::default(),
         })
     }
 
@@ -1059,18 +1065,21 @@ impl Provider {
         let temporal = &cadence.temporal;
         let file_anchor = temporal.file_anchor(anchor);
         let file = files.file(self, file_anchor, select)?;
-        let rec = file_record(temporal, anchor, file_anchor)?;
+        let rec = file_record(
+            self.axis_memo
+                .record_index(&file, temporal, anchor, file_anchor),
+            file_anchor,
+        )?;
         Ok(NativeDataset {
             variables: slice_record_buffers(&file, temporal.time_dim.as_str(), rec)?,
             coords: file.coords.clone(),
         })
     }
 
-    /// The `records_per_sample = 2` sample: the two records bracketing `anchor`
-    /// (floor + successor), retaining `time_dim` at length 2, plus a canonical
-    /// 2-element epoch-seconds `time` coordinate. Handles the cross-file
-    /// successor (record 0 of the next file when the floor is the last record)
-    /// and the end-of-data clamp (a degenerate `[last, last]` bracket with equal
+    /// The `records_per_sample = 2` sample: the records of `anchor` and of the
+    /// next anchor (floor + successor), retaining `time_dim` at length 2, plus a
+    /// canonical 2-element epoch-seconds `time` coordinate. Handles the
+    /// cross-file successor and the end-of-data clamp (a degenerate `[last, last]` bracket with equal
     /// timestamps — never an error).
     fn sample_bracket(
         &self,
@@ -1082,29 +1091,39 @@ impl Provider {
         let temporal = &cadence.temporal;
         let time_dim = temporal.time_dim.as_str();
 
-        // rec0 = the floor (at-or-before) record in file0, as the single path does.
+        // rec0 = the floor (at-or-before) record in file0, as the single path does:
+        // by the file's own time axis when it decodes (spec/esm-sources.md §2.5).
         let file0_anchor = temporal.file_anchor(anchor);
         let file0 = files.file(self, file0_anchor, select)?;
-        let rec0 = file_record(temporal, anchor, file0_anchor)?;
-        let file0_len = time_len(&file0, time_dim);
+        let rec0 = file_record(
+            self.axis_memo
+                .record_index(&file0, temporal, anchor, file0_anchor),
+            file0_anchor,
+        )?;
 
-        // Successor rec1: rec0+1 in the same file, else record 0 of the next file.
-        // None => no reachable successor (end clamp): degenerate [rec0, rec0].
+        // Successor rec1: the record of the next anchor, found the same way, in
+        // the file covering it — so its record and its time agree even in a file
+        // with a gap or an unsorted axis. None => no reachable successor (end
+        // clamp): degenerate [rec0, rec0].
         let next_anchor = temporal.next_record_anchor(anchor);
         let has_succ = temporal.end.is_none_or(|end| next_anchor < end);
         let mut succ: Option<(Arc<NativeDataset>, usize)> = None;
         if has_succ {
-            if rec0 + 1 < file0_len {
-                succ = Some((file0.clone(), rec0 + 1)); // successor in the same file
+            let next_file_anchor = temporal.file_anchor(next_anchor);
+            // A read failure at the seam is end-of-data, not an error.
+            let file1 = if next_file_anchor == file0_anchor {
+                Some(file0.clone())
             } else {
-                // Successor is record 0 of the next file; read/decode it (a read
-                // failure at the seam is treated as end-of-data, not an error).
-                let next_file_anchor = temporal.file_anchor(next_anchor);
-                if let Ok(file1) = files.file(self, next_file_anchor, select) {
-                    let r1 = file_record(temporal, next_anchor, next_file_anchor);
-                    if let Some(r1) = r1.ok().filter(|&r| r < time_len(&file1, time_dim)) {
-                        succ = Some((file1, r1));
-                    }
+                files.file(self, next_file_anchor, select).ok()
+            };
+            if let Some(file1) = file1 {
+                let r1 = file_record(
+                    self.axis_memo
+                        .record_index(&file1, temporal, next_anchor, next_file_anchor),
+                    next_file_anchor,
+                );
+                if let Some(r1) = r1.ok().filter(|&r| r < time_len(&file1, time_dim)) {
+                    succ = Some((file1, r1));
                 }
             }
         }
@@ -1313,12 +1332,7 @@ impl Provider {
 
 /// [`SourceTemporal::record_in_file`] as an index, or the error for a record
 /// before its file (a negative index is never wrapped into a huge one).
-fn file_record(
-    temporal: &SourceTemporal,
-    anchor: OffsetDateTime,
-    file_anchor: OffsetDateTime,
-) -> Result<usize> {
-    let rec = temporal.record_in_file(anchor, file_anchor);
+fn file_record(rec: i64, file_anchor: OffsetDateTime) -> Result<usize> {
     usize::try_from(rec).map_err(|_| Error::Format {
         format: "cadence".to_string(),
         detail: format!("record {rec} of the file anchored at {file_anchor} precedes it"),
@@ -1378,8 +1392,8 @@ impl FileSource for FreshFiles {
 /// **Why this Provider does not push its records into the decode.** The
 /// netcdf reader honours a [`Records`](crate::Records) pushdown in every
 /// track (`spec/registries.md` §2.1) and the Julia Provider uses it, because
-/// that one computes its record from the cadence and keeps no decoded-file
-/// buffer: there a whole-file decode per sample is pure waste. Here this LRU
+/// that one keeps no decoded-file buffer and chooses its records inside the
+/// reader's one open: there a whole-file decode per sample is pure waste. Here this LRU
 /// IS the optimisation — one whole-file decode amortised over every tick in
 /// the file — so pushing down would replace one decode per FILE with one per
 /// TICK. Measured on this reader (release build, warm page cache): an

@@ -101,11 +101,17 @@ end
 # What a provider built from a `SourceTemporal` keeps (spec/esm-sources.md
 # §2.4): the cadence, from which every sample is located on the calendar — any
 # `t` at or after `temporal.start`, inside the window or not, as in Python and
-# Rust — and the window `[lo, hi)` that `refresh_times` and `prefetch` walk.
+# Rust — and the window `[lo, hi)` that `refresh_times` and `prefetch` walk. The
+# record of an anchor in its file is found when the file is read, by the file's
+# own time axis (§2.5, `_temporal_sample`); `axes` keeps the decoded axes of the
+# last two files read, so a file's axis is decoded once however many samples it
+# serves.
 struct _TemporalPlan
     temporal::SourceTemporal
     lo::DateTime
     hi::DateTime
+    axes::Vector{Pair{DateTime, Any}}
+    lock::ReentrantLock
 end
 
 # The plan of a `temporal` provider over `window` (UTC; `DateTime`s or Unix
@@ -134,7 +140,7 @@ function _temporal_plan(temporal::SourceTemporal, window)
     isempty(ticks) && throw(
         ArgumentError("the window [$lo, $hi) holds no record of the source")
     )
-    return _TemporalPlan(temporal, lo, hi), ticks
+    return _TemporalPlan(temporal, lo, hi, Pair{DateTime, Any}[], ReentrantLock()), ticks
 end
 
 function Provider(
@@ -574,41 +580,23 @@ end
 # timestamps) so the downstream weight clamps — bracket mode never throws at the
 # end of data.
 
-const _CF_UNIT_SECONDS = Dict{String, Float64}(
-    "second" => 1.0, "seconds" => 1.0, "sec" => 1.0, "secs" => 1.0, "s" => 1.0,
-    "minute" => 60.0, "minutes" => 60.0, "min" => 60.0, "mins" => 60.0,
-    "hour" => 3600.0, "hours" => 3600.0, "hr" => 3600.0, "hrs" => 3600.0, "h" => 3600.0,
-    "day" => 86400.0, "days" => 86400.0, "d" => 86400.0
-)
-
-# Parse a CF reference date (the `<ref>` in "<unit> since <ref>") → Unix epoch
-# seconds, or `nothing`. Handles "yyyy-mm-dd[ HH[:MM[:SS]]]" with an optional
-# `T`/space separator and a trailing `Z`/`UTC`/±offset (treated as UTC).
-function _parse_cf_reference(s)
-    str = strip(replace(String(s), 'T' => ' '))
-    str = strip(replace(str, r"\s*(Z|UTC|[+-]\d{2}:?\d{2}(:\d{2})?)\s*$" => ""))
-    for fmt in (
-            dateformat"yyyy-mm-dd HH:MM:SS", dateformat"yyyy-mm-dd HH:MM",
-            dateformat"yyyy-mm-dd HH", dateformat"yyyy-mm-dd",
-        )
-        dt = tryparse(DateTime, str, fmt)
-        dt === nothing || return datetime2unix(dt)
-    end
-    return nothing
-end
-
 # Parse a CF "<unit> since <reference>" units string → (ref_epoch_seconds,
 # unit_seconds), or `nothing` when it can't be decoded (non-"since" units, an
 # unknown step, or an unparseable reference) — the caller then emits raw times.
+# The units are read as `decode_time_axis` reads them (time_axis.jl): any unit
+# cftime knows, and the reference on the proleptic Gregorian calendar with its
+# zone applied; the calendar attribute is not consulted.
 function _cf_time_scale(units)
     units === nothing && return nothing
-    m = match(r"^\s*([A-Za-z]+)\s+since\s+(.+?)\s*$", String(units))
-    m === nothing && return nothing
-    step = get(_CF_UNIT_SECONDS, lowercase(m.captures[1]), nothing)
+    sp = _ta_split_units(String(units))
+    sp === nothing && return nothing
+    step = get(_TA_CFTIME_UNITS, lowercase(sp[1]), nothing)
     step === nothing && return nothing
-    ref = _parse_cf_reference(m.captures[2])
+    r = _ta_reference(sp[2])
+    r === nothing && return nothing
+    ref = _ta_pandas_ns(r)
     ref === nothing && return nothing
-    return (ref, step)
+    return (Float64(fld(ref, _TA_NS)) + Float64(mod(ref, _TA_NS)) / 1.0e9, step / 1.0e9)
 end
 
 # Convert a raw cadence-grid value to Unix epoch seconds via a decoded CF scale;
@@ -712,13 +700,11 @@ function _bracket(p::Provider, t::Real; select = nothing)
     return _bracket_build(nds0, pos0[1], nds1, pos1[1], dim, t0, t1)
 end
 
-# --- a `temporal` provider: every sample from the calendar ------------------
-# spec/esm-sources.md §2.3, as Python's `Provider._sample` and Rust's
-# `sample_anchor`: the record anchor at or before `t`, its file, its record in
-# that file, and — for a two-record bracket — the next record anchor, in the
-# same file or the next, unless it is at or past the source's `stop`. Nothing
-# here depends on the window, so a `t` outside it reads what the other tracks
-# read rather than the window's first or last record.
+# --- a `temporal` provider: records found by the file's own time axis --------
+# spec/esm-sources.md §2.5, the Python track's `Provider._sample` and
+# `_sample_bracket` step for step. The record of an anchor in its file is
+# `_axis_record`: by the file's decoded time axis when the anchor lies in its
+# span, else the cadence offset. A trimmed or irregular file is read right.
 
 # The record anchor `t` (Unix seconds) snaps to, as a `DateTime`, or the error
 # for a `t` before the source start.
@@ -743,56 +729,129 @@ function _calendar_record(rec::Integer, len::Integer, dim::String)
     return Int(rec) + 1
 end
 
-function _temporal_sample(p::Provider, t::Real; select = nothing)
-    s = p.plan.temporal
-    dim = p.time_dim::String
-    a = _temporal_anchor(p, t)
-    fa = file_anchor(s, a)
-    rec0 = record_in_file(s, a, fa)
-    ta = _unix(a)
-    if p.records_per_sample != 2
-        nds, pos = _load_records(
-            p, ta, len -> Int[_calendar_record(rec0, len, dim)]; select = select
-        )
-        return _slice_dim(nds, dim, pos[1])
+# The decoded time axis of the file at file anchor `fa`, if one of the last two
+# files read: `(true, times)`, else `(false, nothing)`.
+function _axis_cached(plan::_TemporalPlan, fa::DateTime)
+    return lock(plan.lock) do
+        i = findfirst(e -> e.first == fa, plan.axes)
+        i === nothing ? (false, nothing) : (true, plan.axes[i].second)
     end
-    nxt = next_record_anchor(s, a)
-    tn = _unix(nxt)
-    has_succ = s.stop === nothing || nxt < s.stop
-    if has_succ && file_anchor(s, nxt) == fa
-        # Successor in the same file — one decode for both records, or the
-        # floor alone when the file ends there (then no successor: degenerate).
-        nds0, pos0 = _load_records(
-            p, ta,
-            len -> (
-                r = _calendar_record(rec0, len, dim);
-                (len <= 0 || r < len) ? Int[r, r + 1] : Int[r]
+end
+
+function _axis_store!(plan::_TemporalPlan, fa::DateTime, times)
+    lock(plan.lock) do
+        filter!(e -> e.first != fa, plan.axes)
+        push!(plan.axes, fa => times)
+        length(plan.axes) > 2 && popfirst!(plan.axes)
+    end
+    return times
+end
+
+# Decode the file at file anchor `fa` (the one covering `anchor`), letting
+# `choose(len, times)` pick its 0-based records from the file's length along
+# `time_dim` and its decoded time axis (`nothing` when it has none or it does not
+# decode); return `(nds, positions)`, `positions[k]` being where the k-th chosen
+# record sits along `time_dim` in `nds`. With a reader that takes a `records`
+# pushdown, `choose` runs inside the reader's one open and only the chosen
+# records are decoded; the axis is read there too, unless this file's is cached.
+function _load_located(p::Provider, fa::DateTime, anchor::DateTime, choose; select = nothing)
+    plan = p.plan::_TemporalPlan
+    dim = p.time_dim::String
+    t_url = _unix(anchor)
+    cached, times = _axis_cached(plan, fa)
+    decode(axis) = _axis_store!(plan, fa, axis === nothing ? nothing : decode_time_axis(axis))
+    if !_records_pushdown(p)
+        nds = _load(p, t_url; select = select)
+        cached || (times = decode(get(nds.coords, dim, nothing)))
+        idx = choose(_time_len(nds, dim), times)
+        return (nds, Int[i + 1 for i in idx])
+    end
+    fired = Ref(false)
+    n = Ref(0)
+    pick = function (len, ts)
+        fired[] = true
+        r = choose(Int(len), ts)
+        n[] = length(r)
+        return r
+    end
+    # A one-argument resolver is not handed the axis, so the reader skips it.
+    resolve = cached ? (len::Integer -> pick(len, times)) :
+        ((len::Integer, axis) -> pick(len, decode(axis)))
+    nds = _load(
+        p, t_url; select = select,
+        records = Dict{String, Any}("dim" => dim, "indices" => resolve)
+    )
+    fired[] && return (nds, collect(1:n[]))
+    # No `time_dim` in the blob: nothing was narrowed (as `_load_ticks`).
+    return (nds, Int[i + 1 for i in choose(0, nothing)])
+end
+
+# Thrown by a successor's record chooser when that record is outside its file,
+# so the reader stops before decoding anything; the bracket then holds.
+struct _NoSuccessor <: Exception end
+
+function _temporal_sample(p::Provider, t::Real; select = nothing)
+    plan = p.plan::_TemporalPlan
+    temporal = plan.temporal
+    dim = p.time_dim::String
+    anchor = _temporal_anchor(p, t)
+    fa = file_anchor(temporal, anchor)
+    if p.records_per_sample != 2
+        nds, pos = _load_located(
+            p, fa, anchor,
+            (len, times) -> (
+                r = _axis_record(temporal, times, anchor, fa);
+                _calendar_record(r, len, dim);
+                Int[r]
             );
             select = select
         )
-        length(pos0) == 2 && return _bracket_build(nds0, pos0[1], nds0, pos0[2], dim, ta, tn)
-        return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, ta, ta)
+        return _slice_dim(nds, dim, pos[1])
     end
-    nds0, pos0 = _load_records(
-        p, ta, len -> Int[_calendar_record(rec0, len, dim)]; select = select
-    )
-    if has_succ
-        # Successor: its record of the NEXT file. A read failure at the seam is
-        # end-of-data, not an error, as in Python and Rust.
-        fa1 = file_anchor(s, nxt)
-        rec1 = record_in_file(s, nxt, fa1)
+    # The bracket: the record of `anchor` and the record of the next anchor, each
+    # found by its own file's time axis, so a record and its time agree even in a
+    # file with a gap or an unsorted axis. With no successor (the end of the
+    # data, a successor file that cannot be read, or a successor record outside
+    # its file) the floor record is held: `[rec0, rec0]` with equal times.
+    nxt = next_record_anchor(temporal, anchor)
+    has_succ = temporal.stop === nothing || nxt < temporal.stop
+    fa1 = file_anchor(temporal, nxt)
+    same_file = has_succ && fa1 == fa
+    held = Ref(true)
+    choose0 = function (len, times)
+        r = _axis_record(temporal, times, anchor, fa)
+        _calendar_record(r, len, dim)
+        if same_file
+            r1 = _axis_record(temporal, times, nxt, fa)
+            if 0 <= r1 < len
+                held[] = false
+                return r1 == r ? Int[r] : Int[r, r1]
+            end
+        end
+        return Int[r]
+    end
+    nds0, pos0 = _load_located(p, fa, anchor, choose0; select = select)
+    t0 = _unix(anchor)
+    if same_file && !held[]
+        return _bracket_build(nds0, pos0[1], nds0, pos0[end], dim, t0, _unix(nxt))
+    end
+    if has_succ && !same_file
         succ = try
-            _load_records(
-                p, tn, len -> Int[_calendar_record(rec1, len, dim)]; select = select
-            )
+            choose1 = function (len, times)
+                r = _axis_record(temporal, times, nxt, fa1)
+                0 <= r < len || throw(_NoSuccessor())
+                return Int[r]
+            end
+            nds1, pos1 = _load_located(p, fa1, nxt, choose1; select = select)
+            (nds1, pos1[1])
         catch err
             err isa InterruptException && rethrow()
             nothing
         end
         succ === nothing ||
-            return _bracket_build(nds0, pos0[1], succ[1], succ[2][1], dim, ta, tn)
+            return _bracket_build(nds0, pos0[1], succ[1], succ[2], dim, t0, _unix(nxt))
     end
-    return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, ta, ta)
+    return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, t0, t0)
 end
 
 # The tick value `sample_at(p, t)` resolves: the record anchor (Unix seconds)

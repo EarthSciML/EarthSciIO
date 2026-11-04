@@ -781,6 +781,24 @@
         "python": "EsmSourceError",
         "julia": "EsmSourceError"
       }
+    },
+    {
+      "name": "decode_time_axis",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "decode_time_axis",
+        "julia": "decode_time_axis",
+        "rust": "decode_time_axis"
+      }
+    },
+    {
+      "name": "decode_coord_times",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "rust": "decode_coord_times"
+      }
     }
   ]
 }

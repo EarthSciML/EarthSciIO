@@ -843,8 +843,8 @@ class Provider:
         **Why this Provider does not push its records into the decode.** The
         netcdf reader honours a ``records`` option in every track
         (``spec/registries.md`` §2.1) and the Julia Provider uses it, because that
-        one computes its record from the cadence and keeps no decoded-file buffer:
-        there, a whole-file decode per sample is pure waste. Here the buffer IS
+        one keeps no decoded-file buffer and chooses its records inside the
+        reader's one open: there, a whole-file decode per sample is pure waste. Here the buffer IS
         the optimisation — one whole-file decode is amortised over every anchor in
         the file — so pushing down would replace one decode per FILE with one per
         TICK. Measured on this stack (xarray 2024.7.0 / netCDF4): an A1-shaped
@@ -875,9 +875,10 @@ class Provider:
         anchor: _dt.datetime,
         files: Callable[[_dt.datetime], NativeDataset],
     ) -> NativeDataset:
-        """Return the two records bracketing ``anchor`` (floor + successor) with
-        ``time_dim`` retained at length 2 and a canonical epoch-seconds ``time``
-        coordinate. Handles the cross-file successor and the end-of-data clamp.
+        """Return the records of ``anchor`` and of the next anchor (floor +
+        successor) with ``time_dim`` retained at length 2 and a canonical
+        epoch-seconds ``time`` coordinate. Handles the cross-file successor and
+        the end-of-data clamp.
 
         Reads its files through ``files`` and touches no provider state (see
         :meth:`_sample`); :meth:`refresh` passes the 2-entry LRU, a per-call
@@ -887,19 +888,20 @@ class Provider:
         file0 = files(file0_anchor)
         rec0 = _record_index(file0, temporal, anchor, file0_anchor)
 
+        # The successor is the record of the next anchor, found the same way as
+        # the floor (spec/esm-sources.md §2.5), so its record and its time agree:
+        # in a file with a gap, or an unsorted axis, the next record in file
+        # order is not the next anchor's.
         next_anchor = temporal.next_record_anchor(anchor)
         has_succ = temporal.end is None or next_anchor < temporal.end
         succ: tuple[NativeDataset, int] | None = None
         if has_succ:
             try:
-                if rec0 + 1 < _time_len(file0, time_dim):
-                    succ = (file0, rec0 + 1)  # successor in the same file
-                else:  # successor is record 0 of the next file
-                    n_anchor = temporal.file_anchor(next_anchor)
-                    file1 = files(n_anchor)
-                    r1 = _record_index(file1, temporal, next_anchor, n_anchor)
-                    if 0 <= r1 < _time_len(file1, time_dim):
-                        succ = (file1, r1)
+                n_anchor = temporal.file_anchor(next_anchor)
+                file1 = file0 if n_anchor == file0_anchor else files(n_anchor)
+                r1 = _record_index(file1, temporal, next_anchor, n_anchor)
+                if 0 <= r1 < _time_len(file1, time_dim):
+                    succ = (file1, r1)
             except Exception:
                 succ = None  # no reachable successor — clamp below
         if succ is None:  # end-of-data: degenerate bracket, hold the last record
@@ -1033,10 +1035,36 @@ def _decode_file_times(coord: NativeField) -> list[_dt.datetime] | None:
         )
         if not np.issubdtype(decoded.dtype, np.datetime64):
             return None  # cftime (non-standard calendar) — fall back
+        if np.isnat(decoded).any():
+            return None  # a missing entry (NaN, or a masked _FillValue) — fall back
         objs = decoded.astype("datetime64[s]").astype(object).ravel().tolist()
         return [_to_naive_utc(d) for d in objs]
     except Exception:
         return None
+
+
+def decode_time_axis(
+    values: Any, units: str | None, calendar: str | None = None
+) -> list[int] | None:
+    """The Unix seconds (UTC, floored to the second) of a raw CF time axis, or
+    ``None`` when it cannot be decoded (``spec/esm-sources.md`` §2.5).
+
+    This is the decode :class:`Provider` uses to find a record in a file by the
+    file's own time axis. ``None`` means the provider falls back to the
+    cadence offset: no ``units``, units without ``since``, a calendar other
+    than ``standard``/``gregorian``/``proleptic_gregorian``, a missing entry,
+    or a date that is not representable — outside 1677-09-21 to 2262-04-11
+    when pandas decodes it, outside the years 1678 to 2261 when cftime does
+    (spec/esm-sources.md §2.5 says which decodes which)."""
+    attrs: dict[str, Any] = {}
+    if units is not None:
+        attrs["units"] = units
+    if calendar is not None:
+        attrs["calendar"] = calendar
+    times = _decode_file_times(NativeField(np.asarray(values), ("time",), attrs))
+    if times is None:
+        return None
+    return [int((d - _EPOCH_NAIVE).total_seconds()) for d in times]
 
 
 def _record_at_or_before(times: list[_dt.datetime], anchor: _dt.datetime) -> int | None:

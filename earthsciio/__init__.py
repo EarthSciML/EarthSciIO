@@ -74,6 +74,7 @@ from .provider import (
     Provider,
     SourceTemporal,
     Window,
+    decode_time_axis,
     reader_option_names,
 )
 from .readers import (
@@ -191,6 +192,7 @@ __all__ = [
     "cds_api_url",
     "cds_auth",
     "decode_cds_url",
+    "decode_time_axis",
     "default_cache_root",
     "dim_length",
     "encode_cds_url",
