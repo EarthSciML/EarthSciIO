@@ -90,6 +90,9 @@ export CalendarPeriod, CalendarPeriodError, SourceTemporal
 export record_anchor, next_record_anchor, first_record_anchor_from, file_anchor,
     next_file_anchor, record_in_file
 
+# a provider from an esm data source (spec/esm-sources.md §3)
+export provider_from_esm, EsmSourceError
+
 # esm data-source URL templates (spec/esm-sources.md)
 export EsmTemplate, EsmTemplateError, expand_esm_template, esm_template_names, esm_mirrors
 
@@ -116,6 +119,7 @@ include("zarr_stream.jl")
 include("esm.jl")
 include("calendar.jl")
 include("provider.jl")
+include("esm_source.jl")
 include("windows.jl")
 include("prefetch.jl")
 

@@ -746,6 +746,41 @@
         "python": "CalendarPeriodError",
         "julia": "CalendarPeriodError"
       }
+    },
+    {
+      "name": "provider_from_esm",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "provider_from_esm",
+        "julia": "provider_from_esm"
+      }
+    },
+    {
+      "name": "source_from_esm",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "source_from_esm",
+        "rust": "DataSource::from_esm"
+      }
+    },
+    {
+      "name": "esm_source_options",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "EsmSourceOptions"
+      }
+    },
+    {
+      "name": "esm_source_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmSourceError",
+        "julia": "EsmSourceError"
+      }
     }
   ]
 }

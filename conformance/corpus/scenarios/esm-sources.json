@@ -1,0 +1,1204 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "esm-sources",
+  "description": "Building a provider from an esm data_sources entry (spec/esm-sources.md section 3). Each case passes `entry` (named `name`) and `options` (variables, substitutions, url_override, window_s) to the track's constructor. A case with `error` fails with that code in the message, and every `mentions` string. Otherwise the provider has `format`, is CONST iff `const`, has `time_dim`, `refresh_times_s` over window_s, and at each `files[].t_s` reads record `record` of the file at `file_anchor_s` whose primary URL is `url` and whose mirrors are `mirrors`. `samples` are read offline from the corpus cache (blobs of the calendar-cadence scenario), with `records_per_sample` as given, the arrays nested in file dimension order.",
+  "cases": [
+    {
+      "id": "nei2016-monthly",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "window_s": [
+          1451606400,
+          1459468800
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "TSTEP",
+        "refresh_times_s": [
+          1451606400,
+          1454284800,
+          1456790400
+        ],
+        "files": [
+          {
+            "t_s": 1451606400,
+            "file_anchor_s": 1451606400,
+            "record": 0,
+            "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf",
+            "mirrors": [
+              "file:///data/nei/2016fh_16j_agr_12US1_month_01.ncf"
+            ]
+          },
+          {
+            "t_s": 1456704000,
+            "file_anchor_s": 1454284800,
+            "record": 0,
+            "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_02.ncf",
+            "mirrors": [
+              "file:///data/nei/2016fh_16j_agr_12US1_month_02.ncf"
+            ]
+          },
+          {
+            "t_s": 1458000000,
+            "file_anchor_s": 1456790400,
+            "record": 0,
+            "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_03.ncf",
+            "mirrors": [
+              "file:///data/nei/2016fh_16j_agr_12US1_month_03.ncf"
+            ]
+          }
+        ],
+        "samples": [
+          {
+            "t_s": 1456704000,
+            "records_per_sample": 1,
+            "NOX": [
+              [
+                200.0,
+                201.0,
+                202.0
+              ],
+              [
+                210.0,
+                211.0,
+                212.0
+              ]
+            ]
+          },
+          {
+            "t_s": 1455494400,
+            "records_per_sample": 2,
+            "NOX": [
+              [
+                [
+                  200.0,
+                  201.0,
+                  202.0
+                ],
+                [
+                  210.0,
+                  211.0,
+                  212.0
+                ]
+              ],
+              [
+                [
+                  300.0,
+                  301.0,
+                  302.0
+                ],
+                [
+                  310.0,
+                  311.0,
+                  312.0
+                ]
+              ]
+            ],
+            "time_s": [
+              1454284800,
+              1456790400
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "nei2016-url-override",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "url_override": "file:///mirror/nei_{sector}_{date:%Y%m}.ncf",
+        "window_s": [
+          1451606400,
+          1454284800
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "TSTEP",
+        "refresh_times_s": [
+          1451606400
+        ],
+        "files": [
+          {
+            "t_s": 1452384000,
+            "file_anchor_s": 1451606400,
+            "record": 0,
+            "url": "file:///mirror/nei_agr_201601.ncf",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "geosfp-a1",
+      "name": "GEOSFP_A1",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 24,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ],
+        "window_s": [
+          1462140000,
+          1462154400
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1462141800,
+          1462145400,
+          1462149000,
+          1462152600
+        ],
+        "files": [
+          {
+            "t_s": 1462141800,
+            "file_anchor_s": 1462062600,
+            "record": 22,
+            "url": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/2016/05/GEOSFP.20160501.A1.025x03125.nc",
+            "mirrors": []
+          },
+          {
+            "t_s": 1462147800,
+            "file_anchor_s": 1462062600,
+            "record": 23,
+            "url": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/2016/05/GEOSFP.20160501.A1.025x03125.nc",
+            "mirrors": []
+          },
+          {
+            "t_s": 1462149000,
+            "file_anchor_s": 1462149000,
+            "record": 0,
+            "url": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/2016/05/GEOSFP.20160502.A1.025x03125.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "ceds-yearly-files",
+      "name": "CEDS",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/ceds_{species}_{date:%Y}.nc"
+        },
+        "temporal": {
+          "start": "2015-01-01T00:00:00Z",
+          "end": "2017-01-01T00:00:00Z",
+          "file_period": "P1Y",
+          "frequency": "P1M",
+          "records_per_file": 12,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "SO2"
+        ],
+        "substitutions": {
+          "species": "so2"
+        },
+        "window_s": [
+          1446336000,
+          1456790400
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1446336000,
+          1448928000,
+          1451606400,
+          1454284800
+        ],
+        "files": [
+          {
+            "t_s": 1450137600,
+            "file_anchor_s": 1420070400,
+            "record": 11,
+            "url": "https://data.earthsci.dev/calendar/ceds_so2_2015.nc",
+            "mirrors": []
+          }
+        ],
+        "samples": [
+          {
+            "t_s": 1456704000,
+            "records_per_sample": 1,
+            "SO2": [
+              13.0,
+              13.0
+            ]
+          },
+          {
+            "t_s": 1450137600,
+            "records_per_sample": 2,
+            "SO2": [
+              [
+                11.0,
+                11.0
+              ],
+              [
+                12.0,
+                12.0
+              ]
+            ],
+            "time_s": [
+              1448928000,
+              1451606400
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "var-substitution",
+      "name": "CEDS",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/ceds_{var}_{date:%Y}.nc"
+        },
+        "temporal": {
+          "start": "2015-01-01T00:00:00Z",
+          "end": "2017-01-01T00:00:00Z",
+          "file_period": "P1Y",
+          "frequency": "P1M",
+          "records_per_file": 12,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "SO2"
+        ],
+        "window_s": [
+          1451606400,
+          1454284800
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1451606400
+        ],
+        "files": [
+          {
+            "t_s": 1451606400,
+            "file_anchor_s": 1451606400,
+            "record": 0,
+            "url": "https://data.earthsci.dev/calendar/ceds_SO2_2016.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "static",
+      "name": "DEM",
+      "entry": {
+        "kind": "static",
+        "source": {
+          "url_template": "s3://prd-tnm/StagedProducts/Elevation/1/TIFF/USGS_Seamless_DEM_1.tif"
+        },
+        "metadata": {
+          "esio_format": "geotiff"
+        }
+      },
+      "options": {
+        "variables": [
+          "Band1"
+        ]
+      },
+      "expect": {
+        "format": "geotiff",
+        "const": true,
+        "refresh_times_s": [],
+        "files": [
+          {
+            "t_s": 0,
+            "url": "s3://prd-tnm/StagedProducts/Elevation/1/TIFF/USGS_Seamless_DEM_1.tif",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "frequency-alone",
+      "name": "H",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y%m%d%H}.nc"
+        },
+        "temporal": {
+          "start": "2020-01-01T00:00:00Z",
+          "frequency": "PT6H"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1577836800,
+          1577880000
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1577836800,
+          1577858400
+        ],
+        "files": [
+          {
+            "t_s": 1577862000,
+            "file_anchor_s": 1577858400,
+            "record": 0,
+            "url": "https://h/2020010106.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "start-offset",
+      "name": "H",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y%m%d%H}.nc"
+        },
+        "temporal": {
+          "start": "2019-12-31T19:00:00-05:00",
+          "frequency": "PT6H"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1577836800,
+          1577880000
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1577836800,
+          1577858400
+        ],
+        "files": [
+          {
+            "t_s": 1577862000,
+            "file_anchor_s": 1577858400,
+            "record": 0,
+            "url": "https://h/2020010106.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "start-space-separator",
+      "name": "H",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y%m%d%H}.nc"
+        },
+        "temporal": {
+          "start": "2020-01-01 00:00:00",
+          "frequency": "PT6H"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1577836800,
+          1577880000
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1577836800,
+          1577858400
+        ],
+        "files": [
+          {
+            "t_s": 1577862000,
+            "file_anchor_s": 1577858400,
+            "record": 0,
+            "url": "https://h/2020010106.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "start-space-separator-z",
+      "name": "H",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y%m%d%H}.nc"
+        },
+        "temporal": {
+          "start": "2020-01-01 00:00:00Z",
+          "frequency": "PT6H"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1577836800,
+          1577880000
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1577836800,
+          1577858400
+        ],
+        "files": [
+          {
+            "t_s": 1577862000,
+            "file_anchor_s": 1577858400,
+            "record": 0,
+            "url": "https://h/2020010106.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "start-one-digit-fraction",
+      "name": "H",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y%m%d%H}.nc"
+        },
+        "temporal": {
+          "start": "2020-01-01T00:00:00.0Z",
+          "frequency": "PT6H"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1577836800,
+          1577880000
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1577836800,
+          1577858400
+        ],
+        "files": [
+          {
+            "t_s": 1577862000,
+            "file_anchor_s": 1577858400,
+            "record": 0,
+            "url": "https://h/2020010106.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "records-per-file-many",
+      "name": "S1",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://h/{date:%Y}.nc"
+        },
+        "temporal": {
+          "start": "2015-01-01T00:00:00Z",
+          "frequency": "PT1S",
+          "file_period": "P1Y",
+          "records_per_file": 31536000
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ],
+        "window_s": [
+          1420070400,
+          1420070402
+        ]
+      },
+      "expect": {
+        "format": "netcdf",
+        "const": false,
+        "time_dim": "time",
+        "refresh_times_s": [
+          1420070400,
+          1420070401
+        ],
+        "files": [
+          {
+            "t_s": 1420070401,
+            "file_anchor_s": 1420070400,
+            "record": 1,
+            "url": "https://h/2015.nc",
+            "mirrors": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-format",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        }
+      },
+      "error": "esm_source_no_format",
+      "mentions": [
+        "S",
+        "esio_format"
+      ]
+    },
+    {
+      "id": "unbound-sector",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ]
+      },
+      "error": "esm_template_unbound",
+      "mentions": [
+        "S",
+        "sector"
+      ]
+    },
+    {
+      "id": "relative-url",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "../data/nei_{sector}_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        }
+      },
+      "error": "esm_source_url",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "env-var-url",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "file://${HOME}/nei_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ]
+      },
+      "error": "esm_source_url",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "no-cadence",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-12-31T23:59:59Z",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        }
+      },
+      "error": "esm_source_temporal",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "records-per-file-mismatch",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 8,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_source_records_per_file",
+      "mentions": [
+        "S",
+        "8",
+        "24"
+      ]
+    },
+    {
+      "id": "bad-period",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1.5H",
+          "records_per_file": 24,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_period_invalid",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "unbound-sector-in-mirror",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://x/{date:%m}.nc",
+          "mirrors": [
+            "file:///data/{sector}_{date:%m}.nc"
+          ]
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "frequency": "P1M"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ]
+      },
+      "error": "esm_template_unbound",
+      "mentions": [
+        "S",
+        "sector"
+      ]
+    },
+    {
+      "id": "frequency-not-a-string",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": 3600,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_period_invalid",
+      "mentions": [
+        "S",
+        "frequency"
+      ]
+    },
+    {
+      "id": "time-variable-not-a-string",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 24,
+          "time_variable": 5
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_source_temporal",
+      "mentions": [
+        "S",
+        "time_variable"
+      ]
+    },
+    {
+      "id": "start-not-a-string",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc"
+        },
+        "temporal": {
+          "start": 0,
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 24,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_source_temporal",
+      "mentions": [
+        "S",
+        "start"
+      ]
+    },
+    {
+      "id": "cadence-without-start",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+          "mirrors": [
+            "file:///data/nei/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf"
+          ]
+        },
+        "temporal": {
+          "end": "2016-12-31T23:59:59Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf",
+          "tags": [
+            "emissions"
+          ]
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        }
+      },
+      "error": "esm_source_temporal",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "date-without-anchor",
+      "name": "S",
+      "entry": {
+        "kind": "static",
+        "source": {
+          "url_template": "https://h/nei_{date:%m}.ncf"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "v"
+        ]
+      },
+      "error": "esm_template_no_anchor",
+      "mentions": [
+        "S"
+      ]
+    },
+    {
+      "id": "mirrors-not-an-array",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc",
+          "mirrors": "file:///data/x.nc"
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 24,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_source_url",
+      "mentions": [
+        "S",
+        "array"
+      ]
+    },
+    {
+      "id": "mirror-not-a-string",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc",
+          "mirrors": [
+            1
+          ]
+        },
+        "temporal": {
+          "start": "2013-01-01T00:30:00Z",
+          "file_period": "P1D",
+          "frequency": "PT1H",
+          "records_per_file": 24,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "T2M"
+        ]
+      },
+      "error": "esm_source_url",
+      "mentions": [
+        "S",
+        "string"
+      ]
+    },
+    {
+      "id": "var-ambiguous",
+      "name": "S",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/ceds_{var}_{date:%Y}.nc"
+        },
+        "temporal": {
+          "start": "2015-01-01T00:00:00Z",
+          "end": "2017-01-01T00:00:00Z",
+          "file_period": "P1Y",
+          "frequency": "P1M",
+          "records_per_file": 12,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "SO2",
+          "NOX"
+        ]
+      },
+      "error": "esm_template_unbound",
+      "mentions": [
+        "S",
+        "var"
+      ]
+    }
+  ]
+}

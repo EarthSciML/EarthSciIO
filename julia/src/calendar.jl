@@ -126,14 +126,31 @@ _utc(t::Real) = unix2datetime(t)
 _utc(t::AbstractString) = _parse_utc(t)
 _unix(t::DateTime) = datetime2unix(t)
 
-# An ISO 8601 instant, read as UTC; a trailing `Z` is accepted.
+const _ISO_INSTANT = r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|z|[+-]\d{2}:?\d{2})?)?$"
+
+# An ISO 8601 instant as UTC, as the Python and Rust tracks read it: a date, or
+# a date-time with a `T` or space separator, optional seconds and fraction (to
+# the millisecond), and an optional `Z` or `±HH:MM` offset (none reads as UTC).
 function _parse_utc(s::AbstractString)
-    str = replace(strip(String(s)), r"(Z|z|\+00:?00)$" => "")
-    for fmt in (dateformat"yyyy-mm-ddTHH:MM:SS.s", dateformat"yyyy-mm-ddTHH:MM:SS", dateformat"yyyy-mm-ddTHH:MM", dateformat"yyyy-mm-dd")
-        dt = tryparse(DateTime, str, fmt)
-        dt === nothing || return dt
+    m = match(_ISO_INSTANT, strip(String(s)))
+    bad() = ArgumentError("cannot read $(repr(String(s))) as a UTC instant (yyyy-mm-ddTHH:MM:SSZ)")
+    m === nothing && throw(bad())
+    num(i) = m.captures[i] === nothing ? 0 : parse(Int, m.captures[i])
+    frac = m.captures[7]
+    ms = frac === nothing ? 0 : parse(Int, rpad(first(frac, 3), 3, '0'))
+    dt = try
+        DateTime(num(1), num(2), num(3), num(4), num(5), num(6), ms)
+    catch e
+        e isa ArgumentError || rethrow()
+        throw(bad())
     end
-    throw(ArgumentError("cannot read $(repr(String(s))) as a UTC instant (yyyy-mm-ddTHH:MM:SSZ)"))
+    off = m.captures[8]
+    if off !== nothing && !(off in ("Z", "z"))
+        digits = replace(off[2:end], ":" => "")
+        mins = 60 * parse(Int, digits[1:2]) + parse(Int, digits[3:4])
+        dt -= Minute(off[1] == '-' ? -mins : mins)
+    end
+    return dt
 end
 
 """
