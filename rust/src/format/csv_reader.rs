@@ -14,8 +14,11 @@
 //! `header_row` (the 0-based row holding the column names, default 0; rows
 //! before it are dropped). Blank lines are skipped. Quoted fields are RFC 4180,
 //! as Python's `csv` module reads them. A numeric cell that does not parse —
-//! a blank one included — is an error naming the column and row, as it is in
-//! Python and Julia; it is never a silent `NaN`.
+//! a blank one included — is an error naming the column and file line, as it
+//! is in Python and Julia; it is never a silent `NaN`. A header that repeats a
+//! column name, or a `numeric_columns` entry the header lacks, is an error. The
+//! text is UTF-8 and a leading byte-order mark is dropped, in every track. A
+//! `null` option value is the same as leaving the option out.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -81,11 +84,19 @@ impl CsvReader {
     fn from_options(options: &serde_json::Map<String, serde_json::Value>) -> Result<Self> {
         let mut r = CsvReader::new();
         for (k, v) in options {
+            if !matches!(k.as_str(), "numeric_columns" | "delimiter" | "header_row") {
+                return Err(fmt_err(format!(
+                    "unknown reader option {k:?}; csv takes numeric_columns, \
+                     delimiter, header_row"
+                )));
+            }
+            // A null option is an unset one: a serializer that writes every key
+            // must not turn a default into an error.
+            if v.is_null() {
+                continue;
+            }
             match k.as_str() {
                 "numeric_columns" => {
-                    if v.is_null() {
-                        continue;
-                    }
                     let bad =
                         || fmt_err(format!("reader option {k:?} must be an array of strings"));
                     let names = v
@@ -104,7 +115,7 @@ impl CsvReader {
                     })?;
                     r = r.delimiter(s.as_bytes()[0]);
                 }
-                "header_row" => {
+                _ => {
                     let n = v.as_u64().ok_or_else(|| {
                         fmt_err(format!(
                             "reader option {k:?} must be a non-negative integer (0-based)"
@@ -112,32 +123,45 @@ impl CsvReader {
                     })?;
                     r = r.header_row(n as usize);
                 }
-                other => {
-                    return Err(fmt_err(format!(
-                        "unknown reader option {other:?}; csv takes numeric_columns, \
-                         delimiter, header_row"
-                    )));
-                }
             }
         }
         Ok(r)
     }
 
-    /// The non-blank rows of the blob, RFC 4180 quoting honoured.
-    fn rows(&self, path: &Path) -> Result<Vec<Vec<String>>> {
+    /// The non-blank rows of the blob, RFC 4180 quoting honoured, each with the
+    /// 1-based file line it starts on (for error messages). The text must be
+    /// UTF-8; a leading byte-order mark is dropped.
+    fn rows(&self, path: &Path) -> Result<Vec<(u64, Vec<String>)>> {
+        // Read whole so a record's byte offset maps to its file line: the csv
+        // crate's own line counter skips blank lines.
+        let bytes =
+            std::fs::read(path).map_err(|e| fmt_err(format!("open {}: {e}", path.display())))?;
         let mut rdr = ::csv::ReaderBuilder::new()
             .has_headers(false)
             .flexible(true)
             .delimiter(self.delimiter)
-            .from_path(path)
-            .map_err(|e| fmt_err(format!("open {}: {e}", path.display())))?;
+            .from_reader(bytes.as_slice());
         let mut out = Vec::new();
+        let (mut line, mut scanned) = (1u64, 0usize);
         for rec in rdr.records() {
-            let rec = rec.map_err(|e| fmt_err(format!("{}: {e}", path.display())))?;
+            let rec = rec.map_err(|e| {
+                fmt_err(format!("{}: {e} (csv text must be UTF-8)", path.display()))
+            })?;
             if rec.is_empty() {
                 continue;
             }
-            out.push(rec.iter().map(str::to_string).collect());
+            // The crate's position is where the previous record ended, so skip
+            // the line breaks (and blank lines) before this one.
+            let mut start = rec.position().map_or(scanned, |p| p.byte() as usize);
+            while matches!(bytes.get(start), Some(b'\n' | b'\r')) {
+                start += 1;
+            }
+            line += bytes[scanned..start]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u64;
+            scanned = start;
+            out.push((line, rec.iter().map(str::to_string).collect()));
         }
         Ok(out)
     }
@@ -176,27 +200,41 @@ impl Reader for CsvReader {
     ) -> Result<NativeDataset> {
         // `supports_selection` is false: the Provider never hands this reader
         // a window, and row selection is esm-spec §8.9.2 work downstream.
-        let rows = self.rows(blob_path)?;
+        let mut rows = self.rows(blob_path)?;
         if rows.is_empty() {
             return Ok(NativeDataset::default());
         }
-        let header = rows.get(self.header_row).ok_or_else(|| {
-            fmt_err(format!(
+        if self.header_row >= rows.len() {
+            return Err(fmt_err(format!(
                 "header_row {} is past the {} non-blank rows of {}",
                 self.header_row,
                 rows.len(),
                 blob_path.display()
-            ))
-        })?;
-        let body = &rows[self.header_row + 1..];
+            )));
+        }
+        let mut body = rows.split_off(self.header_row + 1);
+        let (header_line, header) = rows.pop().expect("header_row < rows.len()");
+
+        // A repeated column name would let one column silently replace another.
+        let mut seen = HashSet::new();
+        let mut dups: Vec<&str> = header
+            .iter()
+            .filter(|h| !seen.insert(h.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !dups.is_empty() {
+            dups.sort_unstable();
+            dups.dedup();
+            return Err(fmt_err(format!(
+                "header on line {header_line} repeats column names {dups:?}; \
+                 every column needs a distinct name"
+            )));
+        }
+        let in_header = |v: &str| header.iter().any(|h| h == v);
         let want: Option<HashSet<&str>> =
             (!variables.is_empty()).then(|| variables.iter().map(String::as_str).collect());
         if let Some(w) = &want {
-            let mut missing: Vec<&str> = w
-                .iter()
-                .copied()
-                .filter(|v| !header.iter().any(|h| h == v))
-                .collect();
+            let mut missing: Vec<&str> = w.iter().copied().filter(|v| !in_header(v)).collect();
             if !missing.is_empty() {
                 missing.sort_unstable();
                 return Err(fmt_err(format!(
@@ -208,45 +246,55 @@ impl Reader for CsvReader {
             .numeric_columns
             .as_ref()
             .map(|n| n.iter().map(String::as_str).collect());
-
-        let mut variables_out: HashMap<String, NativeField> = HashMap::new();
-        for (j, name) in header.iter().enumerate() {
-            if want.as_ref().is_some_and(|w| !w.contains(name.as_str())) {
-                continue;
+        if let Some(n) = &numset {
+            // A misspelt numeric column would otherwise leave the intended one
+            // as text with no error.
+            let mut missing: Vec<&str> = n.iter().copied().filter(|v| !in_header(v)).collect();
+            if !missing.is_empty() {
+                missing.sort_unstable();
+                return Err(fmt_err(format!(
+                    "numeric_columns not in CSV: {missing:?}; present columns: {header:?}"
+                )));
             }
-            let mut vals: Vec<&str> = Vec::with_capacity(body.len());
-            for (i, r) in body.iter().enumerate() {
-                let cell = r.get(j).ok_or_else(|| {
+        }
+
+        // The wanted columns, by field index; cells are moved out of `body`
+        // column by column, never copied.
+        let cols: Vec<(usize, &String)> = header
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| want.as_ref().is_none_or(|w| w.contains(name.as_str())))
+            .collect();
+        let n = body.len();
+        let mut variables_out: HashMap<String, NativeField> = HashMap::new();
+        for (j, name) in cols {
+            let mut vals: Vec<String> = Vec::with_capacity(n);
+            for (line, r) in body.iter_mut() {
+                let fields = r.len();
+                let cell = r.get_mut(j).ok_or_else(|| {
                     fmt_err(format!(
-                        "row {} has {} fields; column {name:?} is field {}",
-                        self.header_row + 1 + i,
-                        r.len(),
+                        "line {line} has {fields} fields; column {name:?} is field {}",
                         j + 1
                     ))
                 })?;
-                vals.push(cell.as_str());
+                vals.push(std::mem::take(cell));
             }
             let numeric = match &numset {
-                Some(n) => n.contains(name.as_str()),
+                Some(ns) => ns.contains(name.as_str()),
                 None => vals.iter().all(|v| parses_float(v)),
             };
-            let n = vals.len();
             let (dtype, data) = if numeric {
                 let mut out = Vec::with_capacity(n);
-                for (i, v) in vals.iter().enumerate() {
+                for ((line, _), v) in body.iter().zip(&vals) {
                     out.push(v.trim().parse::<f64>().map_err(|_| {
                         fmt_err(format!(
-                            "column {name:?} row {}: cannot parse {v:?} as a number",
-                            self.header_row + 1 + i
+                            "column {name:?} on line {line}: cannot parse {v:?} as a number"
                         ))
                     })?);
                 }
                 (DType::Float64, ArrayData::F64(out))
             } else {
-                (
-                    DType::Str,
-                    ArrayData::Str(vals.iter().map(|v| v.to_string()).collect()),
-                )
+                (DType::Str, ArrayData::Str(vals))
             };
             variables_out.insert(
                 name.clone(),

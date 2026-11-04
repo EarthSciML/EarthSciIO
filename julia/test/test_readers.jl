@@ -90,7 +90,12 @@ end
                 )
             else
                 kwargs = if fmt == "csv"
-                    (; numeric_columns = String.(case["decode"]["numeric_columns"]))
+                    dec = case["decode"]
+                    (;
+                        numeric_columns = String.(dec["numeric_columns"]),
+                        delimiter = get(dec, "delimiter", nothing),
+                        header_row = get(dec, "header_row", nothing),
+                    )
                 elseif fmt == "ff10"
                     # forward the zip member selection + header handling the case
                     # pins (member/members/member_glob/skip_header_row).
@@ -765,6 +770,19 @@ end
     @test eltype(nds["a"].data) == Float64
     @test nds["a"].data == [1.5, 3.5]
     @test eltype(nds["b"].data) == Float64
+
+    # header_row is 0-based (as in Python and Rust); a BOM is dropped; a repeated
+    # header name or an absent numeric column is an error.
+    tmp2 = joinpath(mktempdir(), "t.csv")
+    write(tmp2, "\ufeffa title\nx;y\n1;a\n")
+    nds = read_native(CSVReader(), tmp2; delimiter = ";", header_row = 1)
+    @test nds["x"].data == [1.0]
+    nds = read_native(CSVReader(), tmp2; delimiter = nothing, header_row = nothing)
+    @test haskey(nds.variables, "a title")
+    write(tmp2, "id,value,value\n1,2,3\n")
+    @test_throws ArgumentError read_native(CSVReader(), tmp2)
+    write(tmp2, "lat,lon\n1,2\n")
+    @test_throws KeyError read_native(CSVReader(), tmp2; numeric_columns = ["lat", "longtitude"])
 end
 
 # --- FF10 point reader unit tests -------------------------------------------

@@ -574,17 +574,32 @@ class CSVReader:
         select: Any | None = None,
         *,
         numeric_columns: Sequence[str] | None = None,
-        delimiter: str = ",",
-        header_row: int = 0,
+        delimiter: str | None = ",",
+        header_row: int | None = 0,
         **_: Any,
     ) -> NativeDataset:
-        """Decode a delimited-text blob into a :class:`NativeDataset` of points."""
-        with open(handle, newline="") as fh:
+        """Decode a delimited-text blob into a :class:`NativeDataset` of points.
+
+        ``header_row`` is 0-based in every track. A ``None`` option is unset.
+        """
+        delimiter = "," if delimiter is None else delimiter
+        header_row = 0 if header_row is None else header_row
+        # UTF-8 in every track, whatever the locale; a leading BOM is dropped.
+        with open(handle, newline="", encoding="utf-8-sig") as fh:
             rows = [r for r in _csv.reader(fh, delimiter=delimiter) if r]
         if not rows:
             return NativeDataset()
+        if header_row >= len(rows):
+            raise ValueError(
+                f"header_row {header_row} is past the {len(rows)} non-blank rows of {handle}"
+            )
         header = rows[header_row]
         body = rows[header_row + 1 :]
+        dups = sorted({h for h in header if header.count(h) > 1})
+        if dups:
+            raise ValueError(
+                f"CSV header repeats column names {dups}; every column needs a distinct name"
+            )
         want = {str(v) for v in variables} if variables else None
         if want is not None:
             missing = [v for v in want if v not in header]
@@ -593,6 +608,12 @@ class CSVReader:
                     f"requested variables not in CSV: {sorted(missing)}; present columns: {header}"
                 )
         numset = {str(c) for c in numeric_columns} if numeric_columns is not None else None
+        if numset is not None:
+            missing = [c for c in numset if c not in header]
+            if missing:
+                raise KeyError(
+                    f"numeric_columns not in CSV: {sorted(missing)}; present columns: {header}"
+                )
 
         out_vars: dict[str, NativeField] = {}
         for j, col in enumerate(header):

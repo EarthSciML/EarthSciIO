@@ -99,7 +99,7 @@ fn a_blank_numeric_cell_is_an_error_not_nan() {
     let p = write(dir.path(), "t.csv", "a,b\n1,\n2,3\n");
     let r = configured(json!({"numeric_columns": ["a", "b"]}));
     let e = read(r.as_ref(), &p, &[]).unwrap_err().to_string();
-    assert!(e.contains("\"b\"") && e.contains("row 1"), "{e}");
+    assert!(e.contains("\"b\"") && e.contains("line 2"), "{e}");
     // Inferred, the blank makes the column text.
     let ds = read(&CsvReader::new(), &p, &[]).unwrap();
     assert_eq!(strs(&ds, "b"), vec!["", "3"]);
@@ -168,4 +168,63 @@ fn a_provider_reads_the_declared_options() {
     assert_eq!(fields.len(), 2);
     assert_eq!(fields["id"].dtype, DType::Str);
     assert_eq!(fields["lat"].data, ArrayData::F64(vec![39.5, 40.25, 41.0]));
+}
+
+#[test]
+fn errors_name_the_file_line() {
+    let dir = tempfile::tempdir().unwrap();
+    // The bad cell is on file line 4: a blank line does not shift the count.
+    let p = write(dir.path(), "t.csv", "a,b\n1,2\n\n3,x\n");
+    let r = configured(json!({"numeric_columns": ["a", "b"]}));
+    let e = read(r.as_ref(), &p, &[]).unwrap_err().to_string();
+    assert!(e.contains("line 4"), "{e}");
+    // A short row names its line and the 1-based field it lacks.
+    let p = write(dir.path(), "s.csv", "a,b\n\n1\n");
+    let e = read(&CsvReader::new(), &p, &[]).unwrap_err().to_string();
+    assert!(e.contains("line 3") && e.contains("field 2"), "{e}");
+}
+
+#[test]
+fn a_repeated_column_name_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = write(dir.path(), "t.csv", "id,value,value\n1,2,3\n");
+    let e = read(&CsvReader::new(), &p, &[]).unwrap_err().to_string();
+    assert!(e.contains("value") && e.contains("repeats"), "{e}");
+}
+
+#[test]
+fn a_numeric_column_absent_from_the_header_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = write(dir.path(), "t.csv", TABLE);
+    let r = configured(json!({"numeric_columns": ["lat", "longtitude"]}));
+    let e = read(r.as_ref(), &p, &[]).unwrap_err().to_string();
+    assert!(
+        e.contains("longtitude") && e.contains("numeric_columns"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_null_option_is_unset() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = write(dir.path(), "t.csv", TABLE);
+    let r = configured(json!({"numeric_columns": null, "delimiter": null, "header_row": null}));
+    let ds = read(r.as_ref(), &p, &[]).unwrap();
+    assert_eq!(f64s(&ds, "lat"), vec![39.5, 40.25, 41.0]);
+    // An unknown key is refused even when null.
+    let reg = FormatRegistry::with_builtins();
+    let opts = json!({"numeric_colums": null});
+    assert!(reg
+        .get("csv")
+        .unwrap()
+        .configured(opts.as_object().unwrap())
+        .is_err());
+}
+
+#[test]
+fn a_byte_order_mark_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = write(dir.path(), "t.csv", "\u{feff}id,v\n1,2\n");
+    let ds = read(&CsvReader::new(), &p, &[]).unwrap();
+    assert_eq!(f64s(&ds, "id"), vec![1.0]);
 }
