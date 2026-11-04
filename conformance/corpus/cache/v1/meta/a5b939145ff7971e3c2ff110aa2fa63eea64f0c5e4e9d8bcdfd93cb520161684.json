@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 168,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "64b61699ed2a3e820303039cf373a831b01182a918be61ccc6a432c1f5cd57dd",
+  "source_loader": "nei2016",
+  "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf"
+}

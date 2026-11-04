@@ -102,12 +102,18 @@ compile_error!(
 pub mod auth;
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod calendar;
 mod clock;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod datadir;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod era5;
 mod error;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod esm;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod esm_source;
 pub mod format;
 #[cfg(not(target_arch = "wasm32"))]
 mod key;
@@ -125,6 +131,8 @@ pub mod s3_config;
 pub mod store;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod test_env;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod time_axis;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
 #[cfg(not(target_arch = "wasm32"))]
@@ -148,7 +156,13 @@ pub use format::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 #[cfg(not(target_arch = "wasm32"))]
+pub use calendar::CalendarPeriod;
+#[cfg(not(target_arch = "wasm32"))]
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
+#[cfg(not(target_arch = "wasm32"))]
+pub use esm::{esm_template_names, expand_esm_template, EsmTemplateError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use esm_source::EsmSourceOptions;
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
     array_shape_object_store, read_store_options, read_zarr_object_store,
@@ -176,6 +190,8 @@ pub use s3_config::{
     bucket_options_from_env, options_for_bucket, options_for_url, parse_bucket_options,
     stated_region, stated_signing, BUCKET_OPTIONS_ENV,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use time_axis::{decode_coord_times, decode_time_axis};
 
 /// The 0.1.1 spelling of [`DataSource`]. From `.esm` 1.0.0 the declaration is a
 /// `data_sources` entry, not a `data_loaders` one, and its consumers spell it

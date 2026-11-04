@@ -878,7 +878,7 @@ def test_prefetch_fetch_ahead_downloads_without_decoding_and_drops_errors(tmp_pa
     src = _file_source(tmp_path)
     online = Cache(root=tmp_path / "cache")
     member = _provider(src, 1, online)
-    urls = {k: member._sample_urls(_utc(src["refresh_times_s"][k]))[0] for k in (0, 4, 8, 12)}
+    urls = {k: member._sample_urls(_utc(src["refresh_times_s"][k]))[0].url for k in (0, 4, 8, 12)}
     decoded = []
     real = member._reader.read_native
 

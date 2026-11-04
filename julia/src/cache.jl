@@ -366,7 +366,8 @@ end
 
 """
     fetch_blob(cache, resolved_url; source_loader=nothing, auth_realm=nothing,
-               ttl=nothing, revalidate=false, store_read=false) -> CacheEntry
+               ttl=nothing, revalidate=false, store_read=false,
+               mirrors=String[]) -> CacheEntry
 
 Return the cached blob for `resolved_url`, fetching it first if necessary.
 
@@ -383,19 +384,24 @@ forces it unconditionally. `auth_realm` selects a resolver from a realm→resolv
 this URL is ONE OBJECT of a store-backed read (a Zarr chunk, fetched once per
 object) rather than a whole blob, and is passed to the transport, which bounds
 such a fetch more tightly — the caller knows which it is; the transport must not
-guess (transport.jl, `_http_store_read_ceiling`)."""
+guess (transport.jl, `_http_store_read_ceiling`).
+
+`mirrors` are further candidate URLs, tried in order when the primary download
+fails (spec/cache-format.md §2). The blob is cached under the PRIMARY URL's key
+and its manifest names the primary URL, whichever candidate supplied it."""
 function fetch_blob(
         c::Cache, resolved_url::AbstractString;
         source_loader = nothing, auth_realm = nothing,
         ttl::Union{Real, Nothing} = nothing, revalidate::Bool = false,
-        store_read::Bool = false
+        store_read::Bool = false, mirrors = String[]
     )
     key = cache_key(resolved_url)
     bp = get_blob(c.store, key)
     present = bp !== nothing
+    mirror_urls = String[String(m) for m in mirrors]
 
     # Fast path: present + valid, no lock.
-    if present && _valid_fast(c, resolved_url, key, bp, ttl, revalidate)
+    if present && _valid_fast(c, resolved_url, key, bp, ttl, revalidate, mirror_urls)
         return CacheEntry(key, bp, get_meta(c.store, key), :hit)
     end
 
@@ -409,7 +415,7 @@ function fetch_blob(
     # appears under the lock means a peer filled it: reuse it).
     return _locked_fetch(
         c, resolved_url, key, source_loader, auth_realm, present,
-        store_read, ttl, revalidate
+        store_read, ttl, revalidate, mirror_urls
     )
 end
 
@@ -424,7 +430,7 @@ end
 # being served from a warm entry (EarthSciML/EarthSciAST#293). Offline keeps the
 # old behaviour on purpose — it trades freshness for hermeticity by design
 # (spec/offline-mode.md §3) and has no transport left to re-ingest with.
-function _valid_fast(c::Cache, url, key, bp, ttl, revalidate)
+function _valid_fast(c::Cache, url, key, bp, ttl, revalidate, mirrors = String[])
     if c.offline
         c.verify && _verify_integrity(c, url, key, bp)
         return true
@@ -449,13 +455,14 @@ function _valid_fast(c::Cache, url, key, bp, ttl, revalidate)
             # REPLACED: a different file at the same path — re-ingest, which is
             # the whole point of the rung. MISSING: nothing there — re-ingest so
             # the transport raises the real absence; absent must not read as a
-            # stale hit. (This track's `fetch_blob` takes no `mirrors`, so a
-            # missing source is always this entry's own source. Rust and Python
-            # abstain on MISSING when mirrors were supplied, because there the
-            # blob may have come from one.) UNKNOWN: the path could not be read
-            # at all — no permission, an unmounted filesystem — which is not
-            # evidence the bytes changed, so rung 0 abstains.
-            (st === SOURCE_REPLACED || st === SOURCE_MISSING) && return false
+            # stale hit — unless mirrors were supplied, because then the blob may
+            # well have come from one and re-ingesting would download the mirror
+            # again on every read (spec/cache-format.md §4.1, as in Rust and
+            # Python). UNKNOWN: the path could not be read at all — no
+            # permission, an unmounted filesystem — which is not evidence the
+            # bytes changed, so rung 0 abstains.
+            st === SOURCE_REPLACED && return false
+            st === SOURCE_MISSING && isempty(mirrors) && return false
         end
     end
     if ttl !== nothing && meta !== nothing
@@ -478,7 +485,7 @@ end
 function _locked_fetch(
         c::Cache, url, key, source_loader, auth_realm, want_revalidate,
         store_read::Bool = false, ttl = nothing,
-        revalidate::Bool = false
+        revalidate::Bool = false, mirrors = String[]
     )
     return lock_key(c.store, key) do
         # Re-check under the lock. When filling a miss, a blob that appeared
@@ -501,11 +508,10 @@ function _locked_fetch(
         # outright), and a TTL that is genuinely expired still falls through to
         # the conditional GET. `_valid_fast` verifies integrity itself when it
         # says yes, so there is no second verify here.
-        if bp !== nothing && _valid_fast(c, url, key, bp, ttl, revalidate)
+        if bp !== nothing && _valid_fast(c, url, key, bp, ttl, revalidate, mirrors)
             return CacheEntry(key, bp, get_meta(c.store, key), :hit)
         end
 
-        transport = TRANSPORT_REGISTRY[url_scheme(url)]
         meta = get_meta(c.store, key)
         # Only send conditional-GET headers when there is a cached blob to fall
         # back on; otherwise force a full GET.
@@ -513,11 +519,8 @@ function _locked_fetch(
             (etag = meta.etag, last_modified = meta.last_modified) : NamedTuple()
         staged = staging_path(c.store)
         try
-            res = fetch!(
-                transport, url, staged;
-                conditional = conditional,
-                auth = resolve_auth(c.auth, auth_realm),
-                store_read = store_read
+            res = _fetch_candidates(
+                c, String(url), mirrors, staged, conditional, auth_realm, store_read
             )
 
             if res.status == :not_modified
@@ -543,6 +546,35 @@ function _locked_fetch(
             isfile(staged) && rm(staged; force = true)
         end
     end
+end
+
+# Download the first candidate that succeeds — the primary URL, then each mirror
+# in order — into `staged`. A failure of every candidate rethrows the primary's
+# error when there were no mirrors (unchanged behaviour), else names them all.
+function _fetch_candidates(c::Cache, url::String, mirrors, staged, conditional, auth_realm, store_read)
+    candidates = String[url; mirrors]
+    # Resolved once, before any candidate: an auth error is the caller's, not a
+    # failed mirror, so it is thrown as itself rather than retried per mirror.
+    auth = resolve_auth(c.auth, auth_realm)
+    errs = Tuple{String, Any}[]
+    for cand in candidates
+        try
+            transport = TRANSPORT_REGISTRY[url_scheme(cand)]
+            return fetch!(
+                transport, cand, staged;
+                conditional = conditional,
+                auth = auth,
+                store_read = store_read
+            )
+        catch err
+            err isa InterruptException && rethrow()
+            length(candidates) == 1 && rethrow()
+            push!(errs, (cand, err))
+            isfile(staged) && rm(staged; force = true)
+        end
+    end
+    detail = join(("$u: $(sprint(showerror, e))" for (u, e) in errs), "; ")
+    error("all $(length(candidates)) candidate URLs failed for $url ($detail)")
 end
 
 _touch_fetched_at(::Nothing) = nothing

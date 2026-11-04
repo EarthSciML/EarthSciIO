@@ -22,6 +22,76 @@ package version is independent of the `.esm` format version.
   `conformance/corpus/scenarios/json-reader.json` (52 cases) runs in every
   test suite, and the cross-language corpus case `openaq-stations-json` has
   three-way equality. `spec/registries.json` lists the reader's options.
+- **feat:** esm URL templates (`spec/esm-sources.md` §1). `expand_esm_template`
+  expands an esm `source.url_template` — `{date:<format>}` with the directives
+  `%Y %y %m %d %j %H %M %S %%`, and custom `{name}` substitutions such as
+  `{sector}` — identically in Python, Julia and Rust, pinned by the shared
+  `esm-url-templates` scenario. `esm_template_names` lists the substitutions
+  a template needs. Errors carry an `esm_template_*` code; an unbound
+  substitution is an error, never a URL with braces in it.
+- **feat:** a provider takes an esm template as its URL (Python `EsmTemplate`,
+  Julia `EsmTemplate`, Rust `DataSource::esm_template`), with mirrors that are
+  esm templates expanded at the same anchor and tried in order after the
+  primary URL. Every track refuses an unbound or malformed name in the
+  primary OR a mirror when the template is built, and checks the tokens in
+  place, so `{{date:%Y}x}` is accepted (the shared scenario's
+  `construction` cases pin both). Each file carries the mirrors resolved at
+  its own anchor to the fetch; there is no URL-to-mirrors memo.
+
+
+- **feat:** calendar cadences (`spec/esm-sources.md` §2). A source's frequency
+  and file period are `CalendarPeriod`s (whole months plus whole seconds, read
+  from ISO 8601 durations), so `P1M` and `P1Y` anchors fall on calendar months
+  and years. Every anchor is computed from the start, the day clamped to the
+  month's last day. `SourceTemporal` gains `record_anchor`,
+  `next_record_anchor`, `first_record_anchor_from`, `file_anchor`,
+  `next_file_anchor` and `record_in_file`, pinned by the shared
+  `calendar-cadence` scenario (with small synthetic monthly and yearly files in
+  the corpus).
+
+- **feat:** a provider straight from an esm `data_sources` entry
+  (`spec/esm-sources.md` §3): Python `provider_from_esm` / `source_from_esm`,
+  Julia `provider_from_esm`, Rust `DataSource::from_esm(name, &entry,
+  &EsmSourceOptions { variables, substitutions, url_override,
+  records_per_sample })`. Each reads the reader name from
+  `metadata.esio_format`, the URL template and mirrors as esm templates (binding
+  `{var}` when one variable is read), the calendar `temporal` block (checking
+  `records_per_file` against the cadence) and `reader_options`. A source it
+  cannot read fails with an `esm_source_*` code and the source's name; a
+  template error of the entry (an unbound mirror substitution, a `{date:…}` in
+  a time-invariant source) is restated the same way with its `esm_template_*`
+  code. Pinned by the shared `esm-sources` scenario, which includes reseact's
+  GEOS-FP A1 and NEI 2016 entries.
+
+- **fix:** the three tracks read an ISO 8601 instant alike: a `T` or space
+  separator, a `Z` or `±HH:MM` offset (converted to UTC) or none (UTC), and a
+  fraction of any length. Julia's string `start`/`stop` of a `SourceTemporal`
+  accepted only a UTC suffix; Python's `parse_rfc3339` on 3.9 and 3.10 refused
+  a fraction that was not 3 or 6 digits.
+
+- **feat:** a time-varying provider finds a record in its file by the file's
+  own CF time axis when it can decode one, and by the cadence offset otherwise
+  (`spec/esm-sources.md` §2.5). Python already did; Julia and Rust now do the
+  same, rule by rule, so a file that lacks some records or whose records are
+  off the cadence is read right in every track. `decode_time_axis` (all three
+  tracks; Rust also `decode_coord_times`) exposes the CF decode. Pinned by the
+  shared `decoded-time-axis` scenario, with small synthetic trimmed, irregular
+  and noleap files in the corpus. Python's decode no longer fails on an axis
+  with a missing entry; it falls back to the cadence offset.
+
+- **fix:** a two-record sample's successor is the record of the next anchor,
+  found the same way as the first record, in every track. It was the next
+  record in file order, so in a file with a gap (or an unsorted axis) the
+  sample paired a record with a later one and labelled it with the next
+  anchor's time. Julia and Rust now also decode a time axis whose reference
+  date precedes 1582-10-15 or has a short year (`hours since 1-1-1`), reading
+  it as Python's cftime fallback does (a Julian date on the `standard`
+  calendar); Julia unpacks a `scale_factor`/`add_offset` time axis before
+  decoding it; and the Rust netcdf reader masks an integer variable with two
+  different sentinels (`_FillValue` and `missing_value`) to NaN in float64 as
+  the other tracks do, instead of keeping only the first. New cases in the
+  `decoded-time-axis` scenario: a file with a gap, a packed axis, an axis with
+  two fill values, and the cftime reference forms.
 
 ### Rust
 
@@ -31,6 +101,13 @@ package version is independent of the `.esm` format version.
   parses), `delimiter`, `header_row`, every other column a string field, all on
   `index`, and a `variables` projection. The cross-language case
   `openaq-points-slice` now has three-way equality.
+- **breaking:** `SourceTemporal.frequency` and `.file_period` are
+  `CalendarPeriod` values instead of `time::Duration`. `SourceTemporal::new`
+  still accepts a `Duration`; one that is not a positive whole number of
+  seconds (a fraction of a second is no longer dropped) is refused by
+  `Provider::new` with `esm_period_invalid`, as Python refuses it. Monthly
+  cadences are no longer approximated by a fixed number of seconds. New
+  `Error::BadPeriod` (`esm_period_invalid`).
 
 ### All tracks (csv)
 
@@ -46,6 +123,29 @@ package version is independent of the `.esm` format version.
 - **fix:** a `null` csv option is unset in every track. Rust errors now name the
   file line rather than a count of non-blank rows.
 - `spec/registries.json` lists `txt` as a csv extension, as the readers do.
+### Python
+
+- **feat:** `SourceTemporal(frequency=…, file_period=…)` also takes a
+  `CalendarPeriod` or an ISO 8601 string; a `timedelta` works as before.
+
+### Julia
+
+- **feat:** the `netcdf` reader's `records` option takes a two-argument
+  resolver `(len, axis) -> indices`, handed the dimension's own raw coordinate
+  inside the one open; the temporal `Provider` uses it to find records by the
+  file's time axis.
+- **feat:** `Provider(cache, url; format, temporal = SourceTemporal(…), window)`
+  builds a time-varying provider from a cadence and a run window, as Python
+  and Rust do, in Unix seconds (UTC). Each tick reads its own record of its own
+  file by the calendar, rather than `mod1(tick, file length)`, which was wrong
+  whenever the ticks did not start at a file's first record. `refresh_times`
+  returns the anchors in the window, and a time outside the window is read
+  from the calendar too, as in Python and Rust.
+- **feat:** mirror failover. `fetch_blob(…; mirrors)` tries each mirror after
+  the primary URL and caches the blob under the primary's key, and `Provider`
+  takes `mirrors`. As in Python and Rust, rung 0 of the `file://` recheck
+  serves a present blob whose primary source is missing when mirrors were
+  given (`spec/cache-format.md` §4.1).
 
 ## v0.2.0
 

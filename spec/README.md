@@ -35,6 +35,7 @@ Extensibility is by construction via the **three registries** below.
 | (d) | Conformance corpus (offline golden fixtures + expected arrays) | [conformance.md](conformance.md) · [../conformance/](../conformance) |
 | (e) | Epoch prefetch + named-dimension windows (`sample_at`, `select.dims`, `with_window`, `sample_windows_at`, `PrefetchGroup`) | [prefetch.md](prefetch.md) |
 | (f) | The streaming writer contract: regions, roles + commit tokens, indexed records, statics, blobs, read-back, resume, output manifest v2 | [writer.md](writer.md) |
+| (g) | Reading an esm data source: esm URL templates, calendar cadences, a provider from a `data_sources` entry | [esm-sources.md](esm-sources.md) |
 
 JSON Schemas: [schemas/manifest.schema.json](schemas/manifest.schema.json),
 [schemas/cache-case.schema.json](schemas/cache-case.schema.json),

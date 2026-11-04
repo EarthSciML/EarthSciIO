@@ -182,8 +182,7 @@ verdict is not about the blob at all — the blob came from a mirror. Re-ingesti
 there means a fresh mirror download on *every* read, for ever, with no hit in
 between. A canonical that IS present and HAS changed is still `replaced` and is
 still re-ingested, mirrors or no mirrors: configuring a mirror must not silently
-switch the rung off. (Julia's `fetch_blob` takes no mirrors, so the case cannot
-arise there.)
+switch the rung off. All three tracks apply this rule.
 
 The hash is required, not optional: a size-only check waves through every
 equal-length edit (a float re-encode, a corrected value, a different scenario

@@ -173,7 +173,7 @@ mutable struct PrefetchGroup
     last_bytes::Vector{Int}                           # per member; -1 = not yet known
     running::Int                   # decodes in progress (cancelled ones included)
     workers::Vector{Task}
-    fetch_queue::Vector{Tuple{Int, String}}            # (member, url) to warm
+    fetch_queue::Vector{Tuple{Int, String, Float64}}   # (member, url, tick time) to warm
     warmed::Set{String}
     warm_through::Int              # order positions whose files were queued to warm
     fatal::Any                     # a scheduler bug caught on a worker
@@ -564,7 +564,7 @@ end
 # member's first anchor), to be stored against the slot and raised by its take!.
 function _anchor(p::Provider, t::Float64)
     try
-        return p.times[_tick_index(p, t)]
+        return _sample_anchor(p, t)
     catch err
         return err
     end
@@ -693,10 +693,10 @@ function _queue_warmups!(g::PrefetchGroup)
         t = g.B[g.order[pos]]
         for (i, p) in enumerate(g.providers)
             store_backed(p) && continue
-            for u in _sample_urls(p, t)
+            for (u, tu) in _sample_urls(p, t)
                 u in g.warmed && continue
                 push!(g.warmed, u)
-                push!(g.fetch_queue, (i, u))
+                push!(g.fetch_queue, (i, u, tu))
             end
         end
     end
@@ -708,14 +708,14 @@ end
 # two-record bracket the successor tick's. Best-effort, like the warm-up itself.
 function _sample_urls(p::Provider, t::Float64)
     try
-        tick = _tick_index(p, t)
-        urls = String[p.url_for(p.times[tick])]
-        if p.records_per_sample == 2 && p.time_dim !== nothing && tick < length(p.times)
-            push!(urls, p.url_for(p.times[tick + 1]))
+        out = Tuple{String, Float64}[]
+        for tt in _sample_url_times(p, t)
+            u = p.url_for(tt)
+            any(x -> x[1] == u, out) || push!(out, (u, tt))
         end
-        return unique!(urls)
+        return out
     catch
-        return String[]
+        return Tuple{String, Float64}[]
     end
 end
 
@@ -832,10 +832,13 @@ end
 
 # Download one file into the disk cache, decoding nothing. Its errors are dropped:
 # the decode that needs the file raises the real one at `take!`.
-function _warm!(g::PrefetchGroup, member::Int, url::String)
+function _warm!(g::PrefetchGroup, member::Int, url::String, t::Float64)
     p = g.providers[member]
     try
-        fetch_blob(p.cache, url; source_loader = p.source_loader, auth_realm = p.auth_realm)
+        fetch_blob(
+            p.cache, url; source_loader = p.source_loader, auth_realm = p.auth_realm,
+            mirrors = p.mirrors_for(t)
+        )
     catch
     end
     return nothing

@@ -1,0 +1,1189 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "calendar-cadence",
+  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`).",
+  "blobs": [
+    {
+      "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf",
+      "cache_key": "a5b939145ff7971e3c2ff110aa2fa63eea64f0c5e4e9d8bcdfd93cb520161684",
+      "blob_path": "cache/v1/blobs/a5/a5b939145ff7971e3c2ff110aa2fa63eea64f0c5e4e9d8bcdfd93cb520161684.ncf",
+      "content_sha256": "64b61699ed2a3e820303039cf373a831b01182a918be61ccc6a432c1f5cd57dd",
+      "bytes": 168
+    },
+    {
+      "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_02.ncf",
+      "cache_key": "48f5a0fb060c4dbcafdd0b39fcf70f20317242bdcc1a4c25335d5791a6471af1",
+      "blob_path": "cache/v1/blobs/48/48f5a0fb060c4dbcafdd0b39fcf70f20317242bdcc1a4c25335d5791a6471af1.ncf",
+      "content_sha256": "9e6f28d8d4a70696d25baf99d39152ee54e24fdb53a66a7187304f8cbe710f2c",
+      "bytes": 168
+    },
+    {
+      "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_03.ncf",
+      "cache_key": "2982574d4952b0ea525c176470cce361339912a3639972982c9cdf967ebda90e",
+      "blob_path": "cache/v1/blobs/29/2982574d4952b0ea525c176470cce361339912a3639972982c9cdf967ebda90e.ncf",
+      "content_sha256": "d37f116696b399ca6662115687a071529db139b10ce4da7132e7a2d90870ee71",
+      "bytes": 168
+    },
+    {
+      "url": "https://data.earthsci.dev/calendar/ceds_so2_2015.nc",
+      "cache_key": "aeb7e2982d9963387678e6a802a245bcb011e94d5136f89164afd4596b207756",
+      "blob_path": "cache/v1/blobs/ae/aeb7e2982d9963387678e6a802a245bcb011e94d5136f89164afd4596b207756.nc",
+      "content_sha256": "491dd07649402eeba6868f903168621805316a512f78b80be24bfbdf27a8c2e3",
+      "bytes": 584
+    },
+    {
+      "url": "https://data.earthsci.dev/calendar/ceds_so2_2016.nc",
+      "cache_key": "714035df77b6ebfc3a35887892f815a75c73abbe88484ef7644eb0514c7ac367",
+      "blob_path": "cache/v1/blobs/71/714035df77b6ebfc3a35887892f815a75c73abbe88484ef7644eb0514c7ac367.nc",
+      "content_sha256": "7c99b328a9b1c16bb571e1b8d341ffca01d9e35f735f906952010b5d910eb177",
+      "bytes": 584
+    }
+  ],
+  "periods": [
+    {
+      "iso": "P1M",
+      "months": 1,
+      "seconds": 0
+    },
+    {
+      "iso": "P1Y",
+      "months": 12,
+      "seconds": 0
+    },
+    {
+      "iso": "P2Y3M",
+      "months": 27,
+      "seconds": 0
+    },
+    {
+      "iso": "PT3H",
+      "months": 0,
+      "seconds": 10800
+    },
+    {
+      "iso": "PT1H",
+      "months": 0,
+      "seconds": 3600
+    },
+    {
+      "iso": "P1D",
+      "months": 0,
+      "seconds": 86400
+    },
+    {
+      "iso": "P2W",
+      "months": 0,
+      "seconds": 1209600
+    },
+    {
+      "iso": "PT90M",
+      "months": 0,
+      "seconds": 5400
+    },
+    {
+      "iso": "P1Y2M3DT4H5M6S",
+      "months": 14,
+      "seconds": 273906
+    },
+    {
+      "iso": "P0Y1M",
+      "months": 1,
+      "seconds": 0
+    }
+  ],
+  "bad_periods": [
+    "P0D",
+    "PT0S",
+    "PT1.5H",
+    "1M",
+    "P",
+    "PT",
+    "P1H",
+    "P1M1Y",
+    "-P1M",
+    "P1DT",
+    "PT1D",
+    "",
+    "P\u0661M",
+    "P1M\n",
+    "P9223372036854775808D",
+    "P106751991167301D"
+  ],
+  "cadences": [
+    {
+      "id": "nei-monthly",
+      "note": "NEI 2016 monthly: one record per monthly file",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "window": [
+        "2016-02-10T00:00:00Z",
+        "2016-06-01T00:00:00Z"
+      ],
+      "window_s": [
+        1455062400,
+        1464739200
+      ],
+      "refresh_times_s": [
+        1456790400,
+        1459468800,
+        1462060800
+      ],
+      "at": [
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1459468800
+        },
+        {
+          "t": "2016-04-01T00:00:00Z",
+          "t_s": 1459468800,
+          "record_anchor_s": 1459468800,
+          "file_anchor": "2016-04-01T00:00:00Z",
+          "file_anchor_s": 1459468800,
+          "record": 0,
+          "next_record_anchor_s": 1462060800
+        },
+        {
+          "t": "2016-05-01T00:00:00Z",
+          "t_s": 1462060800,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        },
+        {
+          "t": "2016-02-10T00:00:00Z",
+          "t_s": 1455062400,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 0,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-02-29T23:00:00Z",
+          "t_s": 1456786800,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 0,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1459468800
+        },
+        {
+          "t": "2016-05-31T23:59:59Z",
+          "t_s": 1464739199,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        }
+      ]
+    },
+    {
+      "id": "ceds-yearly-files",
+      "note": "CEDS-like: twelve monthly records per yearly file",
+      "start": "2015-01-01T00:00:00Z",
+      "start_s": 1420070400,
+      "frequency": "P1M",
+      "file_period": "P1Y",
+      "window": [
+        "2015-11-01T00:00:00Z",
+        "2016-03-01T00:00:00Z"
+      ],
+      "window_s": [
+        1446336000,
+        1456790400
+      ],
+      "refresh_times_s": [
+        1446336000,
+        1448928000,
+        1451606400,
+        1454284800
+      ],
+      "at": [
+        {
+          "t": "2015-11-01T00:00:00Z",
+          "t_s": 1446336000,
+          "record_anchor_s": 1446336000,
+          "file_anchor": "2015-01-01T00:00:00Z",
+          "file_anchor_s": 1420070400,
+          "record": 10,
+          "next_record_anchor_s": 1448928000
+        },
+        {
+          "t": "2015-12-01T00:00:00Z",
+          "t_s": 1448928000,
+          "record_anchor_s": 1448928000,
+          "file_anchor": "2015-01-01T00:00:00Z",
+          "file_anchor_s": 1420070400,
+          "record": 11,
+          "next_record_anchor_s": 1451606400
+        },
+        {
+          "t": "2016-01-01T00:00:00Z",
+          "t_s": 1451606400,
+          "record_anchor_s": 1451606400,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 0,
+          "next_record_anchor_s": 1454284800
+        },
+        {
+          "t": "2016-02-01T00:00:00Z",
+          "t_s": 1454284800,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 1,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2015-12-15T00:00:00Z",
+          "t_s": 1450137600,
+          "record_anchor_s": 1448928000,
+          "file_anchor": "2015-01-01T00:00:00Z",
+          "file_anchor_s": 1420070400,
+          "record": 11,
+          "next_record_anchor_s": 1451606400
+        },
+        {
+          "t": "2016-01-01T00:00:00Z",
+          "t_s": 1451606400,
+          "record_anchor_s": 1451606400,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 0,
+          "next_record_anchor_s": 1454284800
+        },
+        {
+          "t": "2016-02-29T12:00:00Z",
+          "t_s": 1456747200,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 1,
+          "next_record_anchor_s": 1456790400
+        }
+      ]
+    },
+    {
+      "id": "era5-hourly-in-monthly-files",
+      "note": "ERA5-like: hourly records in monthly files; the record is the hour of the month",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "PT1H",
+      "file_period": "P1M",
+      "window": [
+        "2016-02-28T22:00:00Z",
+        "2016-03-01T02:00:00Z"
+      ],
+      "window_s": [
+        1456696800,
+        1456797600
+      ],
+      "refresh_times_s": [
+        1456696800,
+        1456700400,
+        1456704000,
+        1456707600,
+        1456711200,
+        1456714800,
+        1456718400,
+        1456722000,
+        1456725600,
+        1456729200,
+        1456732800,
+        1456736400,
+        1456740000,
+        1456743600,
+        1456747200,
+        1456750800,
+        1456754400,
+        1456758000,
+        1456761600,
+        1456765200,
+        1456768800,
+        1456772400,
+        1456776000,
+        1456779600,
+        1456783200,
+        1456786800,
+        1456790400,
+        1456794000
+      ],
+      "at": [
+        {
+          "t": "2016-02-28T22:00:00Z",
+          "t_s": 1456696800,
+          "record_anchor_s": 1456696800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 670,
+          "next_record_anchor_s": 1456700400
+        },
+        {
+          "t": "2016-02-28T23:00:00Z",
+          "t_s": 1456700400,
+          "record_anchor_s": 1456700400,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 671,
+          "next_record_anchor_s": 1456704000
+        },
+        {
+          "t": "2016-02-29T00:00:00Z",
+          "t_s": 1456704000,
+          "record_anchor_s": 1456704000,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 672,
+          "next_record_anchor_s": 1456707600
+        },
+        {
+          "t": "2016-02-29T01:00:00Z",
+          "t_s": 1456707600,
+          "record_anchor_s": 1456707600,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 673,
+          "next_record_anchor_s": 1456711200
+        },
+        {
+          "t": "2016-02-29T02:00:00Z",
+          "t_s": 1456711200,
+          "record_anchor_s": 1456711200,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 674,
+          "next_record_anchor_s": 1456714800
+        },
+        {
+          "t": "2016-02-29T03:00:00Z",
+          "t_s": 1456714800,
+          "record_anchor_s": 1456714800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 675,
+          "next_record_anchor_s": 1456718400
+        },
+        {
+          "t": "2016-02-29T04:00:00Z",
+          "t_s": 1456718400,
+          "record_anchor_s": 1456718400,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 676,
+          "next_record_anchor_s": 1456722000
+        },
+        {
+          "t": "2016-02-29T05:00:00Z",
+          "t_s": 1456722000,
+          "record_anchor_s": 1456722000,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 677,
+          "next_record_anchor_s": 1456725600
+        },
+        {
+          "t": "2016-02-29T06:00:00Z",
+          "t_s": 1456725600,
+          "record_anchor_s": 1456725600,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 678,
+          "next_record_anchor_s": 1456729200
+        },
+        {
+          "t": "2016-02-29T07:00:00Z",
+          "t_s": 1456729200,
+          "record_anchor_s": 1456729200,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 679,
+          "next_record_anchor_s": 1456732800
+        },
+        {
+          "t": "2016-02-29T08:00:00Z",
+          "t_s": 1456732800,
+          "record_anchor_s": 1456732800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 680,
+          "next_record_anchor_s": 1456736400
+        },
+        {
+          "t": "2016-02-29T09:00:00Z",
+          "t_s": 1456736400,
+          "record_anchor_s": 1456736400,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 681,
+          "next_record_anchor_s": 1456740000
+        },
+        {
+          "t": "2016-02-29T10:00:00Z",
+          "t_s": 1456740000,
+          "record_anchor_s": 1456740000,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 682,
+          "next_record_anchor_s": 1456743600
+        },
+        {
+          "t": "2016-02-29T11:00:00Z",
+          "t_s": 1456743600,
+          "record_anchor_s": 1456743600,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 683,
+          "next_record_anchor_s": 1456747200
+        },
+        {
+          "t": "2016-02-29T12:00:00Z",
+          "t_s": 1456747200,
+          "record_anchor_s": 1456747200,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 684,
+          "next_record_anchor_s": 1456750800
+        },
+        {
+          "t": "2016-02-29T13:00:00Z",
+          "t_s": 1456750800,
+          "record_anchor_s": 1456750800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 685,
+          "next_record_anchor_s": 1456754400
+        },
+        {
+          "t": "2016-02-29T14:00:00Z",
+          "t_s": 1456754400,
+          "record_anchor_s": 1456754400,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 686,
+          "next_record_anchor_s": 1456758000
+        },
+        {
+          "t": "2016-02-29T15:00:00Z",
+          "t_s": 1456758000,
+          "record_anchor_s": 1456758000,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 687,
+          "next_record_anchor_s": 1456761600
+        },
+        {
+          "t": "2016-02-29T16:00:00Z",
+          "t_s": 1456761600,
+          "record_anchor_s": 1456761600,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 688,
+          "next_record_anchor_s": 1456765200
+        },
+        {
+          "t": "2016-02-29T17:00:00Z",
+          "t_s": 1456765200,
+          "record_anchor_s": 1456765200,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 689,
+          "next_record_anchor_s": 1456768800
+        },
+        {
+          "t": "2016-02-29T18:00:00Z",
+          "t_s": 1456768800,
+          "record_anchor_s": 1456768800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 690,
+          "next_record_anchor_s": 1456772400
+        },
+        {
+          "t": "2016-02-29T19:00:00Z",
+          "t_s": 1456772400,
+          "record_anchor_s": 1456772400,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 691,
+          "next_record_anchor_s": 1456776000
+        },
+        {
+          "t": "2016-02-29T20:00:00Z",
+          "t_s": 1456776000,
+          "record_anchor_s": 1456776000,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 692,
+          "next_record_anchor_s": 1456779600
+        },
+        {
+          "t": "2016-02-29T21:00:00Z",
+          "t_s": 1456779600,
+          "record_anchor_s": 1456779600,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 693,
+          "next_record_anchor_s": 1456783200
+        },
+        {
+          "t": "2016-02-29T22:00:00Z",
+          "t_s": 1456783200,
+          "record_anchor_s": 1456783200,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 694,
+          "next_record_anchor_s": 1456786800
+        },
+        {
+          "t": "2016-02-29T23:00:00Z",
+          "t_s": 1456786800,
+          "record_anchor_s": 1456786800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 695,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1456794000
+        },
+        {
+          "t": "2016-03-01T01:00:00Z",
+          "t_s": 1456794000,
+          "record_anchor_s": 1456794000,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 1,
+          "next_record_anchor_s": 1456797600
+        },
+        {
+          "t": "2016-02-29T23:30:00Z",
+          "t_s": 1456788600,
+          "record_anchor_s": 1456786800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 695,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1456794000
+        }
+      ]
+    },
+    {
+      "id": "month-end-clamp",
+      "note": "each anchor is computed from start, so 31 January visits 29 February and then 31 March",
+      "start": "2016-01-31T00:00:00Z",
+      "start_s": 1454198400,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "window": [
+        "2016-01-31T00:00:00Z",
+        "2016-06-01T00:00:00Z"
+      ],
+      "window_s": [
+        1454198400,
+        1464739200
+      ],
+      "refresh_times_s": [
+        1454198400,
+        1456704000,
+        1459382400,
+        1461974400,
+        1464652800
+      ],
+      "at": [
+        {
+          "t": "2016-01-31T00:00:00Z",
+          "t_s": 1454198400,
+          "record_anchor_s": 1454198400,
+          "file_anchor": "2016-01-31T00:00:00Z",
+          "file_anchor_s": 1454198400,
+          "record": 0,
+          "next_record_anchor_s": 1456704000
+        },
+        {
+          "t": "2016-02-29T00:00:00Z",
+          "t_s": 1456704000,
+          "record_anchor_s": 1456704000,
+          "file_anchor": "2016-02-29T00:00:00Z",
+          "file_anchor_s": 1456704000,
+          "record": 0,
+          "next_record_anchor_s": 1459382400
+        },
+        {
+          "t": "2016-03-31T00:00:00Z",
+          "t_s": 1459382400,
+          "record_anchor_s": 1459382400,
+          "file_anchor": "2016-03-31T00:00:00Z",
+          "file_anchor_s": 1459382400,
+          "record": 0,
+          "next_record_anchor_s": 1461974400
+        },
+        {
+          "t": "2016-04-30T00:00:00Z",
+          "t_s": 1461974400,
+          "record_anchor_s": 1461974400,
+          "file_anchor": "2016-04-30T00:00:00Z",
+          "file_anchor_s": 1461974400,
+          "record": 0,
+          "next_record_anchor_s": 1464652800
+        },
+        {
+          "t": "2016-05-31T00:00:00Z",
+          "t_s": 1464652800,
+          "record_anchor_s": 1464652800,
+          "file_anchor": "2016-05-31T00:00:00Z",
+          "file_anchor_s": 1464652800,
+          "record": 0,
+          "next_record_anchor_s": 1467244800
+        },
+        {
+          "t": "2016-02-29T00:00:00Z",
+          "t_s": 1456704000,
+          "record_anchor_s": 1456704000,
+          "file_anchor": "2016-02-29T00:00:00Z",
+          "file_anchor_s": 1456704000,
+          "record": 0,
+          "next_record_anchor_s": 1459382400
+        },
+        {
+          "t": "2016-03-30T00:00:00Z",
+          "t_s": 1459296000,
+          "record_anchor_s": 1456704000,
+          "file_anchor": "2016-02-29T00:00:00Z",
+          "file_anchor_s": 1456704000,
+          "record": 0,
+          "next_record_anchor_s": 1459382400
+        }
+      ]
+    },
+    {
+      "id": "geosfp-a1-centered",
+      "note": "GEOS-FP A1: hourly records centered on the half hour in daily files",
+      "start": "2013-01-01T00:30:00Z",
+      "start_s": 1357000200,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "window": [
+        "2016-05-01T22:00:00Z",
+        "2016-05-02T02:00:00Z"
+      ],
+      "window_s": [
+        1462140000,
+        1462154400
+      ],
+      "refresh_times_s": [
+        1462141800,
+        1462145400,
+        1462149000,
+        1462152600
+      ],
+      "at": [
+        {
+          "t": "2016-05-01T22:30:00Z",
+          "t_s": 1462141800,
+          "record_anchor_s": 1462141800,
+          "file_anchor": "2016-05-01T00:30:00Z",
+          "file_anchor_s": 1462062600,
+          "record": 22,
+          "next_record_anchor_s": 1462145400
+        },
+        {
+          "t": "2016-05-01T23:30:00Z",
+          "t_s": 1462145400,
+          "record_anchor_s": 1462145400,
+          "file_anchor": "2016-05-01T00:30:00Z",
+          "file_anchor_s": 1462062600,
+          "record": 23,
+          "next_record_anchor_s": 1462149000
+        },
+        {
+          "t": "2016-05-02T00:30:00Z",
+          "t_s": 1462149000,
+          "record_anchor_s": 1462149000,
+          "file_anchor": "2016-05-02T00:30:00Z",
+          "file_anchor_s": 1462149000,
+          "record": 0,
+          "next_record_anchor_s": 1462152600
+        },
+        {
+          "t": "2016-05-02T01:30:00Z",
+          "t_s": 1462152600,
+          "record_anchor_s": 1462152600,
+          "file_anchor": "2016-05-02T00:30:00Z",
+          "file_anchor_s": 1462149000,
+          "record": 1,
+          "next_record_anchor_s": 1462156200
+        },
+        {
+          "t": "2016-05-01T23:59:00Z",
+          "t_s": 1462147140,
+          "record_anchor_s": 1462145400,
+          "file_anchor": "2016-05-01T00:30:00Z",
+          "file_anchor_s": 1462062600,
+          "record": 23,
+          "next_record_anchor_s": 1462149000
+        },
+        {
+          "t": "2016-05-02T00:30:00Z",
+          "t_s": 1462149000,
+          "record_anchor_s": 1462149000,
+          "file_anchor": "2016-05-02T00:30:00Z",
+          "file_anchor_s": 1462149000,
+          "record": 0,
+          "next_record_anchor_s": 1462152600
+        },
+        {
+          "t": "2016-05-02T00:10:00Z",
+          "t_s": 1462147800,
+          "record_anchor_s": 1462145400,
+          "file_anchor": "2016-05-01T00:30:00Z",
+          "file_anchor_s": 1462062600,
+          "record": 23,
+          "next_record_anchor_s": 1462149000
+        }
+      ]
+    },
+    {
+      "id": "geosfp-a3-fixed",
+      "note": "a fixed cadence gives the anchors it always gave",
+      "start": "2013-01-01T01:30:00Z",
+      "start_s": 1357003800,
+      "frequency": "PT3H",
+      "file_period": "P1D",
+      "window": [
+        "2016-05-01T20:00:00Z",
+        "2016-05-02T05:00:00Z"
+      ],
+      "window_s": [
+        1462132800,
+        1462165200
+      ],
+      "refresh_times_s": [
+        1462141800,
+        1462152600,
+        1462163400
+      ],
+      "at": [
+        {
+          "t": "2016-05-01T22:30:00Z",
+          "t_s": 1462141800,
+          "record_anchor_s": 1462141800,
+          "file_anchor": "2016-05-01T01:30:00Z",
+          "file_anchor_s": 1462066200,
+          "record": 7,
+          "next_record_anchor_s": 1462152600
+        },
+        {
+          "t": "2016-05-02T01:30:00Z",
+          "t_s": 1462152600,
+          "record_anchor_s": 1462152600,
+          "file_anchor": "2016-05-02T01:30:00Z",
+          "file_anchor_s": 1462152600,
+          "record": 0,
+          "next_record_anchor_s": 1462163400
+        },
+        {
+          "t": "2016-05-02T04:30:00Z",
+          "t_s": 1462163400,
+          "record_anchor_s": 1462163400,
+          "file_anchor": "2016-05-02T01:30:00Z",
+          "file_anchor_s": 1462152600,
+          "record": 1,
+          "next_record_anchor_s": 1462174200
+        },
+        {
+          "t": "2016-05-01T23:00:00Z",
+          "t_s": 1462143600,
+          "record_anchor_s": 1462141800,
+          "file_anchor": "2016-05-01T01:30:00Z",
+          "file_anchor_s": 1462066200,
+          "record": 7,
+          "next_record_anchor_s": 1462152600
+        },
+        {
+          "t": "2016-05-02T01:30:00Z",
+          "t_s": 1462152600,
+          "record_anchor_s": 1462152600,
+          "file_anchor": "2016-05-02T01:30:00Z",
+          "file_anchor_s": 1462152600,
+          "record": 0,
+          "next_record_anchor_s": 1462163400
+        }
+      ]
+    },
+    {
+      "id": "window-past-end",
+      "note": "the window end, not the data end, bounds the refresh times: a window past `end` still lists every anchor in it, and a time past both still locates its record on the calendar",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "window": [
+        "2016-01-01T00:00:00Z",
+        "2016-07-01T00:00:00Z"
+      ],
+      "window_s": [
+        1451606400,
+        1467331200
+      ],
+      "refresh_times_s": [
+        1451606400,
+        1454284800,
+        1456790400,
+        1459468800,
+        1462060800,
+        1464739200
+      ],
+      "at": [
+        {
+          "t": "2016-01-01T00:00:00Z",
+          "t_s": 1451606400,
+          "record_anchor_s": 1451606400,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 0,
+          "next_record_anchor_s": 1454284800
+        },
+        {
+          "t": "2016-02-01T00:00:00Z",
+          "t_s": 1454284800,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 0,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1459468800
+        },
+        {
+          "t": "2016-04-01T00:00:00Z",
+          "t_s": 1459468800,
+          "record_anchor_s": 1459468800,
+          "file_anchor": "2016-04-01T00:00:00Z",
+          "file_anchor_s": 1459468800,
+          "record": 0,
+          "next_record_anchor_s": 1462060800
+        },
+        {
+          "t": "2016-05-01T00:00:00Z",
+          "t_s": 1462060800,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        },
+        {
+          "t": "2016-06-01T00:00:00Z",
+          "t_s": 1464739200,
+          "record_anchor_s": 1464739200,
+          "file_anchor": "2016-06-01T00:00:00Z",
+          "file_anchor_s": 1464739200,
+          "record": 0,
+          "next_record_anchor_s": 1467331200
+        },
+        {
+          "t": "2016-05-15T00:00:00Z",
+          "t_s": 1463270400,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        },
+        {
+          "t": "2016-07-15T00:00:00Z",
+          "t_s": 1468540800,
+          "record_anchor_s": 1467331200,
+          "file_anchor": "2016-07-01T00:00:00Z",
+          "file_anchor_s": 1467331200,
+          "record": 0,
+          "next_record_anchor_s": 1470009600
+        }
+      ]
+    }
+  ],
+  "providers": {
+    "nei_monthly": {
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf",
+      "substitutions": {
+        "sector": "agr"
+      },
+      "variables": [
+        "NOX"
+      ],
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "time_dim": "TSTEP",
+      "window_s": [
+        1451606400,
+        1459468800
+      ],
+      "refresh_times_s": [
+        1451606400,
+        1454284800,
+        1456790400
+      ],
+      "samples": [
+        {
+          "t_s": 1453248000,
+          "records_per_sample": 1,
+          "NOX": [
+            [
+              100.0,
+              101.0,
+              102.0
+            ],
+            [
+              110.0,
+              111.0,
+              112.0
+            ]
+          ]
+        },
+        {
+          "t_s": 1456704000,
+          "records_per_sample": 1,
+          "NOX": [
+            [
+              200.0,
+              201.0,
+              202.0
+            ],
+            [
+              210.0,
+              211.0,
+              212.0
+            ]
+          ]
+        },
+        {
+          "t_s": 1456790400,
+          "records_per_sample": 1,
+          "NOX": [
+            [
+              300.0,
+              301.0,
+              302.0
+            ],
+            [
+              310.0,
+              311.0,
+              312.0
+            ]
+          ]
+        },
+        {
+          "t_s": 1455494400,
+          "records_per_sample": 2,
+          "NOX": [
+            [
+              [
+                200.0,
+                201.0,
+                202.0
+              ],
+              [
+                210.0,
+                211.0,
+                212.0
+              ]
+            ],
+            [
+              [
+                300.0,
+                301.0,
+                302.0
+              ],
+              [
+                310.0,
+                311.0,
+                312.0
+              ]
+            ]
+          ],
+          "time_s": [
+            1454284800,
+            1456790400
+          ]
+        },
+        {
+          "t_s": 1458000000,
+          "records_per_sample": 2,
+          "NOX": [
+            [
+              [
+                300.0,
+                301.0,
+                302.0
+              ],
+              [
+                310.0,
+                311.0,
+                312.0
+              ]
+            ],
+            [
+              [
+                300.0,
+                301.0,
+                302.0
+              ],
+              [
+                310.0,
+                311.0,
+                312.0
+              ]
+            ]
+          ],
+          "time_s": [
+            1456790400,
+            1456790400
+          ]
+        }
+      ]
+    },
+    "ceds_yearly_files": {
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/calendar/ceds_so2_{date:%Y}.nc",
+      "substitutions": {},
+      "variables": [
+        "SO2"
+      ],
+      "start": "2015-01-01T00:00:00Z",
+      "start_s": 1420070400,
+      "end": "2017-01-01T00:00:00Z",
+      "end_s": 1483228800,
+      "frequency": "P1M",
+      "file_period": "P1Y",
+      "time_dim": "time",
+      "window_s": [
+        1446336000,
+        1456790400
+      ],
+      "refresh_times_s": [
+        1446336000,
+        1448928000,
+        1451606400,
+        1454284800
+      ],
+      "samples": [
+        {
+          "t_s": 1446508800,
+          "records_per_sample": 1,
+          "SO2": [
+            10.0,
+            10.0
+          ]
+        },
+        {
+          "t_s": 1456704000,
+          "records_per_sample": 1,
+          "SO2": [
+            13.0,
+            13.0
+          ]
+        },
+        {
+          "t_s": 1433894400,
+          "records_per_sample": 1,
+          "SO2": [
+            5.0,
+            5.0
+          ]
+        },
+        {
+          "t_s": 1468540800,
+          "records_per_sample": 1,
+          "SO2": [
+            18.0,
+            18.0
+          ]
+        },
+        {
+          "t_s": 1468540800,
+          "records_per_sample": 2,
+          "SO2": [
+            [
+              18.0,
+              18.0
+            ],
+            [
+              19.0,
+              19.0
+            ]
+          ],
+          "time_s": [
+            1467331200,
+            1470009600
+          ]
+        },
+        {
+          "t_s": 1450137600,
+          "records_per_sample": 2,
+          "SO2": [
+            [
+              11.0,
+              11.0
+            ],
+            [
+              12.0,
+              12.0
+            ]
+          ],
+          "time_s": [
+            1448928000,
+            1451606400
+          ]
+        }
+      ]
+    }
+  }
+}

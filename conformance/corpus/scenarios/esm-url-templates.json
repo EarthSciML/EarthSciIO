@@ -1,0 +1,308 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "esm-url-templates",
+  "description": "esm URL template expansion (spec/esm-sources.md section 1). Each case expands `template` at `anchor` (UTC; null means no anchor) with `substitutions`. A case with `expect` must produce exactly that string. A case with `error` must fail with an error whose message contains that code and every string in `mentions`. `names` (when present) is what esm_template_names returns for the template. `anchor_s` is the same instant in Unix seconds; a track whose date type cannot hold it (Python, before year 1) skips the case. `construction` cases are built into a provider's esm template (Python `DataSource(url=EsmTemplate(template, substitutions), mirrors=mirrors)`, Julia `EsmTemplate(template; substitutions, mirrors)`, Rust `Provider::new` of `DataSource::new(..).mirrors(mirrors).esm_template(substitutions)`), with no anchor. A case without `error` must build; a case with `error` must be refused at build, with that code and every string in `mentions`. Only the non-date tokens are checked at build; the text around a `{date:...}` token is never joined into a new token.",
+  "cases": [
+    {
+      "id": "geosfp-daily",
+      "template": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/{date:%Y}/{date:%m}/GEOSFP.{date:%Y%m%d}.A1.025x03125.nc",
+      "anchor": "2016-05-01T00:00:00Z",
+      "substitutions": {},
+      "expect": "https://geos-chem.s3-us-west-2.amazonaws.com/GEOS_0.25x0.3125/GEOS_FP/2016/05/GEOSFP.20160501.A1.025x03125.nc",
+      "names": [],
+      "anchor_s": 1462060800
+    },
+    {
+      "id": "nei-sector-month",
+      "template": "https://gaftp.epa.gov/Air/emismod/2016/v1/gridded/monthly_netCDF/2016fh_16j_{sector}_12US1_month_{date:%m}.ncf",
+      "anchor": "2016-02-01T00:00:00Z",
+      "substitutions": {
+        "sector": "mrggrid_withbeis_withrwc"
+      },
+      "expect": "https://gaftp.epa.gov/Air/emismod/2016/v1/gridded/monthly_netCDF/2016fh_16j_mrggrid_withbeis_withrwc_12US1_month_02.ncf",
+      "names": [
+        "sector"
+      ],
+      "anchor_s": 1454284800
+    },
+    {
+      "id": "every-directive",
+      "template": "file:///d/{date:%Y|%y|%m|%d|%j|%H|%M|%S|%%}",
+      "anchor": "2016-02-29T07:05:09Z",
+      "substitutions": {},
+      "expect": "file:///d/2016|16|02|29|060|07|05|09|%",
+      "anchor_s": 1456729509
+    },
+    {
+      "id": "fraction-floors",
+      "template": "x{date:%H%M%S}",
+      "anchor": "2016-12-31T23:59:59.999Z",
+      "substitutions": {},
+      "expect": "x235959",
+      "anchor_s": 1483228799.999
+    },
+    {
+      "id": "day-of-year-366",
+      "template": "{date:%Y.%j}",
+      "anchor": "2016-12-31T00:00:00Z",
+      "substitutions": {},
+      "expect": "2016.366",
+      "anchor_s": 1483142400
+    },
+    {
+      "id": "year-padded",
+      "template": "{date:%Y-%y}",
+      "anchor": "0987-03-04T00:00:00Z",
+      "substitutions": {},
+      "expect": "0987-87",
+      "anchor_s": -31015094400
+    },
+    {
+      "id": "literal-text-in-format",
+      "template": "s3://b/{date:Y%Y_M%m}/f.nc",
+      "anchor": "2024-01-05T00:00:00Z",
+      "substitutions": {},
+      "expect": "s3://b/Y2024_M01/f.nc",
+      "anchor_s": 1704412800
+    },
+    {
+      "id": "names-in-order",
+      "template": "https://h/{species}/{date:%Y}/{sector}_{species}_{var}.nc",
+      "anchor": "2020-07-01T00:00:00Z",
+      "substitutions": {
+        "species": "NOx",
+        "sector": "agr",
+        "var": "emis"
+      },
+      "expect": "https://h/NOx/2020/agr_NOx_emis.nc",
+      "names": [
+        "species",
+        "sector",
+        "var"
+      ],
+      "anchor_s": 1593561600
+    },
+    {
+      "id": "no-tokens-no-anchor",
+      "template": "https://h/static.tif",
+      "anchor": null,
+      "substitutions": {},
+      "expect": "https://h/static.tif",
+      "names": [],
+      "anchor_s": null
+    },
+    {
+      "id": "substitution-only-no-anchor",
+      "template": "file:///snap/{snapshot}/t.parquet",
+      "anchor": null,
+      "substitutions": {
+        "snapshot": "s1"
+      },
+      "expect": "file:///snap/s1/t.parquet",
+      "names": [
+        "snapshot"
+      ],
+      "anchor_s": null
+    },
+    {
+      "id": "inserted-text-not-reexpanded",
+      "template": "https://h/{a}/{b}",
+      "anchor": null,
+      "substitutions": {
+        "a": "{b}",
+        "b": "%Y"
+      },
+      "expect": "https://h/{b}/%Y",
+      "anchor_s": null
+    },
+    {
+      "id": "non-token-braces-literal",
+      "template": "cds://reanalysis-era5-single-levels?{\"variable\":[\"t2m\"],\"year\":\"{date:%Y}\"}",
+      "anchor": "2018-11-08T00:00:00Z",
+      "substitutions": {},
+      "expect": "cds://reanalysis-era5-single-levels?{\"variable\":[\"t2m\"],\"year\":\"2018\"}",
+      "anchor_s": 1541635200
+    },
+    {
+      "id": "empty-braces-literal",
+      "template": "https://h/{}/{1x}/{ a}",
+      "anchor": null,
+      "substitutions": {},
+      "expect": "https://h/{}/{1x}/{ a}",
+      "anchor_s": null
+    },
+    {
+      "id": "unused-substitution-ok",
+      "template": "https://h/{date:%Y}.nc",
+      "anchor": "2001-01-01T00:00:00Z",
+      "substitutions": {
+        "sector": "unused"
+      },
+      "expect": "https://h/2001.nc",
+      "anchor_s": 978307200
+    },
+    {
+      "id": "unbound",
+      "template": "https://h/{sector}_{date:%m}.ncf",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_unbound",
+      "mentions": [
+        "sector"
+      ],
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "unsupported-directive",
+      "template": "https://h/{date:%Y%b}.nc",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_directive",
+      "mentions": [
+        "%b"
+      ],
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "trailing-percent",
+      "template": "https://h/{date:%Y%}.nc",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_directive",
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "bare-date",
+      "template": "https://h/{date}.nc",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_directive",
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "empty-date-format",
+      "template": "https://h/{date:}.nc",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_directive",
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "format-on-substitution",
+      "template": "https://h/{sector:%Y}.nc",
+      "anchor": "2016-01-01T00:00:00Z",
+      "substitutions": {
+        "sector": "a"
+      },
+      "error": "esm_template_directive",
+      "mentions": [
+        "sector"
+      ],
+      "anchor_s": 1451606400
+    },
+    {
+      "id": "no-anchor",
+      "template": "https://h/{date:%Y}.nc",
+      "anchor": null,
+      "substitutions": {},
+      "error": "esm_template_no_anchor",
+      "anchor_s": null
+    },
+    {
+      "id": "year-out-of-range",
+      "template": "https://h/{date:%Y}.nc",
+      "anchor": "-0001-06-01T00:00:00Z",
+      "substitutions": {},
+      "error": "esm_template_year_range",
+      "anchor_s": -62185708800
+    },
+    {
+      "id": "reserved-date",
+      "template": "https://h/{sector}.nc",
+      "anchor": null,
+      "substitutions": {
+        "sector": "a",
+        "date": "x"
+      },
+      "error": "esm_template_reserved",
+      "anchor_s": null
+    },
+    {
+      "id": "date-inside-literal-braces",
+      "template": "file:///d/{{date:%Y}x}",
+      "anchor": "2016-02-29T07:05:09Z",
+      "substitutions": {},
+      "expect": "file:///d/{2016x}",
+      "names": [],
+      "anchor_s": 1456729509
+    }
+  ],
+  "construction": [
+    {
+      "id": "bound-primary-and-mirror",
+      "template": "file:///d/{sector}_{date:%m}.nc",
+      "mirrors": [
+        "file:///m/{sector}/{date:%Y%m%d}.nc"
+      ],
+      "substitutions": {
+        "sector": "agr"
+      }
+    },
+    {
+      "id": "date-inside-literal-braces",
+      "template": "file:///d/{{date:%Y}x}",
+      "mirrors": [
+        "file:///m/{{date:%m}y}"
+      ],
+      "substitutions": {}
+    },
+    {
+      "id": "unbound-primary",
+      "template": "file:///d/{sector}_{date:%m}.nc",
+      "mirrors": [],
+      "substitutions": {},
+      "error": "esm_template_unbound",
+      "mentions": [
+        "{sector}"
+      ]
+    },
+    {
+      "id": "unbound-in-mirror",
+      "template": "file:///d/{a}.nc",
+      "mirrors": [
+        "file:///m/{b}.nc"
+      ],
+      "substitutions": {
+        "a": "1"
+      },
+      "error": "esm_template_unbound",
+      "mentions": [
+        "{b}",
+        "file:///m/{b}.nc"
+      ]
+    },
+    {
+      "id": "format-on-name-in-mirror",
+      "template": "file:///d/{a}.nc",
+      "mirrors": [
+        "file:///m/{a:x}.nc"
+      ],
+      "substitutions": {
+        "a": "1"
+      },
+      "error": "esm_template_directive",
+      "mentions": [
+        "{a:x}"
+      ]
+    },
+    {
+      "id": "reserved-date",
+      "template": "file:///d/{date:%Y}.nc",
+      "mirrors": [],
+      "substitutions": {
+        "date": "x"
+      },
+      "error": "esm_template_reserved"
+    }
+  ]
+}

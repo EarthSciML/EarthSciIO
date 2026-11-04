@@ -125,7 +125,8 @@
       "tier": "stable",
       "bindings": {
         "python": "SourceTemporal",
-        "rust": "SourceTemporal"
+        "rust": "SourceTemporal",
+        "julia": "SourceTemporal"
       }
     },
     {
@@ -686,6 +687,117 @@
       "bindings": {
         "python": "CommitError",
         "julia": "CommitError"
+      }
+    },
+    {
+      "name": "esm_template",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmTemplate",
+        "julia": "EsmTemplate"
+      }
+    },
+    {
+      "name": "esm_template_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmTemplateError",
+        "julia": "EsmTemplateError",
+        "rust": "EsmTemplateError"
+      }
+    },
+    {
+      "name": "expand_esm_template",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "expand_esm_template",
+        "julia": "expand_esm_template",
+        "rust": "expand_esm_template"
+      }
+    },
+    {
+      "name": "esm_template_names",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "esm_template_names",
+        "julia": "esm_template_names",
+        "rust": "esm_template_names"
+      }
+    },
+    {
+      "name": "calendar_period",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "CalendarPeriod",
+        "julia": "CalendarPeriod",
+        "rust": "CalendarPeriod"
+      }
+    },
+    {
+      "name": "calendar_period_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "CalendarPeriodError",
+        "julia": "CalendarPeriodError"
+      }
+    },
+    {
+      "name": "provider_from_esm",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "provider_from_esm",
+        "julia": "provider_from_esm"
+      }
+    },
+    {
+      "name": "source_from_esm",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "source_from_esm",
+        "rust": "DataSource::from_esm"
+      }
+    },
+    {
+      "name": "esm_source_options",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "rust": "EsmSourceOptions"
+      }
+    },
+    {
+      "name": "esm_source_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmSourceError",
+        "julia": "EsmSourceError"
+      }
+    },
+    {
+      "name": "decode_time_axis",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "decode_time_axis",
+        "julia": "decode_time_axis",
+        "rust": "decode_time_axis"
+      }
+    },
+    {
+      "name": "decode_coord_times",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "rust": "decode_coord_times"
       }
     }
   ]

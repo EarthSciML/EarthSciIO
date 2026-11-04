@@ -21,7 +21,8 @@
 //!   → `float64`, with `_FillValue`/`missing_value` folded to `NaN`;
 //! - an unpacked **integer** keeps an integer logical type (`int32`/`int64`); an
 //!   integer fill sentinel cannot be `NaN`, so it survives and is reported via
-//!   `fill_value`;
+//!   `fill_value`. One with two different sentinels (`_FillValue` and
+//!   `missing_value`) is `float64` with both folded to `NaN`;
 //! - a **coordinate variable** (name == a dimension) is always returned, on the
 //!   native grid, carrying its `units`/`calendar` verbatim;
 //! - a **text** variable (`char`, or a NetCDF-4 `NC_STRING`) is a `string` field,
@@ -545,6 +546,17 @@ fn classify(var: &NcVariable) -> Option<FieldClass> {
     // Packing forces float64 regardless of the on-disk integer width.
     if var.attribute("scale_factor").is_some() || var.attribute("add_offset").is_some() {
         return Some(FieldClass::Float);
+    }
+    // Two different integer sentinels (`_FillValue` and `missing_value`) do not
+    // fit the one `fill_value` slot, so both are masked to NaN in float64, which
+    // is what the Python and Julia readers make of such a variable. Kept as an
+    // integer, a `missing_value` cell would read as a real value (a time axis
+    // entry of -999 hours, say).
+    if let (Some(fill), Some(missing)) = (att_f64(var, "_FillValue"), att_f64(var, "missing_value"))
+    {
+        if fill != missing {
+            return Some(FieldClass::Float);
+        }
     }
     match var.dtype() {
         NcType::Float | NcType::Double => Some(FieldClass::Float),
