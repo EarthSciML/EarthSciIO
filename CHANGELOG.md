@@ -4,7 +4,16 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
-## Unreleased
+## v0.3.0
+
+Changes since v0.2.0. A minor bump because of the **breaking** changes
+below: Rust `SourceTemporal.frequency` and `.file_period` are now
+`CalendarPeriod`s, and Julia's csv `header_row` is now 0-based.
+
+Data sources straight from an esm file (`spec/esm-sources.md`): URL templates
+with mirrors, calendar cadences, a provider built from a `data_sources` entry,
+and records found by the file's own time axis, alike in all three tracks. Also
+new `json` and Rust `csv` readers.
 
 ### All tracks
 
@@ -37,7 +46,6 @@ package version is independent of the `.esm` format version.
   place, so `{{date:%Y}x}` is accepted (the shared scenario's
   `construction` cases pin both). Each file carries the mirrors resolved at
   its own anchor to the fetch; there is no URL-to-mirrors memo.
-
 
 - **feat:** calendar cadences (`spec/esm-sources.md` §2). A source's frequency
   and file period are `CalendarPeriod`s (whole months plus whole seconds, read
@@ -123,6 +131,7 @@ package version is independent of the `.esm` format version.
 - **fix:** a `null` csv option is unset in every track. Rust errors now name the
   file line rather than a count of non-blank rows.
 - `spec/registries.json` lists `txt` as a csv extension, as the readers do.
+
 ### Python
 
 - **feat:** `SourceTemporal(frequency=…, file_period=…)` also takes a
