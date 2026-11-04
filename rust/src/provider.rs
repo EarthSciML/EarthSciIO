@@ -206,6 +206,12 @@ pub struct DataSource {
     pub url_template: String,
     /// Failover mirrors sharing the same cache identity.
     pub mirrors: Vec<String>,
+    /// `Some` when `url_template` and every mirror are **esm templates**
+    /// (`spec/esm-sources.md` §1): the substitutions their `{name}` tokens are
+    /// bound to. Each is expanded at the file anchor, the mirrors at the same
+    /// anchor as the primary URL. `None` keeps the `time` format-description
+    /// syntax and literal mirrors.
+    pub esm_substitutions: Option<BTreeMap<String, String>>,
     /// Auth realm to fetch under (resolved by the cache's auth registry).
     pub auth_realm: Option<String>,
     /// Spatial/orthogonal selection for any reader that answers
@@ -262,6 +268,7 @@ impl DataSource {
             temporal: None,
             url_template: url_template.into(),
             mirrors: Vec::new(),
+            esm_substitutions: None,
             auth_realm: None,
             select: Selection::All,
             reader_options: serde_json::Map::new(),
@@ -338,6 +345,25 @@ impl DataSource {
         self
     }
 
+    /// Read `url_template` and the mirrors as **esm templates**
+    /// (`spec/esm-sources.md` §1), with `substitutions` binding their `{name}`
+    /// tokens. An unbound or reserved name is refused when the [`Provider`] is
+    /// built.
+    pub fn esm_template<I, K, V>(mut self, substitutions: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.esm_substitutions = Some(
+            substitutions
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        );
+        self
+    }
+
     /// Fetch under an auth realm.
     pub fn auth_realm(mut self, realm: impl Into<String>) -> Self {
         self.auth_realm = Some(realm.into());
@@ -372,6 +398,16 @@ pub struct Provider {
     store_access: StoreAccess,
 }
 
+/// A file to fetch: its primary URL and the mirrors resolved at the SAME anchor
+/// (`spec/esm-sources.md` §1.5). Carried from [`Provider::resolve`] to the
+/// fetch, so the fetch never has to look the mirrors up by URL — one primary
+/// URL can cover many anchors, and its mirrors need not.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct FileRef {
+    pub(crate) url: String,
+    pub(crate) mirrors: Vec<String>,
+}
+
 impl Provider {
     /// Bind a provider to `loader`, resolving its format reader from the built-in
     /// [`FormatRegistry`]. Errors with [`Error::UnknownFormat`] if no reader is
@@ -403,6 +439,11 @@ impl Provider {
         // HERE rather than at the first read. Falling back to the cache would
         // silently restore the disk cost the caller explicitly asked to avoid —
         // which on a 20 GiB ephemeral disk is a failure, not a slow success.
+        if let Some(subs) = &loader.esm_substitutions {
+            for t in std::iter::once(&loader.url_template).chain(loader.mirrors.iter()) {
+                crate::esm::check_esm_template(t, subs)?;
+            }
+        }
         let store_access = loader.store_access.unwrap_or_else(StoreAccess::from_env);
         if store_access == StoreAccess::Direct
             && reader.store_backed()
@@ -529,8 +570,8 @@ impl Provider {
         match self.loader.temporal.clone() {
             None => {
                 let effective = sel.unwrap_or(&self.loader.select);
-                let url = self.resolve_url(OffsetDateTime::UNIX_EPOCH)?;
-                let ds = self.read_file(url, effective)?;
+                let file = self.resolve(OffsetDateTime::UNIX_EPOCH)?;
+                let ds = self.read_file(&file, effective)?;
                 if sel.is_none() {
                     self.coords = ds.coords;
                     self.buffers = ds.variables;
@@ -739,7 +780,7 @@ impl Provider {
     pub fn prefetch(&mut self, window: Window) -> Result<()> {
         match self.loader.temporal.clone() {
             None => {
-                self.fetch_blob(&self.resolve_url(OffsetDateTime::UNIX_EPOCH)?)?;
+                self.fetch_blob(&self.resolve(OffsetDateTime::UNIX_EPOCH)?)?;
                 Ok(())
             }
             Some(t) => {
@@ -757,8 +798,7 @@ impl Provider {
                 };
                 let mut fa = snap_down(t.start, start, file_s);
                 while fa < window.1 {
-                    let url = self.resolve_url(fa)?;
-                    self.fetch_blob(&url)?;
+                    self.fetch_blob(&self.resolve(fa)?)?;
                     fa += Duration::seconds(file_s);
                 }
                 Ok(())
@@ -781,6 +821,13 @@ impl Provider {
     /// whose canonical JSON legitimately contains `[...]` arrays (e.g. `area`,
     /// `variable`) that must NOT be read as `time` format components.
     fn resolve_url(&self, anchor: OffsetDateTime) -> Result<String> {
+        if let Some(subs) = &self.loader.esm_substitutions {
+            return Ok(crate::esm::expand_esm_template(
+                &self.loader.url_template,
+                Some(anchor),
+                subs,
+            )?);
+        }
         let tmpl = &self.loader.url_template;
         if !tmpl.contains('[') || tmpl.starts_with("cds://") {
             return Ok(tmpl.clone());
@@ -796,11 +843,28 @@ impl Provider {
         })
     }
 
-    /// Fetch (or reuse) the blob for `url` through the cache, with the loader's
-    /// provenance, mirrors, and auth realm.
-    fn fetch_blob(&self, url: &str) -> Result<crate::CachedBlob> {
-        let mirrors: Vec<&str> = self.loader.mirrors.iter().map(String::as_str).collect();
-        let mut req = FetchRequest::new(url)
+    /// The file for an anchor: its primary URL and its mirrors. An esm
+    /// template's mirrors are esm templates too, expanded at the SAME anchor
+    /// (`spec/esm-sources.md` §1.5); other mirrors are literal.
+    fn resolve(&self, anchor: OffsetDateTime) -> Result<FileRef> {
+        let url = self.resolve_url(anchor)?;
+        let mirrors = match &self.loader.esm_substitutions {
+            Some(subs) => self
+                .loader
+                .mirrors
+                .iter()
+                .map(|m| crate::esm::expand_esm_template(m, Some(anchor), subs))
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => self.loader.mirrors.clone(),
+        };
+        Ok(FileRef { url, mirrors })
+    }
+
+    /// Fetch (or reuse) the blob for `file` through the cache, with the loader's
+    /// provenance and auth realm and the file's mirrors.
+    fn fetch_blob(&self, file: &FileRef) -> Result<crate::CachedBlob> {
+        let mirrors: Vec<&str> = file.mirrors.iter().map(String::as_str).collect();
+        let mut req = FetchRequest::new(&file.url)
             .loader(&self.loader.name)
             .mirrors(&mirrors);
         if let Some(realm) = &self.loader.auth_realm {
@@ -811,7 +875,8 @@ impl Provider {
 
     /// Fetch + decode a file into a native dataset under the effective `select`
     /// (the per-call override, else the loader's baked [`DataSource::select`]).
-    fn read_file(&self, url: String, select: &Selection) -> Result<NativeDataset> {
+    fn read_file(&self, file: &FileRef, select: &Selection) -> Result<NativeDataset> {
+        let url = &file.url;
         // Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
         // select): a Zarr `url` is a directory-like prefix, not a fetchable blob,
         // so the reader fetches individual objects on demand. Additive + default-
@@ -821,14 +886,14 @@ impl Provider {
                 // Straight from object storage, nothing written to disk. The
                 // `select` travels unchanged, so pushdown is identical.
                 StoreAccess::Direct => self.reader.read_store_direct(
-                    &url,
+                    url,
                     &self.loader.variables,
                     select,
                     &self.loader.store_options,
                 ),
                 StoreAccess::Cached => {
                     self.reader
-                        .read_store(self.cache.clone(), &url, &self.loader.variables, select)
+                        .read_store(self.cache.clone(), url, &self.loader.variables, select)
                 }
             };
         }
@@ -850,7 +915,7 @@ impl Provider {
                 ),
             });
         }
-        let blob = self.fetch_blob(&url)?;
+        let blob = self.fetch_blob(file)?;
         self.reader
             .read_native(&blob.path, &self.loader.variables, select)
     }
@@ -862,7 +927,7 @@ impl Provider {
         file_anchor: OffsetDateTime,
         select: &Selection,
     ) -> Result<NativeDataset> {
-        self.read_file(self.resolve_url(file_anchor)?, select)
+        self.read_file(&self.resolve(file_anchor)?, select)
     }
 
     /// The validated cadence of a DISCRETE loader, or `None` for a CONST one.
@@ -1149,18 +1214,18 @@ impl Provider {
         (freq_s > 0).then(|| snap_down(temporal.start, t, freq_s))
     }
 
-    /// The URLs a sample at `t` reads — the covering file and, for a bracket
+    /// The files a sample at `t` reads — the covering file and, for a bracket
     /// whose successor may sit across a seam, the next one — for a disk-cache
     /// warm-up that decodes nothing. Empty for a store-backed loader, whose
     /// objects are known only once a decode resolves the chunk keys. Best-effort:
     /// an unresolvable URL is simply left out (the decode raises the real error).
-    pub(crate) fn warm_urls(&self, t: OffsetDateTime) -> Vec<String> {
+    pub(crate) fn warm_files(&self, t: OffsetDateTime) -> Vec<FileRef> {
         if self.reader.store_backed() {
             return Vec::new();
         }
         let Ok(Some(cadence)) = self.cadence() else {
             return self
-                .resolve_url(OffsetDateTime::UNIX_EPOCH)
+                .resolve(OffsetDateTime::UNIX_EPOCH)
                 .into_iter()
                 .collect();
         };
@@ -1176,13 +1241,13 @@ impl Provider {
         }
         anchors
             .into_iter()
-            .filter_map(|a| self.resolve_url(a).ok())
+            .filter_map(|a| self.resolve(a).ok())
             .collect()
     }
 
-    /// Fetch (or reuse) `url` into the disk cache, decoding nothing.
-    pub(crate) fn warm(&self, url: &str) -> Result<()> {
-        self.fetch_blob(url).map(|_| ())
+    /// Fetch (or reuse) `file` into the disk cache, decoding nothing.
+    pub(crate) fn warm(&self, file: &FileRef) -> Result<()> {
+        self.fetch_blob(file).map(|_| ())
     }
 }
 

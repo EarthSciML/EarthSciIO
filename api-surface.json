@@ -687,6 +687,45 @@
         "python": "CommitError",
         "julia": "CommitError"
       }
+    },
+    {
+      "name": "esm_template",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmTemplate",
+        "julia": "EsmTemplate"
+      }
+    },
+    {
+      "name": "esm_template_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "EsmTemplateError",
+        "julia": "EsmTemplateError",
+        "rust": "EsmTemplateError"
+      }
+    },
+    {
+      "name": "expand_esm_template",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "expand_esm_template",
+        "julia": "expand_esm_template",
+        "rust": "expand_esm_template"
+      }
+    },
+    {
+      "name": "esm_template_names",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "python": "esm_template_names",
+        "julia": "esm_template_names",
+        "rust": "esm_template_names"
+      }
     }
   ]
 }

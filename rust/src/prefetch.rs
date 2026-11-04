@@ -55,7 +55,7 @@ use time::OffsetDateTime;
 
 use crate::error::{Error, Result};
 use crate::format::{NativeDataset, Selection};
-use crate::provider::{FileSource, Provider, WindowPlan};
+use crate::provider::{FileRef, FileSource, Provider, WindowPlan};
 
 /// The order in which epochs will be taken (`spec/prefetch.md` §3.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -900,7 +900,7 @@ struct State<T> {
     slots: VecDeque<Slot>,
     cells: HashMap<CellKey, Cell<T>>,
     queue: VecDeque<(u64, CellKey)>,
-    fetch_queue: VecDeque<(u64, usize, String)>,
+    fetch_queue: VecDeque<(u64, usize, FileRef)>,
     /// Positions below this have had their files queued for warm-up.
     fetch_end: usize,
     fetched: HashSet<(usize, String)>,
@@ -1072,9 +1072,9 @@ impl<T> State<T> {
                 let t = OffsetDateTime::from_unix_timestamp(cfg.boundaries[self.order[pos]] as i64)
                     .expect("boundaries were validated at build");
                 for (i, m) in cfg.members.iter().enumerate() {
-                    for url in m.provider.warm_urls(t) {
-                        if self.fetched.insert((i, url.clone())) {
-                            self.fetch_queue.push_back((self.generation, i, url));
+                    for file in m.provider.warm_files(t) {
+                        if self.fetched.insert((i, file.url.clone())) {
+                            self.fetch_queue.push_back((self.generation, i, file));
                         }
                     }
                 }
@@ -1188,7 +1188,7 @@ fn fetcher<T>(shared: Arc<Shared<T>>) {
         if st.shutdown {
             return;
         }
-        let Some((generation, member, url)) = st.fetch_queue.pop_front() else {
+        let Some((generation, member, file)) = st.fetch_queue.pop_front() else {
             st = wait(&shared.work, st);
             continue;
         };
@@ -1197,7 +1197,7 @@ fn fetcher<T>(shared: Arc<Shared<T>>) {
         }
         drop(st);
         let provider = &shared.config.members[member].provider;
-        let _ = catch_unwind(AssertUnwindSafe(|| provider.warm(&url)));
+        let _ = catch_unwind(AssertUnwindSafe(|| provider.warm(&file)));
         st = lock(&shared.state);
     }
 }

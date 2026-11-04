@@ -51,12 +51,13 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Union
+from typing import Any, Callable, NamedTuple, Union
 
 import numpy as np
 
 from .cache import Cache, CacheEntry
 from .errors import UnknownReaderOption
+from .esm import EsmTemplate
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
 from .selection import _as_dims_select, _WindowUnion
@@ -163,6 +164,16 @@ class DataSource:
     auth_realm: str | None = None
     reader_kwargs: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self._check_esm_mirrors()
+
+    def _check_esm_mirrors(self) -> None:
+        # An esm template's mirrors are esm templates too (spec/esm-sources.md
+        # §1.5): refuse an unbound name in one now, as the primary is, rather
+        # than at the first fetch.
+        if isinstance(self.url, EsmTemplate):
+            self.url.check_mirrors(self.mirrors)
+
     @property
     def is_const(self) -> bool:
         """True if the loader is time-invariant (no :class:`SourceTemporal`)."""
@@ -176,6 +187,23 @@ class DataSource:
         if "%" in u:
             return anchor.strftime(u)
         return u
+
+    def resolve_mirrors(self, anchor: _dt.datetime) -> list[str]:
+        """The mirror URLs for a file anchor: expanded at ``anchor`` when the
+        loader's ``url`` is an :class:`~earthsciio.esm.EsmTemplate`
+        (spec/esm-sources.md §1.5), else the literal ``mirrors``."""
+        if isinstance(self.url, EsmTemplate):
+            return self.url.expand_mirrors(self.mirrors, anchor)
+        return list(self.mirrors)
+
+
+class _FileRef(NamedTuple):
+    """A file to fetch: its primary URL and the mirrors resolved at the SAME
+    anchor. Carried from :meth:`Provider._resolve` to the fetch, so the fetch
+    never looks mirrors up by URL (one URL can cover many anchors)."""
+
+    url: str
+    mirrors: tuple[str, ...]
 
 
 #: Decode-entry-point arguments that are NOT reader options: the blob/store
@@ -296,6 +324,8 @@ class Provider:
         # the same reason: an unrecognised reader_kwarg is an error here, never
         # a key the decode silently ignores (spec/registries.md §2.1).
         check_reader_options(self._reader, loader)
+        # The loader may have been changed since it was built.
+        loader._check_esm_mirrors()
         self._init_buffers()
 
     def _init_buffers(self) -> None:
@@ -364,7 +394,7 @@ class Provider:
         reads.
         """
         if self.loader.temporal is None:
-            ds = self._read_file(self.loader.resolve_url(_EPOCH), select=select)
+            ds = self._read_file(self._resolve(_EPOCH), select=select)
             if select is None:
                 self._current = ds
             return ds
@@ -567,7 +597,7 @@ class Provider:
         """
         temporal = self.loader.temporal
         if temporal is None:
-            return [self._fetch(self.loader.resolve_url(_EPOCH))]
+            return [self._fetch(self._resolve(_EPOCH))]
 
         win = window if window is not None else self.window
         upper = win[1] if win is not None else temporal.end
@@ -581,10 +611,10 @@ class Provider:
         seen: set = set()
         file_anchor = _snap_down(temporal.start, start, temporal.file_period)
         while file_anchor < upper:
-            url = self.loader.resolve_url(file_anchor)
-            if url not in seen:
-                seen.add(url)
-                entries.append(self._fetch(url))
+            ref = self._resolve(file_anchor)
+            if ref.url not in seen:
+                seen.add(ref.url)
+                entries.append(self._fetch(ref))
             file_anchor = file_anchor + temporal.file_period
         return entries
 
@@ -665,7 +695,7 @@ class Provider:
         """A file source that decodes afresh on every call (no buffer)."""
 
         def files(file_anchor: _dt.datetime) -> NativeDataset:
-            return self._read_file(self.loader.resolve_url(file_anchor), select=select)
+            return self._read_file(self._resolve(file_anchor), select=select)
 
         return files
 
@@ -673,28 +703,28 @@ class Provider:
         """The ``records_per_sample = 1`` buffer: the one file being stepped
         through, re-decoded only when the FILE anchor changes."""
         if self._current_file is None or self._current_file_anchor != file_anchor:
-            self._current_file = self._read_file(self.loader.resolve_url(file_anchor))
+            self._current_file = self._read_file(self._resolve(file_anchor))
             self._current_file_anchor = file_anchor
         return self._current_file
 
-    def _sample_urls(self, t: _dt.datetime) -> list[str]:
-        """The blob URLs a sample at ``t`` reads (the successor's file too, for a
+    def _sample_urls(self, t: _dt.datetime) -> list[_FileRef]:
+        """The files a sample at ``t`` reads (the successor's file too, for a
         bracket) — what a prefetch group's ``fetch_ahead`` warms. Best-effort:
         computed from the cadence grid, never from a decode."""
         temporal = self.loader.temporal
         if temporal is None:
-            return [self.loader.resolve_url(_EPOCH)]
+            return [self._resolve(_EPOCH)]
         anchor = self._anchor_of(t)
         anchors = [anchor]
         nxt = anchor + temporal.frequency
         if temporal.records_per_sample == 2 and (temporal.end is None or nxt < temporal.end):
             anchors.append(nxt)
-        urls: list[str] = []
+        refs: list[_FileRef] = []
         for a in anchors:
-            url = self.loader.resolve_url(_snap_down(temporal.start, a, temporal.file_period))
-            if url not in urls:
-                urls.append(url)
-        return urls
+            ref = self._resolve(_snap_down(temporal.start, a, temporal.file_period))
+            if all(r.url != ref.url for r in refs):
+                refs.append(ref)
+        return refs
 
     def _lower_bound(self) -> _dt.datetime:
         """The effective lower bound: the window start clamped to the loader
@@ -705,15 +735,22 @@ class Provider:
             return self.window[0]
         return temporal.start
 
-    def _fetch(self, url: str) -> CacheEntry:
+    def _resolve(self, anchor: _dt.datetime) -> _FileRef:
+        """The file for a file anchor: its primary URL and its mirrors, both
+        resolved at ``anchor`` (an esm template's mirrors are expanded at the
+        primary's anchor, spec/esm-sources.md §1.5)."""
+        return _FileRef(self.loader.resolve_url(anchor), tuple(self.loader.resolve_mirrors(anchor)))
+
+    def _fetch(self, ref: _FileRef) -> CacheEntry:
         return self.cache.fetch(
-            url,
+            ref.url,
             source_loader=self.loader.name,
             auth_realm=self.loader.auth_realm,
-            mirrors=tuple(self.loader.mirrors),
+            mirrors=ref.mirrors,
         )
 
-    def _read_file(self, url: str, select: Any | None = None) -> NativeDataset:
+    def _read_file(self, ref: _FileRef, select: Any | None = None) -> NativeDataset:
+        url = ref.url
         variables = list(self.loader.variables) if self.loader.variables else None
         reader_kwargs = self.loader.reader_kwargs
         # Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
@@ -742,7 +779,7 @@ class Provider:
                 f"reader {type(self._reader).__name__} does not support select/pushdown"
             )
         rest = {k: v for k, v in reader_kwargs.items() if k != "select"}
-        entry = self._fetch(url)
+        entry = self._fetch(ref)
         handle = self._reader.open(entry.path)
         if effective is None:
             return self._reader.read_native(handle, variables, **rest)
@@ -773,10 +810,10 @@ class Provider:
         reader; a track is not made slower for symmetry.
         """
         if select is not None:
-            return self._read_file(self.loader.resolve_url(file_anchor), select=select)
+            return self._read_file(self._resolve(file_anchor), select=select)
         ds = self._files.get(file_anchor)
         if ds is None:
-            ds = self._read_file(self.loader.resolve_url(file_anchor))
+            ds = self._read_file(self._resolve(file_anchor))
             self._files[file_anchor] = ds
             while len(self._files) > 2:
                 self._files.popitem(last=False)

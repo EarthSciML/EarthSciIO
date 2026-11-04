@@ -108,6 +108,8 @@ pub mod datadir;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod era5;
 mod error;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod esm;
 pub mod format;
 #[cfg(not(target_arch = "wasm32"))]
 mod key;
@@ -149,6 +151,8 @@ pub use format::{
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
 #[cfg(not(target_arch = "wasm32"))]
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
+#[cfg(not(target_arch = "wasm32"))]
+pub use esm::{esm_template_names, expand_esm_template, EsmTemplateError};
 #[cfg(all(feature = "object-store", not(target_arch = "wasm32")))]
 pub use format::{
     array_shape_object_store, read_store_options, read_zarr_object_store,
