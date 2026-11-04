@@ -12,6 +12,10 @@ import pytest
 
 from earthsciio import Cache, DataSource, EsmTemplate, Provider, SourceTemporal, decode_time_axis
 
+# Decoding a time axis needs xarray, and reading the corpus files needs netCDF4.
+pytest.importorskip("xarray")
+pytest.importorskip("netCDF4")
+
 CORPUS = pathlib.Path(__file__).resolve().parents[1] / "conformance" / "corpus"
 SC = json.loads((CORPUS / "scenarios" / "decoded-time-axis.json").read_text())
 UTC = dt.timezone.utc

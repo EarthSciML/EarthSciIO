@@ -66,6 +66,9 @@ def test_case(case):
         assert loader.resolve_url(fa) == f["url"]
         assert loader.resolve_mirrors(fa) == f["mirrors"]
     var = case["options"]["variables"][0]
+    if exp.get("samples"):
+        pytest.importorskip("xarray")
+        pytest.importorskip("netCDF4")
     for smp in exp.get("samples", []):
         ds = _build(case, smp["records_per_sample"]).sample_at(_t(smp["t_s"]))
         np.testing.assert_array_equal(np.asarray(ds[var].data), np.asarray(smp[var]))

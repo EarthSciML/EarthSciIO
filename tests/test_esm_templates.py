@@ -91,7 +91,8 @@ def test_template_refuses_unbound_at_construction():
 
 
 def _write_nc(path: pathlib.Path, value: float) -> None:
-    import netCDF4
+    pytest.importorskip("xarray")  # the provider reads it back through xarray
+    netCDF4 = pytest.importorskip("netCDF4")
 
     with netCDF4.Dataset(path, "w") as ds:
         ds.createDimension("x", 2)

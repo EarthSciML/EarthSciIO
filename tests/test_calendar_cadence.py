@@ -66,6 +66,8 @@ def test_cadence(case):
 
 @pytest.mark.parametrize("name", sorted(SC["providers"]))
 def test_provider_over_the_corpus(name):
+    pytest.importorskip("xarray")
+    pytest.importorskip("netCDF4")
     src = SC["providers"][name]
     cache = Cache(root=str(CORPUS / "cache"), offline=True)
     var = src["variables"][0]
