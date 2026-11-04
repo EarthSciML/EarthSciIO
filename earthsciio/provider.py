@@ -51,7 +51,7 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Union
+from typing import Any, Callable, NamedTuple, Union
 
 import numpy as np
 
@@ -164,6 +164,16 @@ class DataSource:
     auth_realm: str | None = None
     reader_kwargs: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self._check_esm_mirrors()
+
+    def _check_esm_mirrors(self) -> None:
+        # An esm template's mirrors are esm templates too (spec/esm-sources.md
+        # §1.5): refuse an unbound name in one now, as the primary is, rather
+        # than at the first fetch.
+        if isinstance(self.url, EsmTemplate):
+            self.url.check_mirrors(self.mirrors)
+
     @property
     def is_const(self) -> bool:
         """True if the loader is time-invariant (no :class:`SourceTemporal`)."""
@@ -185,6 +195,15 @@ class DataSource:
         if isinstance(self.url, EsmTemplate):
             return self.url.expand_mirrors(self.mirrors, anchor)
         return list(self.mirrors)
+
+
+class _FileRef(NamedTuple):
+    """A file to fetch: its primary URL and the mirrors resolved at the SAME
+    anchor. Carried from :meth:`Provider._resolve` to the fetch, so the fetch
+    never looks mirrors up by URL (one URL can cover many anchors)."""
+
+    url: str
+    mirrors: tuple[str, ...]
 
 
 #: Decode-entry-point arguments that are NOT reader options: the blob/store
@@ -305,11 +324,8 @@ class Provider:
         # the same reason: an unrecognised reader_kwarg is an error here, never
         # a key the decode silently ignores (spec/registries.md §2.1).
         check_reader_options(self._reader, loader)
-        # The mirrors of each primary URL this provider has resolved. An esm
-        # template's mirrors are templates too, expanded at the SAME anchor as
-        # the primary (spec/esm-sources.md §1.5), and the fetch sees only the
-        # URL, so the expansion is remembered here when the URL is resolved.
-        self._mirrors: dict[str, tuple[str, ...]] = {}
+        # The loader may have been changed since it was built.
+        loader._check_esm_mirrors()
         self._init_buffers()
 
     def _init_buffers(self) -> None:
@@ -539,7 +555,7 @@ class Provider:
         if shape_fn is None:
             return None
         anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
-        return shape_fn(self.cache, self._resolve(anchor), var)
+        return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
     def refresh_times(self) -> list[_dt.datetime]:
         """The cadence anchors at which the data changes and the solver must
@@ -595,10 +611,10 @@ class Provider:
         seen: set = set()
         file_anchor = _snap_down(temporal.start, start, temporal.file_period)
         while file_anchor < upper:
-            url = self._resolve(file_anchor)
-            if url not in seen:
-                seen.add(url)
-                entries.append(self._fetch(url))
+            ref = self._resolve(file_anchor)
+            if ref.url not in seen:
+                seen.add(ref.url)
+                entries.append(self._fetch(ref))
             file_anchor = file_anchor + temporal.file_period
         return entries
 
@@ -691,8 +707,8 @@ class Provider:
             self._current_file_anchor = file_anchor
         return self._current_file
 
-    def _sample_urls(self, t: _dt.datetime) -> list[str]:
-        """The blob URLs a sample at ``t`` reads (the successor's file too, for a
+    def _sample_urls(self, t: _dt.datetime) -> list[_FileRef]:
+        """The files a sample at ``t`` reads (the successor's file too, for a
         bracket) — what a prefetch group's ``fetch_ahead`` warms. Best-effort:
         computed from the cadence grid, never from a decode."""
         temporal = self.loader.temporal
@@ -703,12 +719,12 @@ class Provider:
         nxt = anchor + temporal.frequency
         if temporal.records_per_sample == 2 and (temporal.end is None or nxt < temporal.end):
             anchors.append(nxt)
-        urls: list[str] = []
+        refs: list[_FileRef] = []
         for a in anchors:
-            url = self._resolve(_snap_down(temporal.start, a, temporal.file_period))
-            if url not in urls:
-                urls.append(url)
-        return urls
+            ref = self._resolve(_snap_down(temporal.start, a, temporal.file_period))
+            if all(r.url != ref.url for r in refs):
+                refs.append(ref)
+        return refs
 
     def _lower_bound(self) -> _dt.datetime:
         """The effective lower bound: the window start clamped to the loader
@@ -719,26 +735,22 @@ class Provider:
             return self.window[0]
         return temporal.start
 
-    def _resolve(self, anchor: _dt.datetime) -> str:
-        """The primary URL for a file anchor, remembering its mirrors."""
-        url = self.loader.resolve_url(anchor)
-        if isinstance(self.loader.url, EsmTemplate) and self.loader.mirrors:
-            self._mirrors[url] = tuple(self.loader.resolve_mirrors(anchor))
-        return url
+    def _resolve(self, anchor: _dt.datetime) -> _FileRef:
+        """The file for a file anchor: its primary URL and its mirrors, both
+        resolved at ``anchor`` (an esm template's mirrors are expanded at the
+        primary's anchor, spec/esm-sources.md §1.5)."""
+        return _FileRef(self.loader.resolve_url(anchor), tuple(self.loader.resolve_mirrors(anchor)))
 
-    def _fetch(self, url: str) -> CacheEntry:
-        if isinstance(self.loader.url, EsmTemplate):
-            mirrors = self._mirrors.get(url, ())
-        else:
-            mirrors = tuple(self.loader.mirrors)
+    def _fetch(self, ref: _FileRef) -> CacheEntry:
         return self.cache.fetch(
-            url,
+            ref.url,
             source_loader=self.loader.name,
             auth_realm=self.loader.auth_realm,
-            mirrors=mirrors,
+            mirrors=ref.mirrors,
         )
 
-    def _read_file(self, url: str, select: Any | None = None) -> NativeDataset:
+    def _read_file(self, ref: _FileRef, select: Any | None = None) -> NativeDataset:
+        url = ref.url
         variables = list(self.loader.variables) if self.loader.variables else None
         reader_kwargs = self.loader.reader_kwargs
         # Store-backed readers (e.g. zarr) are handed (cache, base_url, variables,
@@ -767,7 +779,7 @@ class Provider:
                 f"reader {type(self._reader).__name__} does not support select/pushdown"
             )
         rest = {k: v for k, v in reader_kwargs.items() if k != "select"}
-        entry = self._fetch(url)
+        entry = self._fetch(ref)
         handle = self._reader.open(entry.path)
         if effective is None:
             return self._reader.read_native(handle, variables, **rest)

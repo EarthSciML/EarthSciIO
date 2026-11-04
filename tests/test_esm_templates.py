@@ -28,7 +28,9 @@ SCENARIO = (
     / "scenarios"
     / "esm-url-templates.json"
 )
-CASES = json.loads(SCENARIO.read_text())["cases"]
+_SC = json.loads(SCENARIO.read_text())
+CASES = _SC["cases"]
+CONSTRUCTION = _SC["construction"]
 
 
 def _anchor(case):
@@ -59,6 +61,28 @@ def test_scenario_case(case):
             assert m in msg
     if "names" in case:
         assert esm_template_names(case["template"]) == case["names"]
+
+
+@pytest.mark.parametrize("case", CONSTRUCTION, ids=[c["id"] for c in CONSTRUCTION])
+def test_scenario_construction(case):
+    def build():
+        return DataSource(
+            name="c",
+            format="netcdf",
+            url=EsmTemplate(case["template"], case["substitutions"]),
+            mirrors=case["mirrors"],
+        )
+
+    if "error" not in case:
+        build()
+        return
+    with pytest.raises(EsmTemplateError) as ei:
+        build()
+    msg = str(ei.value)
+    assert ei.value.code == case["error"]
+    assert case["error"] in msg
+    for m in case.get("mentions", []):
+        assert m in msg
 
 
 def test_template_refuses_unbound_at_construction():
@@ -101,3 +125,39 @@ def test_mirror_templates_expand_at_the_primary_anchor(tmp_path):
     feb = p.sample_at(dt.datetime(2016, 2, 15))
     np.testing.assert_array_equal(jan["v"].data, [1.0, 2.0])
     np.testing.assert_array_equal(feb["v"].data, [10.0, 11.0])
+
+
+def _daily_mirror(tmp_path):
+    # The primary location does not exist; each day's file is at its mirror.
+    mirror_dir = tmp_path / "mirror"
+    mirror_dir.mkdir()
+    _write_nc(mirror_dir / "d_20160101.nc", 1.0)
+    _write_nc(mirror_dir / "d_20160102.nc", 10.0)
+    return DataSource(
+        name="m",
+        format="netcdf",
+        url=EsmTemplate(f"file://{tmp_path}/missing/{{date:%Y%m%d}}.nc"),
+        mirrors=[f"file://{mirror_dir}/d_{{date:%Y%m%d}}.nc"],
+        variables=["v"],
+        temporal=SourceTemporal(
+            start=dt.datetime(2016, 1, 1),
+            frequency=dt.timedelta(days=1),
+            file_period=dt.timedelta(days=1),
+        ),
+    )
+
+
+def test_a_file_carries_the_mirrors_of_its_own_anchor(tmp_path):
+    # The mirrors travel with the URL they were resolved for; nothing is looked
+    # up by URL afterwards (a URL can cover several anchors).
+    p = Provider(_daily_mirror(tmp_path), Cache(root=str(tmp_path / "cache")))
+    for day in (2, 1):
+        (ref,) = p._sample_urls(dt.datetime(2016, 1, day))
+        assert ref.url.endswith(f"/missing/2016010{day}.nc")
+        assert [m.rsplit("/", 1)[1] for m in ref.mirrors] == [f"d_2016010{day}.nc"]
+
+
+def test_with_window_reads_an_esm_template_with_mirrors(tmp_path):
+    p = Provider(_daily_mirror(tmp_path), Cache(root=str(tmp_path / "cache")))
+    w = p.with_window({"dims": {"x": {"indices": [1]}}})
+    np.testing.assert_array_equal(w.sample_at(dt.datetime(2016, 1, 2))["v"].data, [11.0])

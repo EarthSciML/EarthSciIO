@@ -143,3 +143,45 @@ fn mirror_templates_expand_at_the_primary_anchor() {
     }
     assert_ne!(f64s(&jan.variables, "Q"), f64s(&feb.variables, "Q"));
 }
+
+#[test]
+fn the_shared_scenario_construction() {
+    let text = std::fs::read_to_string(corpus().join("scenarios/esm-url-templates.json")).unwrap();
+    let sc: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let cache = Arc::new(Cache::builder().data_dir(dir.path()).build().unwrap());
+    for case in sc["construction"].as_array().unwrap() {
+        let id = case["id"].as_str().unwrap();
+        let subs: BTreeMap<String, String> = case["substitutions"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+            .collect();
+        let mirrors: Vec<String> = case["mirrors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_str().unwrap().to_string())
+            .collect();
+        let loader = DataSource::new("c", "netcdf", case["template"].as_str().unwrap())
+            .mirrors(mirrors)
+            .esm_template(subs);
+        let built = Provider::new(loader, cache.clone(), None);
+        match case.get("error").and_then(|e| e.as_str()) {
+            None => assert!(built.is_ok(), "case {id}: {:?}", built.err()),
+            Some(code) => {
+                let msg = built.err().expect(id).to_string();
+                assert!(msg.contains(code), "case {id}: {msg}");
+                for m in case
+                    .get("mentions")
+                    .and_then(|m| m.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    assert!(msg.contains(m.as_str().unwrap()), "case {id}: {msg}");
+                }
+            }
+        }
+    }
+}

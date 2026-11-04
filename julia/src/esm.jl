@@ -157,6 +157,38 @@ function esm_template_names(template::AbstractString)
     return out
 end
 
+# Throw the `EsmTemplateError` that expanding `template` with `subs` would throw
+# at ANY anchor: a reserved `date` binding, or a non-date token that is unbound
+# or carries a format. The `{date:...}` tokens need an anchor and are left to
+# expansion. The tokens are walked in place, so the text around a date token
+# never joins into a new one (`{{date:%Y}x}` has the one token).
+function _check_esm_template(template::String, subs::Dict{String, String})
+    haskey(subs, "date") && throw(
+        EsmTemplateError(
+            "esm_template_reserved", template,
+            "the substitution name 'date' is reserved for {date:<format>}"
+        )
+    )
+    for m in eachmatch(_ESM_TOKEN, template)
+        name = m.captures[1]
+        fmt = m.captures[2]
+        name == "date" && continue
+        fmt === nothing || throw(
+            EsmTemplateError(
+                "esm_template_directive", template,
+                "the substitution {$name} takes no format (got {$name:$fmt})"
+            )
+        )
+        haskey(subs, name) || throw(
+            EsmTemplateError(
+                "esm_template_unbound", template,
+                "the substitution {$name} is not bound"
+            )
+        )
+    end
+    return nothing
+end
+
 """
     EsmTemplate(template; substitutions=Dict(), mirrors=String[])
 
@@ -177,10 +209,7 @@ struct EsmTemplate <: Function
         subs = Dict{String, String}(String(k) => string(v) for (k, v) in substitutions)
         e = new(String(template), subs, String[String(m) for m in mirrors])
         for t in (e.template, e.mirrors...)
-            # Every non-date token checked now; the date tokens need an anchor.
-            expand_esm_template(
-                replace(t, r"\{date(?::[^{}]*)?\}" => ""); substitutions = subs
-            )
+            _check_esm_template(t, subs)
         end
         return e
     end

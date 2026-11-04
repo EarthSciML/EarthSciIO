@@ -18,7 +18,11 @@ package version is independent of the `.esm` format version.
 - **feat:** a provider takes an esm template as its URL (Python `EsmTemplate`,
   Julia `EsmTemplate`, Rust `DataSource::esm_template`), with mirrors that are
   esm templates expanded at the same anchor and tried in order after the
-  primary URL.
+  primary URL. Every track refuses an unbound or malformed name in the
+  primary OR a mirror when the template is built, and checks the tokens in
+  place, so `{{date:%Y}x}` is accepted (the shared scenario's
+  `construction` cases pin both). Each file carries the mirrors resolved at
+  its own anchor to the fetch; there is no URL-to-mirrors memo.
 
 ### Julia
 

@@ -74,7 +74,7 @@ from typing import Any, Callable, NamedTuple
 import numpy as np
 
 from .native import NativeDataset
-from .provider import Provider
+from .provider import Provider, _FileRef
 from .selection import _WindowUnion
 
 __all__ = ["EpochSample", "PrefetchGroup", "Sample"]
@@ -972,22 +972,22 @@ class PrefetchGroup:
                 if getattr(prov._reader, "store_backed", False) or prov.cache.offline:
                     continue
                 try:
-                    urls = prov._sample_urls(t)
+                    refs = prov._sample_urls(t)
                 except Exception:
                     continue  # best-effort: the decode raises the real error at take()
-                for url in urls:
+                for ref in refs:
                     with self._cv:
                         if gen != self._gen or self._state != _RUNNING:
                             return  # the order this warm was for is gone
-                        if url in self._warmed:
+                        if ref.url in self._warmed:
                             continue
-                        self._warmed.add(url)
-                    _warm(prov, url)
+                        self._warmed.add(ref.url)
+                    _warm(prov, ref)
 
 
-def _warm(provider: Provider, url: str) -> None:
+def _warm(provider: Provider, ref: _FileRef) -> None:
     try:
-        provider._fetch(url)
+        provider._fetch(ref)
     except Exception:
         pass  # best-effort: the decode raises the real error at take()
 

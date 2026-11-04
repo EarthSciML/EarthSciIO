@@ -81,6 +81,11 @@ substitutions)`, Rust `DataSource::new(name, format, template).esm_template(subs
 The provider expands it at each file anchor, as it already does for the
 track-specific template forms. Mirrors given beside an esm template are esm
 templates too: each is expanded at the same anchor with the same substitutions
-and tried, in order, after the primary URL. The cache key is still
+and tried, in order, after the primary URL. Building the template refuses
+`esm_template_reserved`, and `esm_template_unbound` or `esm_template_directive`
+for any non-date token of the primary or of a mirror, by checking each token
+where it stands (the text around a `{date:…}` token never forms a new token:
+`{{date:%Y}x}` has one token). The `{date:…}` tokens are checked when expanded.
+The scenario's `construction` cases pin this. The cache key is still
 `sha256(primary URL)` (cache-format.md §1), whichever candidate supplied the
 bytes.

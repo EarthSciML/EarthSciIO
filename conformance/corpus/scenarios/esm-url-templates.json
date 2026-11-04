@@ -1,7 +1,7 @@
 {
   "schema": "earthsciio/scenario/v1",
   "id": "esm-url-templates",
-  "description": "esm URL template expansion (spec/esm-sources.md section 1). Each case expands `template` at `anchor` (UTC; null means no anchor) with `substitutions`. A case with `expect` must produce exactly that string. A case with `error` must fail with an error whose message contains that code and every string in `mentions`. `names` (when present) is what esm_template_names returns for the template. `anchor_s` is the same instant in Unix seconds; a track whose date type cannot hold it (Python, before year 1) skips the case.",
+  "description": "esm URL template expansion (spec/esm-sources.md section 1). Each case expands `template` at `anchor` (UTC; null means no anchor) with `substitutions`. A case with `expect` must produce exactly that string. A case with `error` must fail with an error whose message contains that code and every string in `mentions`. `names` (when present) is what esm_template_names returns for the template. `anchor_s` is the same instant in Unix seconds; a track whose date type cannot hold it (Python, before year 1) skips the case. `construction` cases are built into a provider's esm template (Python `DataSource(url=EsmTemplate(template, substitutions), mirrors=mirrors)`, Julia `EsmTemplate(template; substitutions, mirrors)`, Rust `Provider::new` of `DataSource::new(..).mirrors(mirrors).esm_template(substitutions)`), with no anchor. A case without `error` must build; a case with `error` must be refused at build, with that code and every string in `mentions`. Only the non-date tokens are checked at build; the text around a `{date:...}` token is never joined into a new token.",
   "cases": [
     {
       "id": "geosfp-daily",
@@ -226,6 +226,83 @@
       },
       "error": "esm_template_reserved",
       "anchor_s": null
+    },
+    {
+      "id": "date-inside-literal-braces",
+      "template": "file:///d/{{date:%Y}x}",
+      "anchor": "2016-02-29T07:05:09Z",
+      "substitutions": {},
+      "expect": "file:///d/{2016x}",
+      "names": [],
+      "anchor_s": 1456729509
+    }
+  ],
+  "construction": [
+    {
+      "id": "bound-primary-and-mirror",
+      "template": "file:///d/{sector}_{date:%m}.nc",
+      "mirrors": [
+        "file:///m/{sector}/{date:%Y%m%d}.nc"
+      ],
+      "substitutions": {
+        "sector": "agr"
+      }
+    },
+    {
+      "id": "date-inside-literal-braces",
+      "template": "file:///d/{{date:%Y}x}",
+      "mirrors": [
+        "file:///m/{{date:%m}y}"
+      ],
+      "substitutions": {}
+    },
+    {
+      "id": "unbound-primary",
+      "template": "file:///d/{sector}_{date:%m}.nc",
+      "mirrors": [],
+      "substitutions": {},
+      "error": "esm_template_unbound",
+      "mentions": [
+        "{sector}"
+      ]
+    },
+    {
+      "id": "unbound-in-mirror",
+      "template": "file:///d/{a}.nc",
+      "mirrors": [
+        "file:///m/{b}.nc"
+      ],
+      "substitutions": {
+        "a": "1"
+      },
+      "error": "esm_template_unbound",
+      "mentions": [
+        "{b}",
+        "file:///m/{b}.nc"
+      ]
+    },
+    {
+      "id": "format-on-name-in-mirror",
+      "template": "file:///d/{a}.nc",
+      "mirrors": [
+        "file:///m/{a:x}.nc"
+      ],
+      "substitutions": {
+        "a": "1"
+      },
+      "error": "esm_template_directive",
+      "mentions": [
+        "{a:x}"
+      ]
+    },
+    {
+      "id": "reserved-date",
+      "template": "file:///d/{date:%Y}.nc",
+      "mirrors": [],
+      "substitutions": {
+        "date": "x"
+      },
+      "error": "esm_template_reserved"
     }
   ]
 }

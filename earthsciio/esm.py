@@ -151,6 +151,37 @@ def esm_template_names(template: str) -> list[str]:
     return out
 
 
+def _check_esm_template(template: str, substitutions: Mapping[str, str] | None = None) -> None:
+    """Raise the :class:`EsmTemplateError` that expanding ``template`` with
+    ``substitutions`` would raise at ANY anchor: a reserved ``date`` binding, or
+    a non-date token that is unbound or carries a format. The ``{date:...}``
+    tokens need an anchor and are left to expansion. The tokens are walked in
+    place, so the text around a date token never joins into a new one."""
+    subs = dict(substitutions or {})
+    if "date" in subs:
+        raise EsmTemplateError(
+            "esm_template_reserved",
+            template,
+            "the substitution name 'date' is reserved for {date:<format>}",
+        )
+    for m in _TOKEN.finditer(template):
+        name, fmt = m.group(1), m.group(2)
+        if name == "date":
+            continue
+        if fmt is not None:
+            raise EsmTemplateError(
+                "esm_template_directive",
+                template,
+                f"the substitution {{{name}}} takes no format (got {{{name}:{fmt}}})",
+            )
+        if name not in subs:
+            raise EsmTemplateError(
+                "esm_template_unbound",
+                template,
+                f"the substitution {{{name}}} is not bound",
+            )
+
+
 @dataclass(frozen=True)
 class EsmTemplate:
     """A loader URL that is an esm template (spec/esm-sources.md §1.5).
@@ -165,14 +196,16 @@ class EsmTemplate:
 
     def __post_init__(self) -> None:
         # Refuse a reserved name or an unbound one now, not at the first fetch.
-        expand_esm_template(
-            _TOKEN.sub(lambda m: m.group(0) if m.group(1) != "date" else "", self.template),
-            None,
-            self.substitutions,
-        )
+        _check_esm_template(self.template, self.substitutions)
 
     def __call__(self, anchor: _dt.datetime) -> str:
         return expand_esm_template(self.template, anchor, self.substitutions)
+
+    def check_mirrors(self, mirrors: Sequence[str]) -> None:
+        """Refuse a mirror template with an unbound or malformed name, as the
+        primary is refused at construction."""
+        for m in mirrors:
+            _check_esm_template(m, self.substitutions)
 
     def expand_mirrors(self, mirrors: Sequence[str], anchor: _dt.datetime) -> list[str]:
         """Each mirror template expanded at ``anchor``."""

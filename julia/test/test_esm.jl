@@ -35,6 +35,33 @@ import NCDatasets
             end
         end
     end
+    for case in sc["construction"]
+        @testset "construction $(case["id"])" begin
+            subs = Dict{String, String}(String(k) => String(v) for (k, v) in case["substitutions"])
+            build() = EsmTemplate(
+                case["template"]; substitutions = subs, mirrors = String.(case["mirrors"])
+            )
+            if !haskey(case, "error")
+                @test build() isa EsmTemplate
+            else
+                err = try
+                    build()
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa EsmTemplateError
+                if err isa EsmTemplateError
+                    @test err.code == case["error"]
+                    msg = sprint(showerror, err)
+                    @test occursin(case["error"], msg)
+                    for m in get(case, "mentions", Any[])
+                        @test occursin(m, msg)
+                    end
+                end
+            end
+        end
+    end
     # a DateTime anchor is the same instant as its Unix seconds
     @test expand_esm_template("{date:%Y%m%d%H}", DateTime(2016, 2, 29, 7)) == "2016022907"
 end

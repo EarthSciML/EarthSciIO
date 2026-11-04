@@ -553,6 +553,9 @@ end
 # error when there were no mirrors (unchanged behaviour), else names them all.
 function _fetch_candidates(c::Cache, url::String, mirrors, staged, conditional, auth_realm, store_read)
     candidates = String[url; mirrors]
+    # Resolved once, before any candidate: an auth error is the caller's, not a
+    # failed mirror, so it is thrown as itself rather than retried per mirror.
+    auth = resolve_auth(c.auth, auth_realm)
     errs = Tuple{String, Any}[]
     for cand in candidates
         try
@@ -560,7 +563,7 @@ function _fetch_candidates(c::Cache, url::String, mirrors, staged, conditional, 
             return fetch!(
                 transport, cand, staged;
                 conditional = conditional,
-                auth = resolve_auth(c.auth, auth_realm),
+                auth = auth,
                 store_read = store_read
             )
         catch err
