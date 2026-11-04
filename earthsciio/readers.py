@@ -26,6 +26,8 @@ import datetime as _dt
 import decimal as _decimal
 import fnmatch as _fnmatch
 import io as _io
+import json as _json
+import re as _re
 import threading as _threading
 import zipfile as _zipfile
 from collections.abc import Sequence
@@ -47,6 +49,8 @@ __all__ = [
     "CSVReader",
     "FF10Reader",
     "GeoTIFFReader",
+    "JSONReader",
+    "JSONReaderError",
     "NetCDFReader",
     "ParquetReader",
     "ShapefileReader",
@@ -624,6 +628,330 @@ class CSVReader:
                 data = [str(v) for v in vals]
             out_vars[name] = NativeField(data, ("index",), {})
         return NativeDataset(out_vars, {})
+
+
+# --------------------------------------------------------------------------- #
+# JSON reader — a points table from a JSON array of records
+# (spec/registries.md §2 "JSON points"). Julia: `JSONReader` in
+# julia/src/readers.jl; Rust: `JsonReader` in rust/src/format/json_reader.rs.
+# The three implement one contract, pinned by
+# conformance/corpus/scenarios/json-reader.json.
+# --------------------------------------------------------------------------- #
+
+#: A JSON-number-shaped decimal, the only text a ``numeric_columns`` string cell
+#: may hold (after trimming ASCII whitespace). No ``nan``/``inf``/``1_000``:
+#: what one language's float parser accepts beyond this differs from the next.
+_JSON_NUMERIC_TEXT = _re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_ASCII_WS = " \t\n\r"
+#: The deepest nesting of arrays/objects a document may have (the root array is
+#: depth 1). Rust's serde_json stops at 127; all three tracks hold to it, so a
+#: document one track reads is never a parse error in another.
+_JSON_MAX_DEPTH = 127
+#: A UTF-16 surrogate left over in a decoded string: a lone ``\ud800`` escape,
+#: which RFC 8259 leaves undefined. Rust refuses it; so do Python and Julia.
+_JSON_SURROGATE = _re.compile("[\ud800-\udfff]")
+
+
+class JSONReaderError(ValueError):
+    """A ``json`` decode failure; ``code`` is one of the ``json_*`` codes."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+
+
+def _json_refuse_constant(name: str) -> Any:
+    raise JSONReaderError("json_parse", f"{name} is not JSON (RFC 8259 has no such literal)")
+
+
+def _json_float(text: str) -> float:
+    v = float(text)
+    if v in (float("inf"), float("-inf")):
+        raise JSONReaderError("json_parse", f"number {text} is outside the float64 range")
+    return v
+
+
+def _json_int(text: str) -> Any:
+    # Keep the integer exact here; it becomes float64 (nearest, ties to even)
+    # when a field is built, as in the Julia and Rust readers. Its RANGE is
+    # checked now, at parse time, whether or not the field is ever decoded: an
+    # out-of-range number anywhere in the document is a parse error.
+    v = int(text)
+    try:
+        float(v)
+    except OverflowError:
+        raise JSONReaderError(
+            "json_parse", f"number {text[:40]}... is outside the float64 range"
+        ) from None
+    return v
+
+
+def _json_check_tree(doc: Any) -> None:
+    """Refuse what the parser let through but the contract calls a parse error:
+    nesting deeper than ``_JSON_MAX_DEPTH`` and a lone UTF-16 surrogate in a
+    string or a member name. Iterative, so depth costs no stack."""
+    stack: list[tuple[Any, int]] = [(doc, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, (dict, list)):
+            if depth > _JSON_MAX_DEPTH:
+                raise JSONReaderError("json_parse", f"nesting deeper than {_JSON_MAX_DEPTH} levels")
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if _JSON_SURROGATE.search(k):
+                        raise JSONReaderError(
+                            "json_parse", f"member name {k!r} holds a lone UTF-16 surrogate"
+                        )
+                    stack.append((v, depth + 1))
+            else:
+                stack.extend((v, depth + 1) for v in node)
+        elif isinstance(node, str) and _JSON_SURROGATE.search(node):
+            raise JSONReaderError("json_parse", f"string {node!r} holds a lone UTF-16 surrogate")
+
+
+def _json_kind(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "array"
+    return "object"
+
+
+def _json_to_float(v: Any, field: str, row: int) -> float:
+    try:
+        f = float(v)
+    except OverflowError:
+        f = float("inf")
+    if f in (float("inf"), float("-inf")):
+        raise JSONReaderError(
+            "json_parse", f"field {field!r} record {row}: number {v} is outside the float64 range"
+        )
+    # A zero is +0.0 whatever its sign: Rust's parser cannot tell `-0` from
+    # `-0.0`, so no track keeps the sign of either.
+    return 0.0 if f == 0.0 else f
+
+
+class JSONReader:
+    """The active ``json`` reader: a JSON array of records becomes a points table.
+
+    The records are the array at ``records_path`` (a list of object keys from the
+    document root; default ``[]``, the root itself). Each record must be an
+    object. Its fields are its leaves: a nested object is flattened, its keys
+    joined with ``.`` (``{"coordinates": {"latitude": 1}}`` is the field
+    ``coordinates.latitude``). The fields are the union over all records; a
+    field absent from a record is ``null`` there. Each field is one rank-1
+    array on the dimension ``index`` (length = number of records); there are no
+    coordinates.
+
+    A field's type comes from its non-null values: all numbers → ``float64``
+    (``null`` → NaN); all strings → string (``null`` → ``""``); all booleans →
+    ``bool`` (a ``null`` is an error, a boolean has no missing value); all
+    ``null`` → ``float64`` of NaN. A field mixing kinds is an error. A field
+    named in ``numeric_columns`` is ``float64`` whatever its cells: a number as
+    is, ``null`` → NaN, a string holding a decimal number (after trimming ASCII
+    whitespace) parsed, anything else an error. ``variables`` projects the
+    fields; a field that is not decoded may hold anything, an array included.
+    """
+
+    NAME = "json"
+    FORMATS = ("json",)
+    EXTENSIONS = ("json",)
+
+    def formats(self) -> list[str]:
+        return list(self.FORMATS)
+
+    def extensions(self) -> list[str]:
+        return list(self.EXTENSIONS)
+
+    def open(self, blob_path: Any) -> Any:
+        return blob_path
+
+    def read_native(
+        self,
+        handle: Any,
+        variables: Sequence[str] | None = None,
+        *,
+        records_path: Sequence[str] | None = None,
+        numeric_columns: Sequence[str] | None = None,
+        **unknown: Any,
+    ) -> NativeDataset:
+        """Decode a JSON blob into a :class:`NativeDataset` of points.
+
+        There is no ``select``: ``supports_selection`` is false, so the Provider
+        refuses one before the fetch. Any option not named here, ``select``
+        included, is ``json_option`` (as Rust's ``JsonReader`` refuses it)."""
+        if unknown:
+            raise JSONReaderError(
+                "json_option",
+                f"unknown reader option(s) {sorted(unknown)}; json takes records_path, "
+                "numeric_columns",
+            )
+        path_keys = _json_str_list("records_path", records_path)
+        numset = (
+            set(_json_str_list("numeric_columns", numeric_columns))
+            if numeric_columns is not None
+            else set()
+        )
+        with open(handle, "rb") as fh:
+            raw = fh.read()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise JSONReaderError("json_parse", f"{handle}: not UTF-8 ({e})") from None
+        try:
+            doc = _json.loads(
+                text,
+                parse_constant=_json_refuse_constant,
+                parse_float=_json_float,
+                parse_int=_json_int,
+            )
+        except JSONReaderError:
+            raise
+        except ValueError as e:
+            raise JSONReaderError("json_parse", f"{handle}: {e}") from None
+        except RecursionError:
+            raise JSONReaderError(
+                "json_parse", f"{handle}: nesting deeper than {_JSON_MAX_DEPTH} levels"
+            ) from None
+        _json_check_tree(doc)
+
+        node: Any = doc
+        for depth, key in enumerate(path_keys):
+            where = "the root" if depth == 0 else f"records_path {path_keys[:depth]!r}"
+            if not isinstance(node, dict):
+                raise JSONReaderError(
+                    "json_records_path", f"{where} is a JSON {_json_kind(node)}, not an object"
+                )
+            if key not in node:
+                raise JSONReaderError(
+                    "json_records_path",
+                    f"{where} has no member {key!r}; members: {sorted(node)}",
+                )
+            node = node[key]
+        if not isinstance(node, list):
+            where = "the root" if not path_keys else f"records_path {path_keys!r}"
+            raise JSONReaderError(
+                "json_records_path",
+                f"{where} is a JSON {_json_kind(node)}, not an array of records",
+            )
+
+        records: list[dict[str, Any]] = []
+        objpaths: set[str] = set()
+        names: set[str] = set()
+        for i, rec in enumerate(node):
+            if not isinstance(rec, dict):
+                raise JSONReaderError(
+                    "json_record_not_object",
+                    f"record {i} is a JSON {_json_kind(rec)}, not an object",
+                )
+            flat: dict[str, Any] = {}
+            _json_flatten(rec, "", flat, objpaths, i)
+            names.update(flat)
+            records.append(flat)
+
+        if variables:
+            want = [str(v) for v in variables]
+            missing = sorted({v for v in want if v not in names})
+            if missing:
+                raise JSONReaderError(
+                    "json_variables_missing",
+                    f"requested variables not in the JSON records: {missing}; "
+                    f"present fields: {sorted(names)}",
+                )
+            decode = sorted(set(want))
+        else:
+            decode = sorted(names)
+
+        out_vars: dict[str, NativeField] = {}
+        for name in decode:
+            if name in objpaths:
+                raise JSONReaderError(
+                    "json_field_conflict",
+                    f"field {name!r} is a value in one record and an object in another",
+                )
+            vals = [r.get(name) for r in records]
+            out_vars[name] = NativeField(_json_column(name, vals, name in numset), ("index",), {})
+        return NativeDataset(out_vars, {})
+
+
+def _json_str_list(option: str, value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or not all(isinstance(x, str) for x in value):
+        raise JSONReaderError(
+            "json_option", f"reader option {option!r} must be an array of strings"
+        )
+    return list(value)
+
+
+def _json_flatten(
+    obj: dict[str, Any], prefix: str, flat: dict[str, Any], objpaths: set[str], row: int
+) -> None:
+    for k, v in obj.items():
+        name = f"{prefix}{k}"
+        if isinstance(v, dict):
+            objpaths.add(name)
+            _json_flatten(v, name + ".", flat, objpaths, row)
+            continue
+        if name in flat:
+            raise JSONReaderError(
+                "json_field_conflict", f"record {row}: field {name!r} appears twice once flattened"
+            )
+        flat[name] = v
+
+
+def _json_column(name: str, vals: list[Any], numeric: bool) -> Any:
+    kinds = {_json_kind(v) for v in vals}
+    if "array" in kinds:
+        row = next(i for i, v in enumerate(vals) if isinstance(v, list))
+        raise JSONReaderError(
+            "json_nested_array",
+            f"field {name!r} record {row} is an array; a points field is one value per "
+            "record (leave the field out of `variables`)",
+        )
+    if numeric:
+        out = []
+        for i, v in enumerate(vals):
+            k = _json_kind(v)
+            if k == "null":
+                out.append(float("nan"))
+            elif k == "number":
+                out.append(_json_to_float(v, name, i))
+            elif k == "string" and _JSON_NUMERIC_TEXT.fullmatch(v.strip(_ASCII_WS)):
+                out.append(_json_to_float(float(v.strip(_ASCII_WS)), name, i))
+            else:
+                raise JSONReaderError(
+                    "json_numeric_text",
+                    f"field {name!r} record {i}: cannot read {v!r} as a number",
+                )
+        return np.array(out, dtype="float64")
+    present = kinds - {"null"}
+    if len(present) > 1:
+        raise JSONReaderError(
+            "json_mixed_types", f"field {name!r} mixes JSON kinds {sorted(present)}"
+        )
+    kind = next(iter(present)) if present else "null"
+    if kind in ("number", "null"):
+        return np.array(
+            [float("nan") if v is None else _json_to_float(v, name, i) for i, v in enumerate(vals)],
+            dtype="float64",
+        )
+    if kind == "string":
+        return ["" if v is None else v for v in vals]
+    # bool
+    if "null" in kinds:
+        row = next(i for i, v in enumerate(vals) if v is None)
+        raise JSONReaderError(
+            "json_null_bool",
+            f"field {name!r} record {row} is null in a boolean field, which has no missing value",
+        )
+    return np.array(vals, dtype=bool)
 
 
 # --------------------------------------------------------------------------- #
@@ -2013,6 +2341,15 @@ def register_format_readers(registry: Registry | None = None) -> None:
         status="active",
         extensions=list(CSVReader.EXTENSIONS),
         notes="Delimited text; numeric_columns->float64, other columns->string.",
+    )
+    reg.register(
+        JSONReader.NAME,
+        JSONReader,
+        keys=list(JSONReader.FORMATS),
+        status="active",
+        extensions=list(JSONReader.EXTENSIONS),
+        notes="JSON array of records; nested objects flattened with '.'; numbers->float64, "
+        "strings->string, booleans->bool, all on `index`.",
     )
     reg.register(
         GeoTIFFReader.NAME,

@@ -6,6 +6,23 @@ package version is independent of the `.esm` format version.
 
 ## Unreleased
 
+### All tracks
+
+- **feat:** a `json` reader (Python and Julia `JSONReader`, Rust `JsonReader`),
+  registered under `json`, which `spec/registries.md` already listed as active
+  for points sources. A JSON array of records, found at `records_path`, becomes
+  a points table: nested objects are flattened into dotted field names, numbers
+  are float64, strings are strings, booleans are bool, all on `index`, and
+  `numeric_columns` reads a field holding numbers as text. `variables` is a
+  projection, so a field that holds arrays can be left undecoded. Errors carry
+  `json_*` codes shared by the three tracks. A number outside the float64
+  range, a lone UTF-16 surrogate escape, or nesting deeper than 127 levels is
+  a parse error anywhere in the document, decoded or not, and a zero is always
+  +0.0. The shared fixture
+  `conformance/corpus/scenarios/json-reader.json` (52 cases) runs in every
+  test suite, and the cross-language corpus case `openaq-stations-json` has
+  three-way equality. `spec/registries.json` lists the reader's options.
+
 ### Rust
 
 - **feat:** a `csv` reader (`CsvReader`), registered under `csv`, which

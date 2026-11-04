@@ -178,6 +178,14 @@ fn decodes_every_corpus_case_to_match_expected() {
                     Some(configured) => configured,
                     None => reader,
                 }
+            } else if format == "json" {
+                // The json case pins the path to its records and the field read
+                // through numeric_columns; its `variables` is the projection.
+                let options = declared_options(&case, &["records_path", "numeric_columns"]);
+                match reader.configured(&options).expect("configured json reader") {
+                    Some(configured) => configured,
+                    None => reader,
+                }
             } else if format == "parquet" {
                 // The parquet case pins `float_columns` (a decimal-TEXT rate and
                 // an integer measurement) and the two null gates, the same way.

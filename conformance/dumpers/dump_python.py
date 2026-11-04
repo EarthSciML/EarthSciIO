@@ -203,6 +203,15 @@ def dump_case(case: dict[str, Any]) -> dict[str, Any]:
             reader_kwargs["member"] = str(dec["member"])
         if dec.get("numeric_columns"):
             reader_kwargs["numeric_columns"] = list(dec["numeric_columns"])
+    elif fmt == "json":
+        # JSON points: the case pins the path to the records and the field read
+        # through numeric_columns; `variables` is the projection, pushed into the
+        # decode so a field left out (an array of sensors) is never typed.
+        dec = case["decode"]
+        variables = list(case.get("variables") or [])
+        reader_kwargs["records_path"] = list(dec["records_path"])
+        if dec.get("numeric_columns") is not None:
+            reader_kwargs["numeric_columns"] = list(dec["numeric_columns"])
     elif fmt == "parquet":
         # Columnar table. `variables` is the loader's PROJECTION and is pushed
         # into the reader (only those column chunks come off disk); the case's

@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 1075,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "59c50330a26420ec8e8c52d7629cb46c2b108df37ff77f8283a88aef6b19f06c",
+  "source_loader": "openaq",
+  "url": "https://api.openaq.org/v3/locations?bbox=-106.8,34.9,-106.4,35.3"
+}

@@ -29,6 +29,7 @@ import itertools
 import json
 import math
 import pathlib
+import re
 import sys
 
 import numpy as np
@@ -147,6 +148,60 @@ def read_csv(path, expected):
             out[name] = vals
         else:
             out[name] = np.array([float(v) for v in vals], dtype="f8")
+    return out, {}
+
+
+def read_json(path, expected, decode=None):
+    """Oracle for the ``json`` points reader, independent of ``JSONReader``: walk
+    ``records_path``, look each expected (flattened) field up by its dotted path,
+    and build the column the expected dtype names (null/absent -> NaN or "")."""
+    decode = decode or {}
+    with open(path, encoding="utf-8") as fh:
+        node = json.load(fh)
+    for key in decode.get("records_path") or []:
+        node = node[key]
+
+    def leaf(rec, dotted):
+        for part in dotted.split("."):
+            if not isinstance(rec, dict) or part not in rec:
+                return None
+            rec = rec[part]
+        return rec
+
+    numeric = set(decode.get("numeric_columns") or [])
+    # The decimal text a numeric_columns string cell may hold (registries.json
+    # "json"), written out again here rather than imported from the reader.
+    decimal = re.compile(r"[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?")
+
+    def refuse(name, i, v, want):
+        raise ValueError(f"json oracle: field {name!r} record {i}: {v!r} is not {want}")
+
+    def as_float(name, i, v):
+        if v is None:
+            return math.nan
+        if isinstance(v, bool):
+            refuse(name, i, v, "a number")
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str) and name in numeric and decimal.fullmatch(v.strip(" \t\n\r")):
+            return float(v.strip(" \t\n\r"))
+        refuse(name, i, v, "a number")
+
+    out = {}
+    for name, spec in expected["variables"].items():
+        vals = [leaf(r, name) for r in node]
+        if spec["dtype"] == "string":
+            for i, v in enumerate(vals):
+                if v is not None and not isinstance(v, str):
+                    refuse(name, i, v, "a string")
+            out[name] = ["" if v is None else v for v in vals]
+        elif spec["dtype"] == "bool":
+            for i, v in enumerate(vals):
+                if not isinstance(v, bool):
+                    refuse(name, i, v, "a boolean (a bool field has no missing value)")
+            out[name] = np.array(vals, dtype=bool)
+        else:
+            out[name] = np.array([as_float(name, i, v) for i, v in enumerate(vals)], dtype="f8")
     return out, {}
 
 
@@ -669,6 +724,7 @@ def read_geotiff(path, expected):
 READERS = {
     "netcdf": read_netcdf,
     "csv": read_csv,
+    "json": read_json,
     "ff10": read_ff10,
     "zarr": read_zarr,
     "shapefile": read_shapefile,
@@ -755,6 +811,9 @@ def verify_case(case_path: pathlib.Path) -> list:
         # parquet needs the case's decode block (float_columns + the two null
         # gates); the projection is the expected variable set.
         got, coords = read_parquet(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
+    elif case["format"] == "json":
+        # json needs the case's decode block (records_path).
+        got, coords = read_json(CORPUS / case["blob_path"], case["expected"], case.get("decode"))
     elif case["format"] == "netcdf":
         # netcdf takes the case's orthogonal `select` (the decode-time window);
         # a case without one reads the blob whole, as before.

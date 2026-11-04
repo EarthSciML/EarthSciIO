@@ -58,9 +58,9 @@ fn rust_offers(reader: &Arc<dyn Reader>, name: &str) -> bool {
         // Decode options a reader takes through `Reader::configured`: real when
         // the reader accepts the option with a well-formed value (a reader that
         // takes none refuses every non-empty option set).
-        "numeric_columns" | "delimiter" | "header_row" => {
+        "numeric_columns" | "delimiter" | "header_row" | "records_path" => {
             let value = match name {
-                "numeric_columns" => serde_json::json!(["a"]),
+                "numeric_columns" | "records_path" => serde_json::json!(["a"]),
                 "delimiter" => serde_json::json!(";"),
                 _ => serde_json::json!(0),
             };

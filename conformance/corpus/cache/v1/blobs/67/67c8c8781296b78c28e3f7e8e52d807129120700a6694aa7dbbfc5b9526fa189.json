@@ -1,0 +1,60 @@
+{
+  "meta": {
+    "name": "openaq-api",
+    "page": 1,
+    "limit": 100,
+    "found": 3
+  },
+  "results": [
+    {
+      "id": 2178,
+      "name": "Del Norte",
+      "locality": "Albuquerque",
+      "isMobile": false,
+      "coordinates": {
+        "latitude": 35.1353,
+        "longitude": -106.584702
+      },
+      "elevation": "1527.5",
+      "sensors": [
+        {
+          "id": 3917,
+          "parameter": {
+            "name": "pm25",
+            "units": "µg/m³"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2179,
+      "name": "South Valley",
+      "locality": null,
+      "isMobile": false,
+      "coordinates": {
+        "latitude": 35.0167,
+        "longitude": -106.6575
+      },
+      "elevation": 1490,
+      "sensors": []
+    },
+    {
+      "id": 8118,
+      "name": "Mobile unit \"7\"",
+      "isMobile": true,
+      "coordinates": {
+        "latitude": 35.0844,
+        "longitude": -106.6504
+      },
+      "elevation": null,
+      "sensors": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2
+        }
+      ]
+    }
+  ]
+}

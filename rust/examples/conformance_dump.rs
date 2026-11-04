@@ -237,6 +237,20 @@ fn dump_case(corpus: &Path, case: &Value, base_formats: &FormatRegistry) -> Valu
             &["numeric_columns", "delimiter", "header_row"],
         ));
     }
+    // json: the case's decode block pins the path to the records and the field
+    // read through numeric_columns; `variables` is the projection, so a field
+    // left out (an array of sensors) is never typed.
+    if fmt == "json" {
+        if let Some(vars) = case.get("variables").and_then(Value::as_array) {
+            loader = loader.variables(
+                vars.iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        loader =
+            loader.reader_options(declared_options(case, &["records_path", "numeric_columns"]));
+    }
     // The shapefile case pins its zip member + the code column the model wants
     // numeric. Both reach the reader the way a DOCUMENT delivers them — the
     // loader's `reader_options`, resolved by `Reader::configured`.

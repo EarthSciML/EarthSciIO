@@ -194,6 +194,20 @@ function dump_case(corpus, case)
         nc = get(dec, "numeric_columns", nothing)
         nc === nothing || (kw[:numeric_columns] = String.(nc))
         const_provider(cache, url; format = fmt, reader_kwargs = (; kw...))
+    elseif fmt == "json"
+        # JSON points: the case pins the path to the records and the field read
+        # through numeric_columns; `variables` is the projection, pushed into
+        # the decode so a field left out (an array of sensors) is never typed.
+        dec = case["decode"]
+        kw = Dict{Symbol, Any}(:records_path => String.(dec["records_path"]))
+        nc = get(dec, "numeric_columns", nothing)
+        nc === nothing || (kw[:numeric_columns] = String.(nc))
+        vars = get(case, "variables", nothing)
+        const_provider(
+            cache, url; format = fmt,
+            variables = vars === nothing ? nothing : String.(vars),
+            reader_kwargs = (; kw...)
+        )
     elseif fmt == "parquet"
         # Columnar table. `variables` is the loader's PROJECTION and is pushed
         # into the reader (only those column chunks come off disk); the case's
