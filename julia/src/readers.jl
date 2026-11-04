@@ -183,9 +183,9 @@ closure. A blob with no `dim` at all does not call the resolver and makes no
 selection, which is what a caller that had probed would have found.
 
 A two-argument callable `(len, axis) -> indices` is also handed `dim`'s own
-coordinate, read raw with its `units`, `calendar`, `_FillValue` and
-`missing_value` (a `NativeField`, or `nothing` when the blob has no such
-variable), so the [`Provider`] can find its record by the file's own time axis
+coordinate, read raw with its `units`, `calendar`, `_FillValue`,
+`missing_value`, `scale_factor` and `add_offset` (a `NativeField`, or `nothing`
+when the blob has no such variable), so the [`Provider`] can find its record by the file's own time axis
 (spec/esm-sources.md §2.5) in the same open."""
 struct NetCDFReader <: Reader end
 
@@ -536,7 +536,8 @@ end
 _records_resolver(x) = applicable(x, 1) || applicable(x, 1, nothing)
 
 # The `records` dimension's own coordinate, read raw with its CF attributes
-# (and `_FillValue`/`missing_value`), for a two-argument resolver
+# (and `_FillValue`/`missing_value`/`scale_factor`/`add_offset`, which
+# `decode_time_axis` applies as the Python reader does), for a two-argument resolver
 # `(len, axis) -> indices`; `nothing` when the blob has no such variable. This is
 # what lets a cadence owner find its record by the file's own time axis
 # (spec/esm-sources.md §2.5) within the one open.
@@ -545,7 +546,7 @@ function _netcdf_axis_field(ds, d::String)
     v = ds[d]
     _netcdf_is_text(v) && return nothing
     attrs = _carry_attrs(v.attrib)
-    for k in ("_FillValue", "missing_value")
+    for k in ("_FillValue", "missing_value", "scale_factor", "add_offset")
         haskey(v.attrib, k) && (attrs[k] = v.attrib[k])
     end
     return NativeField(_to_file_order(Array(v.var)), _netcdf_file_dims(v), attrs)

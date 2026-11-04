@@ -52,6 +52,20 @@ package version is independent of the `.esm` format version.
   and noleap files in the corpus. Python's decode no longer fails on an axis
   with a missing entry; it falls back to the cadence offset.
 
+- **fix:** a two-record sample's successor is the record of the next anchor,
+  found the same way as the first record, in every track. It was the next
+  record in file order, so in a file with a gap (or an unsorted axis) the
+  sample paired a record with a later one and labelled it with the next
+  anchor's time. Julia and Rust now also decode a time axis whose reference
+  date precedes 1582-10-15 or has a short year (`hours since 1-1-1`), reading
+  it as Python's cftime fallback does (a Julian date on the `standard`
+  calendar); Julia unpacks a `scale_factor`/`add_offset` time axis before
+  decoding it; and the Rust netcdf reader masks an integer variable with two
+  different sentinels (`_FillValue` and `missing_value`) to NaN in float64 as
+  the other tracks do, instead of keeping only the first. New cases in the
+  `decoded-time-axis` scenario: a file with a gap, a packed axis, an axis with
+  two fill values, and the cftime reference forms.
+
 ### Rust
 
 - **breaking:** `SourceTemporal.frequency` and `.file_period` are

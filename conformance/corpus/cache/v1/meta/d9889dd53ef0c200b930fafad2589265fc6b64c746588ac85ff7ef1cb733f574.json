@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 780,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "690ad25c027f95dc71639205bb16ec0e5d2c894ebde9829b12af6929e18f0a4a",
+  "source_loader": "timeaxis",
+  "url": "https://data.earthsci.dev/timeaxis/two-fills.20240301.nc"
+}

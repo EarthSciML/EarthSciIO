@@ -170,12 +170,13 @@ it this way (Python `provider._record_index`, Julia `_axis_record`, Rust
 3. Otherwise use the cadence offset. A cadence offset outside the file is an
    error; one inside it is read, even before a trimmed file's first record.
 
-The two-record bracket's successor is the next record of the same file when
-the floor record is not the file's last, and otherwise the record of the next
-anchor in the file covering it, found as above; when that file cannot be read
-or that record is outside it, the floor record is held (`[r, r]`, equal
-times). The bracket's time coordinate is always the two anchors, never the
-file's own times.
+The two-record bracket's successor is the record of the next anchor in the
+file covering it (the same file or the next one), found as above, so a record
+and its time agree: in a file with a gap the successor of the last record
+before the gap is that record again, never the one after the gap. When the
+successor's file cannot be read or its record is outside that file, the floor
+record is held (`[r, r]`, equal times). The bracket's time coordinate is
+always the two anchors, never the file's own times.
 
 **Decoding.** `decode_time_axis(values, units, calendar)` (Python and Julia;
 Rust `decode_time_axis(&values, units, calendar, fill)`) gives the axis as
@@ -187,16 +188,19 @@ Unix seconds, floored, or nothing. It is the Python track's decode (xarray's
 | `units` | `<unit> since <reference>`, split at the last ` since ` with text on both sides; each part trimmed. No `units`, or no such split: not decoded |
 | `calendar` | absent is `standard`. `standard`, `gregorian` and `proleptic_gregorian`, in any case, decode; any other calendar does not |
 | unit, first reading | lower-cased, with an `s` added when it does not end in one: `nanoseconds`, `microseconds`, `milliseconds`, `seconds`, `minutes`, `hours`, `days`. An integer is multiplied exactly; a float is multiplied in double precision and truncated to the nanosecond. Used when the reference and every time fit in signed 64-bit nanoseconds |
-| unit, second reading | otherwise, the lower-cased unit is one of `microsecond(s)`, `millisecond(s)`, `msec(s)`, `ms`, `second(s)`, `sec(s)`, `s`, `minute(s)`, `min(s)`, `hour(s)`, `hr(s)`, `h`, `day(s)`, `d`, and the value is rounded to the nearest microsecond. Every date must fall in the years 1678 to 2261, and a `standard` or `gregorian` reference must not precede 1582-10-15. Any other unit (`weeks`, `months`, `years`, …): not decoded |
-| reference | `YYYY-M-D`, then optionally `T` or spaces and a time `HH`, `H:M`, `H:M:S` or `H:M:S.f…`, then optionally spaces and `Z`, `UTC`, `GMT` or an offset `±HH`, `±HHMM`, `±HH:MM`, which is subtracted. An impossible date or time: not decoded |
-| values | a NaN, or a value equal to the axis's fill value (Julia and Rust; Python's reader has already masked it to NaN): not decoded |
+| unit, second reading | otherwise, the lower-cased unit is one of `microsecond(s)`, `millisecond(s)`, `msec(s)`, `ms`, `second(s)`, `sec(s)`, `s`, `minute(s)`, `min(s)`, `hour(s)`, `hr(s)`, `h`, `day(s)`, `d`, and the value is rounded to the nearest microsecond and added to the reference as cftime reads it (below). Every date must fall in the years 1678 to 2261. Any other unit (`weeks`, `months`, `years`, …): not decoded |
+| reference | `Y-M-D` with a year of one to four digits (a shorter year only when no other run of four digits follows), then optionally `T` or spaces and a time `HH`, `H:M`, `H:M:S` or `H:M:S.f…`, then optionally spaces and `Z`, `UTC`, `GMT` or an offset `±HH`, `±HHMM`, `±HH:MM`, which is subtracted. The first reading (pandas) needs a four-digit year, reads the date on the proleptic Gregorian calendar and applies every part. The second (cftime) reads the date on the calendar: on `standard` and `gregorian` a date before 1582-10-15 is a Julian date (there is no year 0, and 1582-10-05 to 10-14 do not exist), on `proleptic_gregorian` it is Gregorian (year 0 exists); it reads a time only when it has minutes and is one character (`T` or a space) after the date, and a `Z` or `±` zone only when it is at most one space after that, so otherwise the rest counts as midnight UTC; it cuts a fraction to the microsecond. An impossible date or time: not decoded |
+| values | a NaN, or a value equal to the axis's `_FillValue` or `missing_value` (Julia and Rust; Python's reader has already masked it to NaN): not decoded. A `scale_factor`/`add_offset` is applied to the stored values after that check (Julia; the Python and Rust readers have already unpacked the axis) |
 | result | the reference plus each value, floored to whole seconds |
 
 Python accepts more reference spellings than the table lists, through pandas
 (`2016/01/01`, `20160101`, a month name, …); Julia and Rust do not decode those,
 so on such a file they fall back to the cadence offset where Python does not.
 Python also reads a bare one-digit hour (`2016-05-01 6`) as midnight; Julia and
-Rust refuse it. Neither difference is in the fixture.
+Rust refuse it. A short year followed by another run of four digits
+(`1-1-1 00:00:00.0000`, `1-1-1 06:30 -0130`) is not padded by xarray, so pandas
+reads it its own way (as 2001, when the values fit); Julia and Rust do not
+decode it. None of these differences is in the fixture.
 
 In Julia the record is chosen inside the `netcdf` reader's one open: the
 `records` option takes a two-argument resolver `(len, axis) -> indices`, which

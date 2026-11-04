@@ -33,31 +33,27 @@ const _TA_CFTIME_UNITS = Dict{String, Int64}(
 const _TA_STANDARD_CALENDARS = ("standard", "gregorian", "proleptic_gregorian")
 const _TA_NS = Int128(1_000_000_000)
 
-# Days from 1970-01-01 to the proleptic Gregorian date y-m-d.
-function _ta_days_from_civil(y::Integer, m::Integer, d::Integer)
-    y = Int64(y) - (m <= 2)
-    era = fld(y, 400)
-    yoe = y - era * 400
-    mp = (m + 9) % 12
-    doy = div(153 * mp + 2, 5) + d - 1
-    doe = yoe * 365 + div(yoe, 4) - div(yoe, 100) + doy
-    return era * 146097 + doe - 719468
+# Days from 1970-01-01 to the proleptic Gregorian date y-m-d, or `nothing`.
+function _ta_gregorian_days(y::Integer, m::Integer, d::Integer)
+    (1 <= m <= 12 && 1 <= d <= Dates.daysinmonth(y, m)) || return nothing
+    return Dates.value(Date(y, m, d)) - _TA_UNIX_DAY
 end
 
-# The proleptic Gregorian year of a day count from 1970-01-01.
-function _ta_year_of_days(z::Integer)
-    z = Int64(z) + 719468
-    era = fld(z, 146097)
-    doe = z - era * 146097
-    yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
-    doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
-    mp = div(5 * doy + 2, 153)
-    m = mp < 10 ? mp + 3 : mp - 9
-    return yoe + era * 400 + (m <= 2)
+# Days from 1970-01-01 to the date y-m-d of the Julian calendar (year 1 or
+# later), or `nothing`. Dates has no Julian calendar, so this is the usual
+# Julian Day Number arithmetic.
+function _ta_julian_days(y::Integer, m::Integer, d::Integer)
+    1 <= m <= 12 || return nothing
+    len = m == 2 ? (y % 4 == 0 ? 29 : 28) : (m in (4, 6, 9, 11) ? 30 : 31)
+    (y >= 1 && 1 <= d <= len) || return nothing
+    a = div(14 - m, 12)
+    yy = Int64(y) + 4800 - a
+    mm = m + 12a - 3
+    return d + div(153mm + 2, 5) + 365yy + div(yy, 4) - 32083 - _TA_UNIX_JD
 end
 
-_ta_leap(y) = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-_ta_month_days(y, m) = m == 2 ? (_ta_leap(y) ? 29 : 28) : (m in (4, 6, 9, 11) ? 30 : 31)
+const _TA_UNIX_DAY = Dates.value(Date(1970))   # Rata Die of 1970-01-01
+const _TA_UNIX_JD = 2_440_588                  # its Julian Day Number
 
 # Read 1 to `maxn` ASCII digits of `s` from byte `i`; (value, ndigits, next i).
 function _ta_digits(s::String, i::Int, maxn::Int)
@@ -74,21 +70,43 @@ end
 _ta_at(s::String, i::Int, c::Char) = i <= ncodeunits(s) && Char(codeunit(s, i)) == c
 _ta_space(s::String, i::Int) = i <= ncodeunits(s) && codeunit(s, i) in (UInt8(' '), UInt8('\t'))
 
-# A CF reference date → (epoch nanoseconds, UTC) or `nothing`. The forms read
-# are spec/esm-sources.md §2.5's: `YYYY-M-D`, then optionally (`T` or spaces)
-# a time `HH`, `H:M`, `H:M:S` or `H:M:S.fff…`, then optionally (after spaces)
-# `Z`, `UTC`, `GMT` or an offset `±HH`, `±HHMM`, `±HH:MM`.
+# A CF reference date in the forms spec/esm-sources.md §2.5 lists: `Y-M-D` (a
+# year of one to four digits), then optionally (`T` or spaces) a time `HH`,
+# `H:M`, `H:M:S` or `H:M:S.fff…`, then optionally (after spaces) `Z`, `UTC`,
+# `GMT` or an offset `±HH`, `±HHMM`, `±HH:MM`. The date itself is checked by
+# whichever reading uses it (`_ta_pandas_ns`, `_ta_cftime_ns`), since the two
+# read it on different calendars.
+struct _TARef
+    y::Int
+    ydigits::Int
+    mo::Int
+    d::Int
+    hh::Int
+    mi::Int
+    ss::Int
+    frac::Int128        # nanoseconds
+    clock::Symbol       # :none, :hour (a bare `HH`), or :minutes
+    clock_gap::Int      # characters between the date and the time (`T` is one)
+    off::Int            # seconds east of UTC
+    zone::Bool          # spelled `Z` or `±…` (not `UTC`/`GMT`, not absent)
+    zone_gap::Int       # spaces before the zone
+end
+
 function _ta_reference(s::AbstractString)
     s = String(s)
     all(isascii, s) || return nothing
-    y, n, i = _ta_digits(s, 1, 4)
-    n == 4 && _ta_at(s, i, '-') || return nothing
+    y, ydigits, i = _ta_digits(s, 1, 4)
+    ydigits >= 1 && _ta_at(s, i, '-') || return nothing
+    # xarray pads a short year to four digits only when the reference has no
+    # four-digit run elsewhere; otherwise pandas reads it its own way.
+    ydigits < 4 && occursin(r"\d{4}", s) && return nothing
     mo, n, i = _ta_digits(s, i + 1, 2)
     n >= 1 && _ta_at(s, i, '-') || return nothing
     d, n, i = _ta_digits(s, i + 1, 2)
     n >= 1 || return nothing
     hh = mi = ss = 0
     frac = Int128(0)
+    clock = :none
     j = i
     if _ta_at(s, j, 'T')
         j += 1
@@ -97,9 +115,11 @@ function _ta_reference(s::AbstractString)
             j += 1
         end
     end
+    clock_gap = j - i
     if j <= ncodeunits(s) && isdigit(Char(codeunit(s, j)))
         hh, n, j = _ta_digits(s, j, 2)
         if _ta_at(s, j, ':')
+            clock = :minutes
             mi, n, j = _ta_digits(s, j + 1, 2)
             n >= 1 || return nothing
             if _ta_at(s, j, ':')
@@ -120,16 +140,25 @@ function _ta_reference(s::AbstractString)
             end
         elseif n != 2
             return nothing   # a bare hour must have two digits
+        else
+            clock = :hour
         end
         i = j
+    else
+        clock_gap = 0
     end
+    zone_gap = 0
     while _ta_space(s, i)
         i += 1
+        zone_gap += 1
     end
     off = 0
+    zone = false
     rest = s[i:end]
-    if isempty(rest) || lowercase(rest) in ("z", "utc", "gmt")
+    if isempty(rest) || lowercase(rest) in ("utc", "gmt")
         off = 0
+    elseif lowercase(rest) == "z"
+        zone = true
     elseif rest[1] in ('+', '-')
         sign = rest[1] == '+' ? 1 : -1
         oh, n, k = _ta_digits(rest, 2, 2)
@@ -142,13 +171,46 @@ function _ta_reference(s::AbstractString)
         end
         (oh <= 23 && om <= 59) || return nothing
         off = sign * (oh * 3600 + om * 60)
+        zone = true
     else
         return nothing
     end
-    (1 <= mo <= 12 && 1 <= d <= _ta_month_days(y, mo)) || return nothing
     (hh <= 23 && mi <= 59 && ss <= 59) || return nothing
-    secs = Int128(_ta_days_from_civil(y, mo, d)) * 86400 + hh * 3600 + mi * 60 + ss - off
-    return secs * _TA_NS + frac
+    return _TARef(y, ydigits, mo, d, hh, mi, ss, frac, clock, clock_gap, off, zone, zone_gap)
+end
+
+# The reference as pandas reads it, in epoch nanoseconds, or `nothing`: a
+# four-digit year on the proleptic Gregorian calendar, every part of the time
+# and zone applied.
+function _ta_pandas_ns(r::_TARef)
+    r.ydigits == 4 || return nothing
+    days = _ta_gregorian_days(r.y, r.mo, r.d)
+    days === nothing && return nothing
+    return (Int128(days) * 86400 + r.hh * 3600 + r.mi * 60 + r.ss - r.off) * _TA_NS + r.frac
+end
+
+# The reference as cftime reads it, in epoch nanoseconds, or `nothing`. On the
+# `standard`/`gregorian` calendar a date before 1582-10-15 is a Julian date (and
+# 1582-10-05 to 10-14 do not exist); `proleptic_gregorian` is Gregorian
+# throughout. cftime reads a time only with minutes and right after the date (one
+# separator), and a `Z`/`±` zone only right after that (at most one space);
+# otherwise it stops reading, so the rest counts as midnight UTC. Fractions are
+# cut to the microsecond.
+function _ta_cftime_ns(r::_TARef, proleptic::Bool)
+    ymd = (r.y, r.mo, r.d)
+    days = if proleptic || ymd >= (1582, 10, 15)
+        _ta_gregorian_days(r.y, r.mo, r.d)
+    elseif ymd > (1582, 10, 4)
+        nothing   # the days the reform skipped
+    else
+        _ta_julian_days(r.y, r.mo, r.d)
+    end
+    days === nothing && return nothing
+    clock = r.clock === :minutes && r.clock_gap == 1
+    zone = r.zone && r.zone_gap <= 1 && (clock || r.clock === :none)
+    hh, mi, ss, frac = clock ? (r.hh, r.mi, r.ss, fld(r.frac, 1000) * 1000) : (0, 0, 0, Int128(0))
+    off = zone ? r.off : 0
+    return (Int128(days) * 86400 + hh * 3600 + mi * 60 + ss - off) * _TA_NS + frac
 end
 
 # Split "<unit> since <reference>" as Python's `re.match(r"(.+) since (.+)")`
@@ -166,7 +228,11 @@ function _ta_split_units(units::String)
 end
 
 _ta_floor_s(ns::Int128) = Int64(fld(ns, _TA_NS))
-_ta_year_ok(ns::Int128) = 1678 <= _ta_year_of_days(fld(_ta_floor_s(ns), 86400)) <= 2261
+function _ta_year_ok(ns::Int128)
+    days = fld(ns, 86400 * _TA_NS)
+    abs(days) < 10_000_000 || return false
+    return 1678 <= Dates.year(Date(Dates.UTD(Int64(days) + _TA_UNIX_DAY))) <= 2261
+end
 const _TA_I64 = (Int128(typemin(Int64)) + 1, Int128(typemax(Int64)))
 _ta_in_i64(x::Int128) = _TA_I64[1] <= x <= _TA_I64[2]
 
@@ -180,10 +246,12 @@ The Unix seconds (UTC, floored to the second) of a raw CF time axis, or
 [`Provider`] uses this to find a record in a file by the file's own time axis,
 and falls back to the cadence offset when it gets `nothing`: no `units`, units
 without `since`, a calendar other than `standard`, `gregorian` or
-`proleptic_gregorian`, a NaN or `fill` value, or a date outside the years 1678 to
-2261. The decode is the Python track's (xarray's), rule by rule. The
-`NativeField` form reads `units`, `calendar`, `_FillValue` and `missing_value`
-from the field's attributes."""
+`proleptic_gregorian`, a NaN or `fill` value, or a date that is not
+representable (outside 1677-09-21 to 2262-04-11 on the first reading, outside
+the years 1678 to 2261 on the second). The decode is the Python track's
+(xarray's), rule by rule. The `NativeField` form reads `units`, `calendar`,
+`_FillValue` and `missing_value` from the field's attributes, and applies a
+`scale_factor`/`add_offset` after the fill check, as the Python reader does."""
 function decode_time_axis(values, units, calendar = nothing; fill = nothing)
     units === nothing && return nothing
     split = _ta_split_units(String(units))
@@ -204,7 +272,8 @@ function decode_time_axis(values, units, calendar = nothing; fill = nothing)
     # in int64 nanoseconds
     punit = endswith(unit, "s") ? unit : unit * "s"
     pf = get(_TA_PANDAS_UNITS, punit, nothing)
-    if pf !== nothing && _ta_in_i64(ref)
+    pref = _ta_pandas_ns(ref)
+    if pf !== nothing && pref !== nothing && _ta_in_i64(pref)
         out = Int64[]
         ok = true
         for v in vals
@@ -215,57 +284,70 @@ function decode_time_axis(values, units, calendar = nothing; fill = nothing)
                 abs(p) < 9.2e18 || (ok = false; break)
                 ns = Int128(trunc(p))
             end
-            t = ref + ns
+            t = pref + ns
             (_ta_in_i64(ns) && _ta_in_i64(t)) || (ok = false; break)
             push!(out, _ta_floor_s(t))
         end
         ok && return out
     end
-    # cftime: round to the microsecond; a "standard" reference before the
-    # Gregorian reform is on the Julian calendar there, which is not decoded
+    # cftime: its own reading of the reference, each value rounded to the
+    # microsecond
     cf = get(_TA_CFTIME_UNITS, unit, nothing)
     cf === nothing && return nothing
-    cal != "proleptic_gregorian" && ref < Int128(_ta_days_from_civil(1582, 10, 15)) * 86400 * _TA_NS &&
-        return nothing
+    cref = _ta_cftime_ns(ref, cal == "proleptic_gregorian")
+    cref === nothing && return nothing
     out = Int64[]
     for v in vals
         us = Float64(v) * (Float64(cf) / 1000)
         abs(us) < 1.0e30 || return nothing
-        t = ref + Int128(round(us, RoundNearestTiesAway)) * 1000
+        t = cref + Int128(round(us, RoundNearestTiesAway)) * 1000
         _ta_year_ok(t) || return nothing
         push!(out, _ta_floor_s(t))
     end
     return out
 end
 
+_ta_attr(x::AbstractArray) = Float64(first(x))
+_ta_attr(x) = Float64(x)
+
 function decode_time_axis(coord::NativeField)
     a = coord.attrs
     fill = Any[a[k] for k in ("_FillValue", "missing_value") if haskey(a, k)]
+    fill = isempty(fill) ? nothing : reduce(vcat, fill)
+    data = coord.data
+    if haskey(a, "scale_factor") || haskey(a, "add_offset")
+        # CF unpacking, after the fill check on the stored values
+        # (spec/conformance.md §3): the axis the Python reader hands its decode
+        if fill !== nothing && any(v -> any(==(v), fill), data)
+            return nothing
+        end
+        sf = haskey(a, "scale_factor") ? _ta_attr(a["scale_factor"]) : 1.0
+        ao = haskey(a, "add_offset") ? _ta_attr(a["add_offset"]) : 0.0
+        data = Float64.(data) .* sf .+ ao
+        fill = nothing
+    end
     return decode_time_axis(
-        coord.data, get(a, "units", nothing), get(a, "calendar", nothing);
-        fill = isempty(fill) ? nothing : reduce(vcat, fill)
+        data, get(a, "units", nothing), get(a, "calendar", nothing); fill = fill
     )
 end
 
 # The 0-based record of `anchor` in the file covering it (file anchor `fa`),
-# given that file's `time_dim` coordinate (`nothing` when it has none). By the
-# decoded axis when the anchor lies within its span — the latest record at or
-# before the anchor, the first such in file order on a tie — else the cadence
-# offset (spec/esm-sources.md §2.5; Python `provider._record_index`).
-function _axis_record(temporal::SourceTemporal, coord, anchor::DateTime, fa::DateTime)
-    if coord !== nothing
-        times = decode_time_axis(coord)
-        if times !== nothing && !isempty(times)
-            a = Int64(fld(Dates.value(anchor - DateTime(1970)), 1000))
-            if minimum(times) <= a <= maximum(times)
-                best = 0
-                for (i, ti) in enumerate(times)
-                    if ti <= a && (best == 0 || ti > times[best])
-                        best = i
-                    end
+# given that file's decoded time axis (`decode_time_axis`; `nothing` when it has
+# none or it does not decode). By the axis when the anchor lies within its span —
+# the latest record at or before the anchor, the first such in file order on a
+# tie — else the cadence offset (spec/esm-sources.md §2.5; Python
+# `provider._record_index`).
+function _axis_record(temporal::SourceTemporal, times, anchor::DateTime, fa::DateTime)
+    if times !== nothing && !isempty(times)
+        a = Int64(fld(Dates.value(anchor - DateTime(1970)), 1000))
+        if minimum(times) <= a <= maximum(times)
+            best = 0
+            for (i, ti) in enumerate(times)
+                if ti <= a && (best == 0 || ti > times[best])
+                    best = i
                 end
-                return best - 1
             end
+            return best - 1
         end
     end
     return record_in_file(temporal, anchor, fa)

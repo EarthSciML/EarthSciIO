@@ -506,8 +506,9 @@ chunks out of the already-fetched blob. The reader therefore declares
 - **Whether a Provider USES it is a per-track performance decision**, not a
   contract term — the option behaves identically everywhere, and
   `registries.json` records the choice per track in `used_by_provider`. The Julia
-  Provider pushes down: it computes the record from the cadence and keeps no
-  decoded-file buffer, so the pushdown is a pure win. The Python and Rust
+  Provider pushes down: it keeps no decoded-file buffer and chooses its records,
+  by the file's own time axis, inside the reader's one open, so the pushdown is
+  a pure win. The Python and Rust
   Providers keep a 2-entry LRU of decoded files and amortise ONE whole-file
   decode over every tick in the file, so pushing down would replace one decode
   per FILE with one per TICK — measured 25.7x/3.0x worse per tick in Python and

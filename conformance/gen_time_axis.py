@@ -6,7 +6,9 @@ Every provider finds a record in its file by the file's own CF time axis when it
 can decode one, and by the cadence offset (section 2.3) otherwise. This writes
 small synthetic NetCDF-3 files whose axes differ from the cadence (a day file
 missing its first records, one missing its last records, one with an irregular
-and unsorted axis, one on a calendar no track decodes) into the corpus cache, and
+and unsorted axis, one with a gap, one with a packed axis, one whose axis has a
+missing entry under a second fill value, one on a calendar no track decodes)
+into the corpus cache, and
 `corpus/scenarios/decoded-time-axis.json`, which every track's test suite reads.
 
 The expected samples come from `expected_record` below, a direct statement of
@@ -47,10 +49,12 @@ def _day_url(stem, day_s):
     return f"{BASE}/{stem}.{dt.datetime.fromtimestamp(day_s, UTC):%Y%m%d}.nc"
 
 
-def build_file(hours, *, units, calendar, raw):
+def build_file(hours, *, units, calendar, raw, attrs=None):
     """A day file whose records are at `hours` (hours since T0, in file order).
     `T[time, x]` is `hour * 10 + x`, so a value names the real time it is for.
-    `raw(hour)` is the stored time value for that hour under `units`."""
+    `raw(hour)` is the stored time value for that hour under `units`, stored in
+    its own dtype (float64, int32 or int16); `attrs` are further attributes of
+    the time variable, written before its values and never applied to them."""
     from netCDF4 import Dataset
 
     tmp = CORPUS / ".tmp_timeaxis.nc"
@@ -58,10 +62,15 @@ def build_file(hours, *, units, calendar, raw):
     ds.createDimension("time", None)
     ds.createDimension("x", 2)
     vals = np.array([raw(h) for h in hours])
-    v = ds.createVariable("time", "f8" if vals.dtype.kind == "f" else "i4", ("time",))
+    attrs = dict(attrs or {})
+    kind = {"f": "f8", "i": "i2" if vals.dtype == np.int16 else "i4"}[vals.dtype.kind]
+    v = ds.createVariable("time", kind, ("time",), fill_value=attrs.pop("_FillValue", None))
+    v.set_auto_maskandscale(False)
     v.units = units
     if calendar is not None:
         v.calendar = calendar
+    for k, a in attrs.items():
+        v.setncattr(k, a)
     v[:] = vals
     v = ds.createVariable("x", "f8", ("x",))
     v[:] = np.array([0.0, 1.0])
@@ -124,6 +133,61 @@ SOURCES = {
             }
         ],
     },
+    "gap": {
+        "note": (
+            "One daily file missing its 05:00 to 07:00 records. A two-record "
+            "sample at 04:00 pairs the 04:00 record with the record of 05:00, "
+            "which is the 04:00 one again, never with the 08:00 record."
+        ),
+        "end_s": T0 + DAY,
+        "files": [
+            {
+                "day": 0,
+                "hours": [0, 1, 2, 3, 4, *range(8, 24)],
+                "units": "hours since 2024-03-01",
+                "calendar": "standard",
+                "raw": lambda h: np.int32(h),
+            }
+        ],
+    },
+    "packed": {
+        "note": (
+            "A daily file missing its first three records whose int16 time axis "
+            "is packed: scale_factor 0.5, so a stored 10 is 05:00. The axis is "
+            "unpacked before it is decoded, as the Python reader does."
+        ),
+        "end_s": T0 + DAY,
+        "files": [
+            {
+                "day": 0,
+                "hours": list(range(3, 24)),
+                "units": "hours since 2024-03-01",
+                "calendar": "standard",
+                "raw": lambda h: np.int16(2 * h),
+                "attrs": {"scale_factor": 0.5},
+            }
+        ],
+    },
+    "two-fills": {
+        "note": (
+            "A daily file missing its first two records whose int32 time axis "
+            "has both a _FillValue and a different missing_value, and whose last "
+            "entry is the missing_value: the axis has a missing entry, so the "
+            "record is the cadence offset."
+        ),
+        "end_s": T0 + DAY,
+        "files": [
+            {
+                "day": 0,
+                "hours": list(range(2, 24)),
+                "units": "hours since 2024-03-01",
+                "calendar": "standard",
+                "raw": lambda h: np.int32(-999 if h == 23 else h),
+                "attrs": {"_FillValue": np.int32(-2147483647), "missing_value": np.int32(-999)},
+                "missing": True,
+            }
+        ],
+    },
     "noleap": {
         "note": (
             "A daily file missing its first two records on the noleap calendar, "
@@ -145,7 +209,9 @@ SOURCES = {
 
 
 def _decodable(f):
-    return f["calendar"] in (None, "standard", "gregorian", "proleptic_gregorian")
+    return f["calendar"] in (None, "standard", "gregorian", "proleptic_gregorian") and not f.get(
+        "missing"
+    )
 
 
 def _file_for(src, anchor):
@@ -188,16 +254,14 @@ def sample(src, t, rps):
     f0 = _file_for(src, anchor)
     if rps == 1:
         return {"T": _row(f0, rec0)}
+    # the successor is the record of the next anchor, in the file covering it
     nxt = anchor + H
     succ = None
     if nxt < src["end_s"]:
-        if rec0 + 1 < len(f0["hours"]):
-            succ = (f0, rec0 + 1)
-        else:
-            f1 = _file_for(src, nxt)
-            r1 = expected_record(src, nxt) if f1 is not None else None
-            if r1 is not None:
-                succ = (f1, r1)
+        f1 = _file_for(src, nxt)
+        r1 = expected_record(src, nxt) if f1 is not None else None
+        if r1 is not None:
+            succ = (f1, r1)
     if succ is None:
         return {"T": [_row(f0, rec0), _row(f0, rec0)], "time_s": [anchor, anchor]}
     return {"T": [_row(f0, rec0), _row(*succ)], "time_s": [anchor, nxt]}
@@ -225,8 +289,32 @@ PROBES = {
         (T0 + 30 * 60, "00:30 snaps to the 00:00 record"),
         (T0 + 2 * H, "02:00 is between the 01:00 and 03:00 records: the 01:00 one"),
         (T0 + 7 * H, "07:00: the 06:00 record, the last in file order"),
-        (T0 + 12 * H, "the last time in the file, stored fourth"),
+        (
+            T0 + 12 * H,
+            "the last time in the file, stored fourth; its successor (13:00) is past "
+            "the axis, so a two-record sample holds it",
+        ),
         (T0 + 13 * H, "after the axis: the cadence offset (13) is past the file, an error"),
+    ],
+    "gap": [
+        (T0 + 3 * H, "03:00, before the gap: its successor is the 04:00 record"),
+        (
+            T0 + 4 * H,
+            "04:00, the last record before the gap: its successor, 05:00, is the "
+            "04:00 record again",
+        ),
+        (T0 + 6 * H, "06:00, in the gap: the 04:00 record"),
+        (T0 + 7 * H, "07:00: the 04:00 record, then the 08:00 one"),
+    ],
+    "packed": [
+        (T0 + 5 * H, "05:00 (stored 10) is the third record"),
+        (T0 + 23 * H, "the last record"),
+    ],
+    "two-fills": [
+        (
+            T0 + 5 * H,
+            "an axis with a missing entry: the cadence offset (record 5, which holds 07:00)",
+        ),
     ],
     "noleap": [
         (T0 + 5 * H, "an axis not decoded: the cadence offset (record 5, which holds 07:00)"),
@@ -274,6 +362,27 @@ DECODE = [
     ("missing-value", [0.0, float("nan")], "hours since 2016-05-01", "standard"),
     ("out-of-range", [0, 200000], "days since 1970-01-01", "standard"),
     ("empty", [], "hours since 2016-05-01", "standard"),
+    # Second reading (cftime), which a reference pandas cannot hold always takes:
+    # before 1582-10-15 a standard or gregorian date is a Julian one.
+    ("short-year", [17636616, 17636617], "hours since 1-1-1 00:00:0.0", "standard"),
+    ("short-year-proleptic", [17636616], "hours since 1-1-1", "proleptic_gregorian"),
+    ("padded-short-year", [17636616], "hours since 0001-01-01", "gregorian"),
+    ("pre-reform", [190000], "days since 1500-01-01", "standard"),
+    ("pre-reform-proleptic", [190000], "days since 1500-01-01", "proleptic_gregorian"),
+    ("julian-leap-day", [189990], "days since 1500-02-29", "standard"),
+    ("julian-leap-day-proleptic", [189990], "days since 1500-02-29", "proleptic_gregorian"),
+    ("last-julian-day", [160000], "days since 1582-10-04 23:00", "standard"),
+    ("reform-gap", [160000], "days since 1582-10-10", "standard"),
+    ("year-zero", [735000], "days since 0-1-1", "standard"),
+    ("year-zero-proleptic", [735000], "days since 0-1-1", "proleptic_gregorian"),
+    ("pre-pandas", [100000], "days since 1700-01-01 12:00", "standard"),
+    # cftime reads a time only with minutes, right after the date, and a zone
+    # only right after that; otherwise the rest is midnight UTC.
+    ("cftime-bare-hour", [1, 2], "hr since 2016-05-01 06", "standard"),
+    ("cftime-two-spaces", [17636616], "hours since 1-1-1  06:30", "standard"),
+    ("cftime-zone-two-spaces", [17636616], "hours since 1-1-1 06:30  +01:00", "standard"),
+    ("cftime-zone", [17636616], "hours since 1-1-1 06:30 -01:30", "standard"),
+    ("cftime-fraction", [0.4], "secs since 2016-05-01 06:30:00.7", "standard"),
 ]
 
 
@@ -283,7 +392,13 @@ def main() -> None:
     for name, src in SOURCES.items():
         for f in src["files"]:
             day_s = T0 + f["day"] * DAY
-            data = build_file(f["hours"], units=f["units"], calendar=f["calendar"], raw=f["raw"])
+            data = build_file(
+                f["hours"],
+                units=f["units"],
+                calendar=f["calendar"],
+                raw=f["raw"],
+                attrs=f.get("attrs"),
+            )
             blobs.append(emit_scenario_blob(_day_url(name, day_s), data, "timeaxis"))
         samples, errors = [], []
         for t, note in PROBES[name]:

@@ -32,6 +32,27 @@
       "bytes": 392
     },
     {
+      "url": "https://data.earthsci.dev/timeaxis/gap.20240301.nc",
+      "cache_key": "bc4d499eca077c736ea24622fc7b179b617f03fc944b4bdab55110f539c6a3d0",
+      "blob_path": "cache/v1/blobs/bc/bc4d499eca077c736ea24622fc7b179b617f03fc944b4bdab55110f539c6a3d0.nc",
+      "content_sha256": "d2e7d97ed71cce1dc22ea90d57442907b00994703a1763f2f03feae8e061f38f",
+      "bytes": 700
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/packed.20240301.nc",
+      "cache_key": "b577119f1e4326e2b0b45bac0d46b075f89731b45dd3dded3bcf29dd404b4a57",
+      "blob_path": "cache/v1/blobs/b5/b577119f1e4326e2b0b45bac0d46b075f89731b45dd3dded3bcf29dd404b4a57.nc",
+      "content_sha256": "7d8b19f2869e775c83a02af76d75aae277d8f5cc909b5266091061e1ce655f35",
+      "bytes": 732
+    },
+    {
+      "url": "https://data.earthsci.dev/timeaxis/two-fills.20240301.nc",
+      "cache_key": "d9889dd53ef0c200b930fafad2589265fc6b64c746588ac85ff7ef1cb733f574",
+      "blob_path": "cache/v1/blobs/d9/d9889dd53ef0c200b930fafad2589265fc6b64c746588ac85ff7ef1cb733f574.nc",
+      "content_sha256": "690ad25c027f95dc71639205bb16ec0e5d2c894ebde9829b12af6929e18f0a4a",
+      "bytes": 780
+    },
+    {
       "url": "https://data.earthsci.dev/timeaxis/noleap.20240301.nc",
       "cache_key": "c7d1d9ac73ab450fb85bbe6ae66c81342038a1e7b767928acc832393cd91d5f3",
       "blob_path": "cache/v1/blobs/c7/c7d1d9ac73ab450fb85bbe6ae66c81342038a1e7b767928acc832393cd91d5f3.nc",
@@ -537,6 +558,208 @@
       "units": "hours since 2016-05-01",
       "calendar": "standard",
       "seconds": []
+    },
+    {
+      "id": "short-year",
+      "values": [
+        17636616,
+        17636617
+      ],
+      "dtype": "int64",
+      "units": "hours since 1-1-1 00:00:0.0",
+      "calendar": "standard",
+      "seconds": [
+        1356048000,
+        1356051600
+      ]
+    },
+    {
+      "id": "short-year-proleptic",
+      "values": [
+        17636616
+      ],
+      "dtype": "int64",
+      "units": "hours since 1-1-1",
+      "calendar": "proleptic_gregorian",
+      "seconds": [
+        1356220800
+      ]
+    },
+    {
+      "id": "padded-short-year",
+      "values": [
+        17636616
+      ],
+      "dtype": "int64",
+      "units": "hours since 0001-01-01",
+      "calendar": "gregorian",
+      "seconds": [
+        1356048000
+      ]
+    },
+    {
+      "id": "pre-reform",
+      "values": [
+        190000
+      ],
+      "dtype": "int64",
+      "units": "days since 1500-01-01",
+      "calendar": "standard",
+      "seconds": [
+        1585008000
+      ]
+    },
+    {
+      "id": "pre-reform-proleptic",
+      "values": [
+        190000
+      ],
+      "dtype": "int64",
+      "units": "days since 1500-01-01",
+      "calendar": "proleptic_gregorian",
+      "seconds": [
+        1584230400
+      ]
+    },
+    {
+      "id": "julian-leap-day",
+      "values": [
+        189990
+      ],
+      "dtype": "int64",
+      "units": "days since 1500-02-29",
+      "calendar": "standard",
+      "seconds": [
+        1589241600
+      ]
+    },
+    {
+      "id": "julian-leap-day-proleptic",
+      "values": [
+        189990
+      ],
+      "dtype": "int64",
+      "units": "days since 1500-02-29",
+      "calendar": "proleptic_gregorian",
+      "seconds": null
+    },
+    {
+      "id": "last-julian-day",
+      "values": [
+        160000
+      ],
+      "dtype": "int64",
+      "units": "days since 1582-10-04 23:00",
+      "calendar": "standard",
+      "seconds": [
+        1604703600
+      ]
+    },
+    {
+      "id": "reform-gap",
+      "values": [
+        160000
+      ],
+      "dtype": "int64",
+      "units": "days since 1582-10-10",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "year-zero",
+      "values": [
+        735000
+      ],
+      "dtype": "int64",
+      "units": "days since 0-1-1",
+      "calendar": "standard",
+      "seconds": null
+    },
+    {
+      "id": "year-zero-proleptic",
+      "values": [
+        735000
+      ],
+      "dtype": "int64",
+      "units": "days since 0-1-1",
+      "calendar": "proleptic_gregorian",
+      "seconds": [
+        1336780800
+      ]
+    },
+    {
+      "id": "pre-pandas",
+      "values": [
+        100000
+      ],
+      "dtype": "int64",
+      "units": "days since 1700-01-01 12:00",
+      "calendar": "standard",
+      "seconds": [
+        119707200
+      ]
+    },
+    {
+      "id": "cftime-bare-hour",
+      "values": [
+        1,
+        2
+      ],
+      "dtype": "int64",
+      "units": "hr since 2016-05-01 06",
+      "calendar": "standard",
+      "seconds": [
+        1462064400,
+        1462068000
+      ]
+    },
+    {
+      "id": "cftime-two-spaces",
+      "values": [
+        17636616
+      ],
+      "dtype": "int64",
+      "units": "hours since 1-1-1  06:30",
+      "calendar": "standard",
+      "seconds": [
+        1356048000
+      ]
+    },
+    {
+      "id": "cftime-zone-two-spaces",
+      "values": [
+        17636616
+      ],
+      "dtype": "int64",
+      "units": "hours since 1-1-1 06:30  +01:00",
+      "calendar": "standard",
+      "seconds": [
+        1356071400
+      ]
+    },
+    {
+      "id": "cftime-zone",
+      "values": [
+        17636616
+      ],
+      "dtype": "int64",
+      "units": "hours since 1-1-1 06:30 -01:30",
+      "calendar": "standard",
+      "seconds": [
+        1356076800
+      ]
+    },
+    {
+      "id": "cftime-fraction",
+      "values": [
+        0.4
+      ],
+      "dtype": "float64",
+      "units": "secs since 2016-05-01 06:30:00.7",
+      "calendar": "standard",
+      "seconds": [
+        1462084201
+      ]
     }
   ],
   "providers": {
@@ -951,7 +1174,7 @@
         {
           "t_s": 1709294400,
           "records_per_sample": 1,
-          "note": "the last time in the file, stored fourth",
+          "note": "the last time in the file, stored fourth; its successor (13:00) is past the axis, so a two-record sample holds it",
           "T": [
             120.0,
             121.0
@@ -960,20 +1183,20 @@
         {
           "t_s": 1709294400,
           "records_per_sample": 2,
-          "note": "the last time in the file, stored fourth",
+          "note": "the last time in the file, stored fourth; its successor (13:00) is past the axis, so a two-record sample holds it",
           "T": [
             [
               120.0,
               121.0
             ],
             [
-              60.0,
-              61.0
+              120.0,
+              121.0
             ]
           ],
           "time_s": [
             1709294400,
-            1709298000
+            1709294400
           ]
         }
       ],
@@ -989,6 +1212,362 @@
           "note": "after the axis: the cadence offset (13) is past the file, an error"
         }
       ]
+    },
+    "gap": {
+      "note": "One daily file missing its 05:00 to 07:00 records. A two-record sample at 04:00 pairs the 04:00 record with the record of 05:00, which is the 04:00 one again, never with the 08:00 record.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/gap.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-02T00:00:00Z",
+      "end_s": 1709337600,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709337600
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/gap.20240301.nc",
+          "times_s": [
+            1709251200,
+            1709254800,
+            1709258400,
+            1709262000,
+            1709265600,
+            1709280000,
+            1709283600,
+            1709287200,
+            1709290800,
+            1709294400,
+            1709298000,
+            1709301600,
+            1709305200,
+            1709308800,
+            1709312400,
+            1709316000,
+            1709319600,
+            1709323200,
+            1709326800,
+            1709330400,
+            1709334000
+          ],
+          "units": "hours since 2024-03-01",
+          "calendar": "standard"
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709262000,
+          "records_per_sample": 1,
+          "note": "03:00, before the gap: its successor is the 04:00 record",
+          "T": [
+            30.0,
+            31.0
+          ]
+        },
+        {
+          "t_s": 1709262000,
+          "records_per_sample": 2,
+          "note": "03:00, before the gap: its successor is the 04:00 record",
+          "T": [
+            [
+              30.0,
+              31.0
+            ],
+            [
+              40.0,
+              41.0
+            ]
+          ],
+          "time_s": [
+            1709262000,
+            1709265600
+          ]
+        },
+        {
+          "t_s": 1709265600,
+          "records_per_sample": 1,
+          "note": "04:00, the last record before the gap: its successor, 05:00, is the 04:00 record again",
+          "T": [
+            40.0,
+            41.0
+          ]
+        },
+        {
+          "t_s": 1709265600,
+          "records_per_sample": 2,
+          "note": "04:00, the last record before the gap: its successor, 05:00, is the 04:00 record again",
+          "T": [
+            [
+              40.0,
+              41.0
+            ],
+            [
+              40.0,
+              41.0
+            ]
+          ],
+          "time_s": [
+            1709265600,
+            1709269200
+          ]
+        },
+        {
+          "t_s": 1709272800,
+          "records_per_sample": 1,
+          "note": "06:00, in the gap: the 04:00 record",
+          "T": [
+            40.0,
+            41.0
+          ]
+        },
+        {
+          "t_s": 1709272800,
+          "records_per_sample": 2,
+          "note": "06:00, in the gap: the 04:00 record",
+          "T": [
+            [
+              40.0,
+              41.0
+            ],
+            [
+              40.0,
+              41.0
+            ]
+          ],
+          "time_s": [
+            1709272800,
+            1709276400
+          ]
+        },
+        {
+          "t_s": 1709276400,
+          "records_per_sample": 1,
+          "note": "07:00: the 04:00 record, then the 08:00 one",
+          "T": [
+            40.0,
+            41.0
+          ]
+        },
+        {
+          "t_s": 1709276400,
+          "records_per_sample": 2,
+          "note": "07:00: the 04:00 record, then the 08:00 one",
+          "T": [
+            [
+              40.0,
+              41.0
+            ],
+            [
+              80.0,
+              81.0
+            ]
+          ],
+          "time_s": [
+            1709276400,
+            1709280000
+          ]
+        }
+      ],
+      "errors": []
+    },
+    "packed": {
+      "note": "A daily file missing its first three records whose int16 time axis is packed: scale_factor 0.5, so a stored 10 is 05:00. The axis is unpacked before it is decoded, as the Python reader does.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/packed.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-02T00:00:00Z",
+      "end_s": 1709337600,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709337600
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/packed.20240301.nc",
+          "times_s": [
+            1709262000,
+            1709265600,
+            1709269200,
+            1709272800,
+            1709276400,
+            1709280000,
+            1709283600,
+            1709287200,
+            1709290800,
+            1709294400,
+            1709298000,
+            1709301600,
+            1709305200,
+            1709308800,
+            1709312400,
+            1709316000,
+            1709319600,
+            1709323200,
+            1709326800,
+            1709330400,
+            1709334000
+          ],
+          "units": "hours since 2024-03-01",
+          "calendar": "standard"
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 1,
+          "note": "05:00 (stored 10) is the third record",
+          "T": [
+            50.0,
+            51.0
+          ]
+        },
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 2,
+          "note": "05:00 (stored 10) is the third record",
+          "T": [
+            [
+              50.0,
+              51.0
+            ],
+            [
+              60.0,
+              61.0
+            ]
+          ],
+          "time_s": [
+            1709269200,
+            1709272800
+          ]
+        },
+        {
+          "t_s": 1709334000,
+          "records_per_sample": 1,
+          "note": "the last record",
+          "T": [
+            230.0,
+            231.0
+          ]
+        },
+        {
+          "t_s": 1709334000,
+          "records_per_sample": 2,
+          "note": "the last record",
+          "T": [
+            [
+              230.0,
+              231.0
+            ],
+            [
+              230.0,
+              231.0
+            ]
+          ],
+          "time_s": [
+            1709334000,
+            1709334000
+          ]
+        }
+      ],
+      "errors": []
+    },
+    "two-fills": {
+      "note": "A daily file missing its first two records whose int32 time axis has both a _FillValue and a different missing_value, and whose last entry is the missing_value: the axis has a missing entry, so the record is the cadence offset.",
+      "format": "netcdf",
+      "url_template": "https://data.earthsci.dev/timeaxis/two-fills.{date:%Y%m%d}.nc",
+      "substitutions": {},
+      "variables": [
+        "T"
+      ],
+      "start": "2024-03-01T00:00:00Z",
+      "start_s": 1709251200,
+      "end": "2024-03-02T00:00:00Z",
+      "end_s": 1709337600,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "time_dim": "time",
+      "window_s": [
+        1709251200,
+        1709337600
+      ],
+      "files": [
+        {
+          "url": "https://data.earthsci.dev/timeaxis/two-fills.20240301.nc",
+          "times_s": [
+            1709258400,
+            1709262000,
+            1709265600,
+            1709269200,
+            1709272800,
+            1709276400,
+            1709280000,
+            1709283600,
+            1709287200,
+            1709290800,
+            1709294400,
+            1709298000,
+            1709301600,
+            1709305200,
+            1709308800,
+            1709312400,
+            1709316000,
+            1709319600,
+            1709323200,
+            1709326800,
+            1709330400,
+            1709334000
+          ],
+          "units": "hours since 2024-03-01",
+          "calendar": "standard"
+        }
+      ],
+      "samples": [
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 1,
+          "note": "an axis with a missing entry: the cadence offset (record 5, which holds 07:00)",
+          "T": [
+            70.0,
+            71.0
+          ]
+        },
+        {
+          "t_s": 1709269200,
+          "records_per_sample": 2,
+          "note": "an axis with a missing entry: the cadence offset (record 5, which holds 07:00)",
+          "T": [
+            [
+              70.0,
+              71.0
+            ],
+            [
+              80.0,
+              81.0
+            ]
+          ],
+          "time_s": [
+            1709269200,
+            1709272800
+          ]
+        }
+      ],
+      "errors": []
     },
     "noleap": {
       "note": "A daily file missing its first two records on the noleap calendar, which no track decodes: the record is the cadence offset, so it is the wrong one.",

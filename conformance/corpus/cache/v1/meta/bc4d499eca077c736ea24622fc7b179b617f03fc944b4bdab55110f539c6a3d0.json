@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 700,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "d2e7d97ed71cce1dc22ea90d57442907b00994703a1763f2f03feae8e061f38f",
+  "source_loader": "timeaxis",
+  "url": "https://data.earthsci.dev/timeaxis/gap.20240301.nc"
+}
