@@ -169,6 +169,15 @@ pub enum Error {
         /// What was refused, and what to do instead.
         detail: String,
     },
+
+    /// An ISO 8601 duration is not a calendar period (`spec/esm-sources.md`
+    /// §2.1). Its message carries the code `esm_period_invalid`.
+    BadPeriod {
+        /// The text that was given.
+        period: String,
+        /// Why it is not a period.
+        detail: String,
+    },
 }
 
 impl Error {
@@ -240,6 +249,12 @@ impl std::fmt::Display for Error {
             }
             Error::Commit { detail } => write!(f, "commit refused: {detail}"),
             Error::Prefetch { detail } => write!(f, "prefetch: {detail}"),
+            Error::BadPeriod { period, detail } => {
+                write!(
+                    f,
+                    "esm_period_invalid: {period:?} is not a calendar period: {detail}"
+                )
+            }
         }
     }
 }

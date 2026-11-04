@@ -39,6 +39,7 @@ from .backends.cds import (
 )
 from .cache import Cache, CacheEntry
 from .cachekey import cache_key, range_keyed_url, sha256_bytes, sha256_file
+from .calendar import CalendarPeriod, CalendarPeriodError
 from .config import (
     CACHE_FORMAT_VERSION,
     REVALIDATE_FILE_ENV,
@@ -128,6 +129,9 @@ __all__ = [
     "CacheEntry",
     # errors — cache core
     "CacheMiss",
+    # calendar cadences (spec/esm-sources.md §2)
+    "CalendarPeriod",
+    "CalendarPeriodError",
     # CDS transport + ERA5 request mapping
     "CdsTransport",
     "CommitError",

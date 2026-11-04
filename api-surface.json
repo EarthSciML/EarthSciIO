@@ -125,7 +125,8 @@
       "tier": "stable",
       "bindings": {
         "python": "SourceTemporal",
-        "rust": "SourceTemporal"
+        "rust": "SourceTemporal",
+        "julia": "SourceTemporal"
       }
     },
     {
@@ -725,6 +726,25 @@
         "python": "esm_template_names",
         "julia": "esm_template_names",
         "rust": "esm_template_names"
+      }
+    },
+    {
+      "name": "calendar_period",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "CalendarPeriod",
+        "julia": "CalendarPeriod",
+        "rust": "CalendarPeriod"
+      }
+    },
+    {
+      "name": "calendar_period_error",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "CalendarPeriodError",
+        "julia": "CalendarPeriodError"
       }
     }
   ]

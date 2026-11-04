@@ -102,6 +102,8 @@ compile_error!(
 pub mod auth;
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod calendar;
 mod clock;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod datadir;
@@ -149,6 +151,8 @@ pub use format::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{Cache, CacheBuilder, CachedBlob, FetchRequest};
+#[cfg(not(target_arch = "wasm32"))]
+pub use calendar::CalendarPeriod;
 #[cfg(not(target_arch = "wasm32"))]
 pub use datadir::{data_dir, default_data_dir, expand_datadir, DATADIR_ENV};
 #[cfg(not(target_arch = "wasm32"))]

@@ -38,6 +38,17 @@ package version is independent of the `.esm` format version.
   `construction` cases pin both). Each file carries the mirrors resolved at
   its own anchor to the fetch; there is no URL-to-mirrors memo.
 
+
+- **feat:** calendar cadences (`spec/esm-sources.md` §2). A source's frequency
+  and file period are `CalendarPeriod`s (whole months plus whole seconds, read
+  from ISO 8601 durations), so `P1M` and `P1Y` anchors fall on calendar months
+  and years. Every anchor is computed from the start, the day clamped to the
+  month's last day. `SourceTemporal` gains `record_anchor`,
+  `next_record_anchor`, `first_record_anchor_from`, `file_anchor`,
+  `next_file_anchor` and `record_in_file`, pinned by the shared
+  `calendar-cadence` scenario (with small synthetic monthly and yearly files in
+  the corpus).
+
 ### Rust
 
 - **feat:** a `csv` reader (`CsvReader`), registered under `csv`, which
@@ -46,6 +57,13 @@ package version is independent of the `.esm` format version.
   parses), `delimiter`, `header_row`, every other column a string field, all on
   `index`, and a `variables` projection. The cross-language case
   `openaq-points-slice` now has three-way equality.
+- **breaking:** `SourceTemporal.frequency` and `.file_period` are
+  `CalendarPeriod` values instead of `time::Duration`. `SourceTemporal::new`
+  still accepts a `Duration`; one that is not a positive whole number of
+  seconds (a fraction of a second is no longer dropped) is refused by
+  `Provider::new` with `esm_period_invalid`, as Python refuses it. Monthly
+  cadences are no longer approximated by a fixed number of seconds. New
+  `Error::BadPeriod` (`esm_period_invalid`).
 
 ### All tracks (csv)
 
@@ -61,8 +79,20 @@ package version is independent of the `.esm` format version.
 - **fix:** a `null` csv option is unset in every track. Rust errors now name the
   file line rather than a count of non-blank rows.
 - `spec/registries.json` lists `txt` as a csv extension, as the readers do.
+### Python
+
+- **feat:** `SourceTemporal(frequency=…, file_period=…)` also takes a
+  `CalendarPeriod` or an ISO 8601 string; a `timedelta` works as before.
+
 ### Julia
 
+- **feat:** `Provider(cache, url; format, temporal = SourceTemporal(…), window)`
+  builds a time-varying provider from a cadence and a run window, as Python
+  and Rust do, in Unix seconds (UTC). Each tick reads its own record of its own
+  file by the calendar, rather than `mod1(tick, file length)`, which was wrong
+  whenever the ticks did not start at a file's first record. `refresh_times`
+  returns the anchors in the window, and a time outside the window is read
+  from the calendar too, as in Python and Rust.
 - **feat:** mirror failover. `fetch_blob(…; mirrors)` tries each mirror after
   the primary URL and caches the blob under the primary's key, and `Provider`
   takes `mirrors`. As in Python and Rust, rung 0 of the `file://` recheck

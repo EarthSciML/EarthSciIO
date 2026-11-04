@@ -85,6 +85,11 @@ export NativeField, NativeDataset, variable_names, coord_names
 export Provider, const_provider, discrete_provider, Cadence, CONST, DISCRETE
 export materialize, refresh, refresh_times, prefetch, is_const
 
+# calendar cadences (spec/esm-sources.md §2)
+export CalendarPeriod, CalendarPeriodError, SourceTemporal
+export record_anchor, next_record_anchor, first_record_anchor_from, file_anchor,
+    next_file_anchor, record_in_file
+
 # esm data-source URL templates (spec/esm-sources.md)
 export EsmTemplate, EsmTemplateError, expand_esm_template, esm_template_names, esm_mirrors
 
@@ -109,6 +114,7 @@ include("zarr.jl")
 include("zarr_write.jl")
 include("zarr_stream.jl")
 include("esm.jl")
+include("calendar.jl")
 include("provider.jl")
 include("windows.jl")
 include("prefetch.jl")

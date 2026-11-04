@@ -56,6 +56,7 @@ from typing import Any, Callable, NamedTuple, Union
 import numpy as np
 
 from .cache import Cache, CacheEntry
+from .calendar import CalendarPeriod, CalendarPeriodError
 from .errors import UnknownReaderOption
 from .esm import EsmTemplate
 from .native import NativeDataset, NativeField
@@ -73,15 +74,6 @@ UrlSpec = Union[str, Callable[[_dt.datetime], str]]
 
 _EPOCH = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
 _ZERO = _dt.timedelta(0)
-
-
-def _snap_down(start: _dt.datetime, t: _dt.datetime, step: _dt.timedelta) -> _dt.datetime:
-    """The largest aligned anchor ``start + k*step <= t`` (``k`` an integer).
-
-    Timedelta floor-division floors toward -infinity, so this snaps ``t`` *down*
-    to its cadence anchor even before ``start`` (caller validates the range).
-    """
-    return start + ((t - start) // step) * step
 
 
 @dataclass(frozen=True)
@@ -109,19 +101,83 @@ class SourceTemporal:
     """
 
     start: _dt.datetime
-    frequency: _dt.timedelta
-    file_period: _dt.timedelta
+    frequency: _dt.timedelta | CalendarPeriod | str
+    file_period: _dt.timedelta | CalendarPeriod | str
     end: _dt.datetime | None = None
     time_dim: str = "time"
     records_per_sample: int | None = None
 
     def __post_init__(self) -> None:
-        if self.frequency <= _ZERO:
-            raise ValueError(f"frequency must be positive, got {self.frequency!r}")
-        if self.file_period <= _ZERO:
-            raise ValueError(f"file_period must be positive, got {self.file_period!r}")
+        for name in ("frequency", "file_period"):
+            value = getattr(self, name)
+            if isinstance(value, _dt.timedelta) and value <= _ZERO:
+                raise ValueError(f"{name} must be positive, got {value!r}")
+            try:
+                period = CalendarPeriod.of(value)
+            except CalendarPeriodError as exc:
+                raise ValueError(f"{name}: {exc}") from exc
+            object.__setattr__(self, f"_{name}", period)
         if self.records_per_sample not in (None, 1, 2):
             raise ValueError(f"records_per_sample must be 1 or 2, got {self.records_per_sample!r}")
+
+    # -- calendar anchors (spec/esm-sources.md §2.3) ------------------------- #
+
+    def record_anchor(self, t: _dt.datetime) -> _dt.datetime:
+        """The frequency anchor at or before ``t``."""
+        f = self._frequency
+        return f.anchor(self.start, f.floor(self.start, t))
+
+    def next_record_anchor(self, t: _dt.datetime) -> _dt.datetime:
+        """The frequency anchor after the one at or before ``t``."""
+        f = self._frequency
+        return f.anchor(self.start, f.floor(self.start, t) + 1)
+
+    def first_record_anchor_from(self, t: _dt.datetime) -> _dt.datetime:
+        """The first frequency anchor at or after ``t``."""
+        f = self._frequency
+        return f.anchor(self.start, f.ceil(self.start, t))
+
+    def file_anchor(self, t: _dt.datetime) -> _dt.datetime:
+        """The file-period anchor at or before ``t`` (the URL is expanded here)."""
+        p = self._file_period
+        return p.anchor(self.start, p.floor(self.start, t))
+
+    def next_file_anchor(self, t: _dt.datetime) -> _dt.datetime:
+        """The file-period anchor after the one at or before ``t``."""
+        p = self._file_period
+        return p.anchor(self.start, p.floor(self.start, t) + 1)
+
+    def _record_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The frequency anchors in ``[lower, upper)``: one ``ceil``, then each
+        anchor by its index (no floor per step)."""
+        f = self._frequency
+        k = f.ceil(self.start, lower)
+        out: list[_dt.datetime] = []
+        anchor = f.anchor(self.start, k)
+        while anchor < upper:
+            out.append(anchor)
+            k += 1
+            anchor = f.anchor(self.start, k)
+        return out
+
+    def _file_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The file-period anchors from the one at or before ``lower`` while
+        ``< upper``: one ``floor``, then each anchor by its index."""
+        p = self._file_period
+        k = p.floor(self.start, lower)
+        out: list[_dt.datetime] = []
+        anchor = p.anchor(self.start, k)
+        while anchor < upper:
+            out.append(anchor)
+            k += 1
+            anchor = p.anchor(self.start, k)
+        return out
+
+    def record_in_file(self, anchor: _dt.datetime, file_anchor: _dt.datetime) -> int:
+        """The 0-based record of frequency anchor ``anchor`` in the file that
+        starts at ``file_anchor``: the frequency steps between them."""
+        f = self._frequency
+        return f.floor(self.start, anchor) - f.ceil(self.start, file_anchor)
 
 
 @dataclass
@@ -575,14 +631,8 @@ class Provider:
         if upper is None:
             return []  # unbounded — no enumerable schedule
         lower = self._lower_bound()
-        # First aligned anchor >= lower (ceil of the elapsed step count).
-        steps = -((temporal.start - lower) // temporal.frequency)
-        anchor = temporal.start + steps * temporal.frequency
-        out: list[_dt.datetime] = []
-        while anchor < upper:
-            out.append(anchor)
-            anchor = anchor + temporal.frequency
-        return out
+        # First aligned anchor >= lower, then each next one (spec §2.3).
+        return temporal._record_anchors(lower, upper)
 
     # -- prefetch ----------------------------------------------------------- #
 
@@ -609,13 +659,11 @@ class Provider:
         start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
         entries: list[CacheEntry] = []
         seen: set = set()
-        file_anchor = _snap_down(temporal.start, start, temporal.file_period)
-        while file_anchor < upper:
+        for file_anchor in temporal._file_anchors(start, upper):
             ref = self._resolve(file_anchor)
             if ref.url not in seen:
                 seen.add(ref.url)
                 entries.append(self._fetch(ref))
-            file_anchor = file_anchor + temporal.file_period
         return entries
 
     # -- internals ---------------------------------------------------------- #
@@ -651,7 +699,7 @@ class Provider:
         loader start; :meth:`_anchor` is the validating spelling)."""
         temporal = self.loader.temporal
         assert temporal is not None
-        return _snap_down(temporal.start, t, temporal.frequency)
+        return temporal.record_anchor(t)
 
     def _anchor(self, t: _dt.datetime) -> _dt.datetime:
         anchor = self._anchor_of(t)
@@ -678,7 +726,7 @@ class Provider:
         anchor = self._anchor(t)
         if temporal.records_per_sample == 2:
             return self._sample_bracket(temporal, anchor, files)
-        file_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
+        file_anchor = temporal.file_anchor(anchor)
         file_ds = files(file_anchor)
         rec = _record_index(file_ds, temporal, anchor, file_anchor)
         return _slice_record(file_ds, temporal.time_dim, rec)
@@ -716,12 +764,12 @@ class Provider:
             return [self._resolve(_EPOCH)]
         anchor = self._anchor_of(t)
         anchors = [anchor]
-        nxt = anchor + temporal.frequency
+        nxt = temporal.next_record_anchor(anchor)
         if temporal.records_per_sample == 2 and (temporal.end is None or nxt < temporal.end):
             anchors.append(nxt)
         refs: list[_FileRef] = []
         for a in anchors:
-            ref = self._resolve(_snap_down(temporal.start, a, temporal.file_period))
+            ref = self._resolve(temporal.file_anchor(a))
             if all(r.url != ref.url for r in refs):
                 refs.append(ref)
         return refs
@@ -835,11 +883,11 @@ class Provider:
         :meth:`_sample`); :meth:`refresh` passes the 2-entry LRU, a per-call
         ``select`` a fresh read."""
         time_dim = temporal.time_dim
-        file0_anchor = _snap_down(temporal.start, anchor, temporal.file_period)
+        file0_anchor = temporal.file_anchor(anchor)
         file0 = files(file0_anchor)
         rec0 = _record_index(file0, temporal, anchor, file0_anchor)
 
-        next_anchor = anchor + temporal.frequency
+        next_anchor = temporal.next_record_anchor(anchor)
         has_succ = temporal.end is None or next_anchor < temporal.end
         succ: tuple[NativeDataset, int] | None = None
         if has_succ:
@@ -847,7 +895,7 @@ class Provider:
                 if rec0 + 1 < _time_len(file0, time_dim):
                     succ = (file0, rec0 + 1)  # successor in the same file
                 else:  # successor is record 0 of the next file
-                    n_anchor = _snap_down(temporal.start, next_anchor, temporal.file_period)
+                    n_anchor = temporal.file_anchor(next_anchor)
                     file1 = files(n_anchor)
                     r1 = _record_index(file1, temporal, next_anchor, n_anchor)
                     if 0 <= r1 < _time_len(file1, time_dim):
@@ -1030,7 +1078,7 @@ def _record_index(
                 idx = _record_at_or_before(times, a)
                 if idx is not None:
                     return int(idx)
-    return (anchor - file_anchor) // temporal.frequency
+    return temporal.record_in_file(anchor, file_anchor)
 
 
 # --- 0.1.1 compatibility -------------------------------------------------

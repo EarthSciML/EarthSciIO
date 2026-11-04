@@ -89,3 +89,69 @@ where it stands (the text around a `{date:…}` token never forms a new token:
 The scenario's `construction` cases pin this. The cache key is still
 `sha256(primary URL)` (cache-format.md §1), whichever candidate supplied the
 bytes.
+
+## 2. Calendar cadences (esm-spec §8.3)
+
+Fixture:
+[`../conformance/corpus/scenarios/calendar-cadence.json`](../conformance/corpus/scenarios/calendar-cadence.json).
+
+A source's `temporal.frequency` and `temporal.file_period` are ISO 8601
+durations. A month or a year is not a fixed number of seconds, so EarthSciIO
+reads each as a **calendar period** (Python `CalendarPeriod`, Julia
+`CalendarPeriod`, Rust `CalendarPeriod`) and computes every anchor on the
+proleptic Gregorian calendar in UTC. No track approximates a month by a mean
+length.
+
+### 2.1 Periods
+
+`P[nY][nM][nW][nD][T[nH][nM][nS]]`, each `n` an unsigned integer and the
+designators in this order, is the period of `months = 12·Y + M` and
+`seconds = 604800·W + 86400·D + 3600·H + 60·M + S` (UTC days have 86400
+seconds). Anything else — a fraction, a sign, a missing `P`, an empty `T`, a
+designator out of place, an all-zero period — is an error with the code
+`esm_period_invalid`. A period may also be built from a fixed duration
+(a Python `timedelta`, a Rust `time::Duration`, a whole number of seconds),
+which is `months = 0`.
+
+### 2.2 Anchors
+
+For a cadence with epoch `start` and period `p`, anchor `k` (any integer) is
+
+```
+anchor(k) = add_months(start, k · p.months) + k · p.seconds
+```
+
+where `add_months` moves the calendar month, keeps the time of day, and keeps
+the day of the month, clamped to the last day of the target month. Every anchor
+is computed from `start`, never from the previous anchor, so a cadence starting
+on 31 January visits 29 February and then 31 March. `floor(t)` is the largest
+`k` with `anchor(k) ≤ t`, and `ceil(t)` the smallest with `anchor(k) ≥ t`.
+
+### 2.3 What the provider derives
+
+With `f` the frequency and `F` the file period, both anchored at `start`:
+
+| Quantity | Rule |
+|---|---|
+| refresh times over `[lower, upper)` | `anchor_f(k)` for `k = ceil_f(lower), …` while `< upper` (as before) |
+| record anchor of a time `t` | `anchor_f(floor_f(t))` |
+| file anchor of a record anchor `a` | `anchor_F(floor_F(a))` — the URL is expanded here |
+| record index in its file | `floor_f(a) − ceil_f(file anchor)`, 0-based |
+| next record (two-record bracket) | `anchor_f(floor_f(t) + 1)` |
+
+A fixed-length cadence (`months = 0`) gives exactly the anchors it gave
+before. The Python track still prefers the file's own time axis to locate a
+record when it can decode one (provider.py `_record_index`); the rule above is
+what all three compute otherwise, and what they agree on.
+
+### 2.4 Julia
+
+The Julia `Provider` used to take only a caller-made list of `times` in the
+caller's unit, and located a record as `mod1(tick, file length)`, which is
+wrong when the list does not start at a file's first record. It now also takes
+a `SourceTemporal` and a run `window`, as Python and Rust do:
+`Provider(cache, url; format, temporal, window)`. Times are then Unix seconds
+(UTC). `refresh_times` returns §2.3's refresh times over the window, `upper`
+being the window end (else `stop`) and never clipped to `stop`, as in Python
+and Rust. A sample at any time from `start` on, inside the window or not, is
+located by §2.3 on the calendar, as in Python and Rust.

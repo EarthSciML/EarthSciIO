@@ -30,9 +30,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 use crate::cache::{Cache, FetchRequest};
+use crate::calendar::CalendarPeriod;
 use crate::error::{Error, Result};
 use crate::format::{
     ArrayData, AxisSelect, Coord, DType, FormatRegistry, NativeDataset, NativeField, Reader,
@@ -46,8 +47,11 @@ pub type Window = (OffsetDateTime, OffsetDateTime);
 ///
 /// `frequency` is the cadence step (e.g. 1 hour for ERA5) — it drives the
 /// refresh tstops and which record within a file is current. `file_period` is
-/// the granularity of one file (e.g. 1 day) — it drives URL resolution. A file
-/// holds `file_period / frequency` records along `time_dim`.
+/// the granularity of one file (e.g. 1 day) — it drives URL resolution. Both
+/// are [`CalendarPeriod`]s anchored at `start`, so a monthly (`P1M`) or yearly
+/// (`P1Y`) cadence lands on the calendar's months and years exactly
+/// (`spec/esm-sources.md` §2); a record's index in its file is the number of
+/// frequency anchors between the file's anchor and the record's.
 #[derive(Debug, Clone)]
 pub struct SourceTemporal {
     /// The loader's epoch — cadence anchors are aligned to this instant.
@@ -55,9 +59,9 @@ pub struct SourceTemporal {
     /// Exclusive end of available data, if known (open-ended otherwise).
     pub end: Option<OffsetDateTime>,
     /// Cadence step between successive records.
-    pub frequency: Duration,
+    pub frequency: CalendarPeriod,
     /// Time span covered by one file (drives which URL/file is fetched).
-    pub file_period: Duration,
+    pub file_period: CalendarPeriod,
     /// Name of the record/time dimension to slice on (default `"time"`).
     pub time_dim: String,
     /// Number of records [`Provider::refresh`] returns per sample. `None` or
@@ -75,13 +79,18 @@ pub struct SourceTemporal {
 
 impl SourceTemporal {
     /// A temporal block with `frequency` cadence and `file_period` files,
-    /// anchored at `start`, open-ended, slicing on the `time` dimension.
-    pub fn new(start: OffsetDateTime, frequency: Duration, file_period: Duration) -> Self {
+    /// anchored at `start`, open-ended, slicing on the `time` dimension. Each
+    /// period is a [`CalendarPeriod`] or a fixed [`time::Duration`].
+    pub fn new(
+        start: OffsetDateTime,
+        frequency: impl Into<CalendarPeriod>,
+        file_period: impl Into<CalendarPeriod>,
+    ) -> Self {
         Self {
             start,
             end: None,
-            frequency,
-            file_period,
+            frequency: frequency.into(),
+            file_period: file_period.into(),
             time_dim: "time".to_string(),
             records_per_sample: None,
         }
@@ -105,6 +114,63 @@ impl SourceTemporal {
     pub fn records_per_sample(mut self, n: u32) -> Self {
         self.records_per_sample = Some(n);
         self
+    }
+
+    /// The record anchor at or before `t` (the frequency anchor `t` snaps to).
+    pub fn record_anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
+        self.frequency.floor(self.start, t)
+    }
+
+    /// The frequency anchor after the one at or before `t`.
+    pub fn next_record_anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
+        let k = self.frequency.floor_index(self.start, t);
+        self.frequency.anchor(self.start, k + 1)
+    }
+
+    /// The first record anchor at or after `t`.
+    pub fn first_record_anchor_from(&self, t: OffsetDateTime) -> OffsetDateTime {
+        self.frequency
+            .anchor(self.start, self.frequency.ceil_index(self.start, t))
+    }
+
+    /// The anchor of the file holding the time `t` (the file-period anchor at
+    /// or before it), which the URL is expanded at.
+    pub fn file_anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
+        self.file_period.floor(self.start, t)
+    }
+
+    /// The anchor of the file after the one holding `t`.
+    pub fn next_file_anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
+        let k = self.file_period.floor_index(self.start, t);
+        self.file_period.anchor(self.start, k + 1)
+    }
+
+    /// The 0-based index, in the file anchored at `file_anchor`, of the record
+    /// anchored at `anchor`: the frequency anchors from `file_anchor` up to it.
+    /// Negative when `anchor` precedes `file_anchor` (as in the Python and Julia
+    /// tracks); never so for `file_anchor = self.file_anchor(anchor)`.
+    pub fn record_in_file(&self, anchor: OffsetDateTime, file_anchor: OffsetDateTime) -> i64 {
+        let k = self.frequency.floor_index(self.start, anchor);
+        k - self.frequency.ceil_index(self.start, file_anchor)
+    }
+
+    /// Both periods positive, else the `esm_period_invalid` error naming the
+    /// one that is not (a zero, negative or fractional-second step).
+    fn check_periods(&self) -> Result<()> {
+        for (name, p) in [
+            ("frequency", self.frequency),
+            ("file_period", self.file_period),
+        ] {
+            if !p.is_positive() {
+                return Err(Error::BadPeriod {
+                    period: format!("{name} {p:?}"),
+                    detail: "a cadence step must be a positive whole number of months \
+                             or seconds"
+                        .to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -439,6 +505,12 @@ impl Provider {
         // HERE rather than at the first read. Falling back to the cache would
         // silently restore the disk cost the caller explicitly asked to avoid —
         // which on a 20 GiB ephemeral disk is a failure, not a slow success.
+        // A cadence step that is not a positive whole number of months or
+        // seconds (a zero, negative or fractional-second `Duration`) is refused
+        // here, as the Python track refuses it when the temporal is built.
+        if let Some(t) = &loader.temporal {
+            t.check_periods()?;
+        }
         if let Some(subs) = &loader.esm_substitutions {
             for t in std::iter::once(&loader.url_template).chain(loader.mirrors.iter()) {
                 crate::esm::check_esm_template(t, subs)?;
@@ -752,8 +824,8 @@ impl Provider {
         let Some(temporal) = &self.loader.temporal else {
             return Vec::new(); // CONST: no refreshes
         };
-        let freq_s = temporal.frequency.whole_seconds();
-        if freq_s <= 0 {
+        let freq = temporal.frequency;
+        if !freq.is_positive() {
             return Vec::new();
         }
         let lower = self.lower_bound(temporal);
@@ -762,14 +834,15 @@ impl Provider {
         };
 
         // First aligned anchor >= lower (lower is already >= start, so ceil ≥ 0).
-        let elapsed = (lower - temporal.start).whole_seconds();
-        let steps = (elapsed + freq_s - 1) / freq_s;
-        let mut anchor = temporal.start + Duration::seconds(steps * freq_s);
-
+        let mut k = freq.ceil_index(temporal.start, lower);
         let mut out = Vec::new();
-        while anchor < upper {
+        loop {
+            let anchor = freq.anchor(temporal.start, k);
+            if anchor >= upper {
+                break;
+            }
             out.push(anchor.unix_timestamp() as f64);
-            anchor += Duration::seconds(freq_s);
+            k += 1;
         }
         out
     }
@@ -784,22 +857,21 @@ impl Provider {
                 Ok(())
             }
             Some(t) => {
-                let file_s = t.file_period.whole_seconds();
-                if file_s <= 0 {
-                    return Err(Error::Format {
-                        format: self.loader.format.clone(),
-                        detail: "loader file_period must be positive".to_string(),
-                    });
-                }
+                t.check_periods()?;
+                let period = t.file_period;
                 let start = if window.0 > t.start {
                     window.0
                 } else {
                     t.start
                 };
-                let mut fa = snap_down(t.start, start, file_s);
-                while fa < window.1 {
+                let mut k = period.floor_index(t.start, start);
+                loop {
+                    let fa = period.anchor(t.start, k);
+                    if fa >= window.1 {
+                        break;
+                    }
                     self.fetch_blob(&self.resolve(fa)?)?;
-                    fa += Duration::seconds(file_s);
+                    k += 1;
                 }
                 Ok(())
             }
@@ -937,14 +1009,7 @@ impl Provider {
         let Some(temporal) = self.loader.temporal.clone() else {
             return Ok(None);
         };
-        let freq_s = temporal.frequency.whole_seconds();
-        let file_s = temporal.file_period.whole_seconds();
-        if freq_s <= 0 || file_s <= 0 {
-            return Err(Error::Format {
-                format: self.loader.format.clone(),
-                detail: "loader cadence frequency/file_period must be positive".to_string(),
-            });
-        }
+        temporal.check_periods()?;
         if !matches!(temporal.records_per_sample, None | Some(1) | Some(2)) {
             return Err(Error::Format {
                 format: self.loader.format.clone(),
@@ -954,11 +1019,7 @@ impl Provider {
                 ),
             });
         }
-        Ok(Some(Cadence {
-            temporal,
-            freq_s,
-            file_s,
-        }))
+        Ok(Some(Cadence { temporal }))
     }
 
     /// The sample at `t` under `select`, its files drawn from `files`: the ONE
@@ -996,9 +1057,9 @@ impl Provider {
             return self.sample_bracket(cadence, anchor, select, files);
         }
         let temporal = &cadence.temporal;
-        let file_anchor = snap_down(temporal.start, anchor, cadence.file_s);
+        let file_anchor = temporal.file_anchor(anchor);
         let file = files.file(self, file_anchor, select)?;
-        let rec = ((anchor - file_anchor).whole_seconds() / cadence.freq_s) as usize;
+        let rec = file_record(temporal, anchor, file_anchor)?;
         Ok(NativeDataset {
             variables: slice_record_buffers(&file, temporal.time_dim.as_str(), rec)?,
             coords: file.coords.clone(),
@@ -1020,17 +1081,16 @@ impl Provider {
     ) -> Result<NativeDataset> {
         let temporal = &cadence.temporal;
         let time_dim = temporal.time_dim.as_str();
-        let (freq_s, file_s) = (cadence.freq_s, cadence.file_s);
 
         // rec0 = the floor (at-or-before) record in file0, as the single path does.
-        let file0_anchor = snap_down(temporal.start, anchor, file_s);
+        let file0_anchor = temporal.file_anchor(anchor);
         let file0 = files.file(self, file0_anchor, select)?;
-        let rec0 = ((anchor - file0_anchor).whole_seconds() / freq_s) as usize;
+        let rec0 = file_record(temporal, anchor, file0_anchor)?;
         let file0_len = time_len(&file0, time_dim);
 
         // Successor rec1: rec0+1 in the same file, else record 0 of the next file.
         // None => no reachable successor (end clamp): degenerate [rec0, rec0].
-        let next_anchor = anchor + Duration::seconds(freq_s);
+        let next_anchor = temporal.next_record_anchor(anchor);
         let has_succ = temporal.end.is_none_or(|end| next_anchor < end);
         let mut succ: Option<(Arc<NativeDataset>, usize)> = None;
         if has_succ {
@@ -1039,10 +1099,10 @@ impl Provider {
             } else {
                 // Successor is record 0 of the next file; read/decode it (a read
                 // failure at the seam is treated as end-of-data, not an error).
-                let next_file_anchor = snap_down(temporal.start, next_anchor, file_s);
+                let next_file_anchor = temporal.file_anchor(next_anchor);
                 if let Ok(file1) = files.file(self, next_file_anchor, select) {
-                    let r1 = ((next_anchor - next_file_anchor).whole_seconds() / freq_s) as usize;
-                    if r1 < time_len(&file1, time_dim) {
+                    let r1 = file_record(temporal, next_anchor, next_file_anchor);
+                    if let Some(r1) = r1.ok().filter(|&r| r < time_len(&file1, time_dim)) {
                         succ = Some((file1, r1));
                     }
                 }
@@ -1210,8 +1270,8 @@ impl Provider {
     /// already turns into an empty schedule).
     pub(crate) fn cadence_anchor(&self, t: OffsetDateTime) -> Option<OffsetDateTime> {
         let temporal = self.loader.temporal.as_ref()?;
-        let freq_s = temporal.frequency.whole_seconds();
-        (freq_s > 0).then(|| snap_down(temporal.start, t, freq_s))
+        let freq = temporal.frequency;
+        freq.is_positive().then(|| freq.floor(temporal.start, t))
     }
 
     /// The files a sample at `t` reads — the covering file and, for a bracket
@@ -1231,10 +1291,10 @@ impl Provider {
         };
         let temporal = &cadence.temporal;
         let anchor = cadence.anchor(t);
-        let mut anchors = vec![snap_down(temporal.start, anchor, cadence.file_s)];
+        let mut anchors = vec![temporal.file_anchor(anchor)];
         if cadence.bracket() {
-            let next = anchor + Duration::seconds(cadence.freq_s);
-            let next_file = snap_down(temporal.start, next, cadence.file_s);
+            let next = temporal.next_record_anchor(anchor);
+            let next_file = temporal.file_anchor(next);
             if temporal.end.is_none_or(|end| next < end) && next_file != anchors[0] {
                 anchors.push(next_file);
             }
@@ -1251,17 +1311,29 @@ impl Provider {
     }
 }
 
+/// [`SourceTemporal::record_in_file`] as an index, or the error for a record
+/// before its file (a negative index is never wrapped into a huge one).
+fn file_record(
+    temporal: &SourceTemporal,
+    anchor: OffsetDateTime,
+    file_anchor: OffsetDateTime,
+) -> Result<usize> {
+    let rec = temporal.record_in_file(anchor, file_anchor);
+    usize::try_from(rec).map_err(|_| Error::Format {
+        format: "cadence".to_string(),
+        detail: format!("record {rec} of the file anchored at {file_anchor} precedes it"),
+    })
+}
+
 /// The validated cadence of a DISCRETE loader (see [`Provider::cadence`]).
 struct Cadence {
     temporal: SourceTemporal,
-    freq_s: i64,
-    file_s: i64,
 }
 
 impl Cadence {
     /// The cadence anchor `t` snaps down to.
     fn anchor(&self, t: OffsetDateTime) -> OffsetDateTime {
-        snap_down(self.temporal.start, t, self.freq_s)
+        self.temporal.frequency.floor(self.temporal.start, t)
     }
 
     /// `records_per_sample = 2`: a sample is a two-record bracket.
@@ -1539,12 +1611,4 @@ fn concat_array(a: &ArrayData, b: &ArrayData) -> Result<ArrayData> {
             })
         }
     })
-}
-
-/// `start + floor((t - start) / step) * step` — snap `t` down to the aligned
-/// anchor at or before it. `step_s` must be positive.
-fn snap_down(start: OffsetDateTime, t: OffsetDateTime, step_s: i64) -> OffsetDateTime {
-    let elapsed = (t - start).whole_seconds();
-    let steps = elapsed.div_euclid(step_s); // floors toward -∞
-    start + Duration::seconds(steps * step_s)
 }

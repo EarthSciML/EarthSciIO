@@ -1,0 +1,11 @@
+{
+  "auth_realm": null,
+  "bytes": 584,
+  "etag": null,
+  "fetched_at": "2026-06-26T00:00:00Z",
+  "last_modified": null,
+  "schema": "earthsciio/manifest/v1",
+  "sha256_content": "7c99b328a9b1c16bb571e1b8d341ffca01d9e35f735f906952010b5d910eb177",
+  "source_loader": "ceds",
+  "url": "https://data.earthsci.dev/calendar/ceds_so2_2016.nc"
+}
