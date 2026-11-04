@@ -166,7 +166,7 @@ url = { version = "2", optional = true }
 # that ERA5 files from the Copernicus CDS need — the reason for the fork — was
 # merged upstream and shipped in 0.9.1, whose source is byte-identical to the
 # fork revision pinned here before, so the release is a straight substitute.
-netcdf-reader = { version = "0.9.1", default-features = false, features = ["netcdf4"] }
+netcdf-reader = { version = "0.12.0", default-features = false, features = ["netcdf4"] }
 
 # Apache Parquet decode for the `parquet` format reader — the columnar table
 # format the MOVES/NONROAD oracle snapshots (and most modern tabular science
