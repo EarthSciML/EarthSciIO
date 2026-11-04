@@ -11,13 +11,12 @@
 
 use std::collections::BTreeMap;
 
-use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use crate::calendar::CalendarPeriod;
 use crate::error::{Error, Result};
-use crate::esm::{check_esm_template, esm_template_names};
+use crate::esm::{check_esm_template, esm_template_names, expand_esm_template, EsmTemplateError};
 use crate::provider::{DataSource, SourceTemporal};
 
 /// What the caller adds to an esm entry when building a loader from it
@@ -43,6 +42,20 @@ fn esm_err(code: &'static str, source: &str, detail: impl Into<String>) -> Error
         source: source.to_string(),
         detail: detail.into(),
     }
+}
+
+/// A template error of the entry, restated to name the data source (§3.3).
+fn template_err(source: &str, e: EsmTemplateError) -> Error {
+    esm_err(
+        e.code,
+        source,
+        format!("{} in esm URL template {:?}", e.detail, e.template),
+    )
+}
+
+/// A field the entry leaves out: missing, `null` or `""`.
+fn absent(v: Option<&serde_json::Value>) -> bool {
+    v.is_none_or(|v| v.is_null() || v.as_str() == Some(""))
 }
 
 /// True when `t` begins with a URL scheme (`^[A-Za-z][A-Za-z0-9+.-]*://`).
@@ -79,8 +92,8 @@ fn check_url(name: &str, template: &str) -> Result<()> {
     Ok(())
 }
 
-/// One ISO 8601 instant as UTC: RFC 3339, or a date-time or date with no
-/// offset (read as UTC).
+/// One ISO 8601 instant as UTC: a date-time with a `T` or space separator
+/// and an optional `Z` or `±HH:MM` offset (none reads as UTC), or a date.
 fn instant(name: &str, field: &str, value: &serde_json::Value) -> Result<OffsetDateTime> {
     let Some(text) = value.as_str() else {
         return Err(esm_err(
@@ -97,10 +110,30 @@ fn instant(name: &str, field: &str, value: &serde_json::Value) -> Result<OffsetD
             format!("temporal.{field} {text:?} is not an ISO 8601 instant"),
         )
     };
-    if let Ok(t) = OffsetDateTime::parse(s, &Rfc3339) {
-        return Ok(t.to_offset(UtcOffset::UTC));
+    // One spelling: a `T` separator and `+00:00` for `Z`.
+    let mut s = s.to_string();
+    if s.len() > 10 && matches!(s.as_bytes()[10], b' ' | b't') {
+        s.replace_range(10..11, "T");
     }
-    let s = s.replace(' ', "T");
+    if let Some(head) = s.strip_suffix(['Z', 'z']) {
+        s = format!("{head}+00:00");
+    }
+    let offset_forms = [
+        format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond][offset_hour sign:mandatory]:[offset_minute]"
+        ),
+        format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second][offset_hour sign:mandatory]:[offset_minute]"
+        ),
+        format_description!(
+            "[year]-[month]-[day]T[hour]:[minute][offset_hour sign:mandatory]:[offset_minute]"
+        ),
+    ];
+    for f in offset_forms {
+        if let Ok(t) = OffsetDateTime::parse(&s, f) {
+            return Ok(t.to_offset(UtcOffset::UTC));
+        }
+    }
     let forms = [
         format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]"),
         format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]"),
@@ -136,18 +169,29 @@ fn temporal(
             "temporal must be an object",
         ));
     };
-    let text = |k: &str| {
-        obj.get(k)
-            .and_then(serde_json::Value::as_str)
-            .filter(|s| !s.is_empty())
+    // A present field must be a string; a missing, null or empty one is None.
+    let text = |k: &str, code: &'static str| -> Result<Option<&str>> {
+        let v = obj.get(k);
+        if absent(v) {
+            return Ok(None);
+        }
+        v.and_then(serde_json::Value::as_str)
+            .map(Some)
+            .ok_or_else(|| esm_err(code, name, format!("temporal.{k} must be a string")))
     };
-    let Some(start_v) = obj
-        .get("start")
-        .filter(|v| !v.is_null() && v.as_str() != Some(""))
-    else {
+    let freq = text("frequency", "esm_period_invalid")?;
+    let fp = text("file_period", "esm_period_invalid")?;
+    let tv = text("time_variable", "esm_source_temporal")?;
+    let Some(start_v) = obj.get("start").filter(|v| !absent(Some(v))) else {
+        if freq.is_some() || fp.is_some() {
+            return Err(esm_err(
+                "esm_source_temporal",
+                name,
+                "temporal declares a frequency or file_period but no start to anchor it",
+            ));
+        }
         return Ok(None); // no anchor: a time-invariant source
     };
-    let (freq, fp) = (text("frequency"), text("file_period"));
     let (Some(f), Some(p)) = (freq.or(fp), fp.or(freq)) else {
         return Err(esm_err(
             "esm_source_temporal",
@@ -158,11 +202,8 @@ fn temporal(
     let f = period(name, "frequency", f)?;
     let p = period(name, "file_period", p)?;
     let start = instant(name, "start", start_v)?;
-    let mut t = SourceTemporal::new(start, f, p).time_dim(text("time_variable").unwrap_or("time"));
-    if let Some(end) = obj
-        .get("end")
-        .filter(|v| !v.is_null() && v.as_str() != Some(""))
-    {
+    let mut t = SourceTemporal::new(start, f, p).time_dim(tv.unwrap_or("time"));
+    if let Some(end) = obj.get("end").filter(|v| !absent(Some(v))) {
         t = t.end(instant(name, "end", end)?);
     }
     if let Some(n) = records_per_sample {
@@ -170,14 +211,10 @@ fn temporal(
     }
     if let Some(rpf) = obj.get("records_per_file").filter(|v| !v.is_null()) {
         if rpf.as_str() != Some("auto") {
-            // The records of the first file: frequency anchors in [start, next file).
+            // The records of the first file: frequency anchors in [start, next
+            // file), counted from their indices (§2.3), not by stepping.
             let next_file = t.next_file_anchor(start);
-            let mut n: i64 = 0;
-            let mut a = t.first_record_anchor_from(start);
-            while a < next_file {
-                n += 1;
-                a = t.next_record_anchor(a);
-            }
+            let n = f.ceil_index(start, next_file) - f.ceil_index(start, start);
             if rpf.as_i64() != Some(n) {
                 return Err(esm_err(
                     "esm_source_records_per_file",
@@ -199,9 +236,9 @@ impl DataSource {
     /// it after EarthSciAST has loaded it (locations absolute, a mount's
     /// `url_substitutions` applied).
     ///
-    /// Errors are [`Error::EsmSource`] (codes `esm_source_*` and
-    /// `esm_period_invalid`) or, for a template, [`Error::BadUrl`] carrying an
-    /// `esm_template_*` code; each message names the source or the template.
+    /// Errors are [`Error::EsmSource`], with an `esm_source_*` code,
+    /// `esm_period_invalid`, or an `esm_template_*` code for a template of the
+    /// entry; each message names the source.
     pub fn from_esm(
         name: &str,
         entry: &serde_json::Value,
@@ -269,7 +306,7 @@ impl DataSource {
             subs.insert("var".to_string(), opts.variables[0].clone());
         }
         for t in std::iter::once(&template).chain(mirrors.iter()) {
-            check_esm_template(t, &subs)?;
+            check_esm_template(t, &subs).map_err(|e| template_err(name, e))?;
         }
         let reader_options = match obj.get("reader_options") {
             None | Some(serde_json::Value::Null) => serde_json::Map::new(),
@@ -286,9 +323,16 @@ impl DataSource {
             .variables(opts.variables.clone())
             .mirrors(mirrors)
             .reader_options(reader_options)
-            .esm_template(subs);
-        if let Some(t) = temporal(name, obj.get("temporal"), opts.records_per_sample)? {
-            out = out.temporal(t);
+            .esm_template(subs.clone());
+        match temporal(name, obj.get("temporal"), opts.records_per_sample)? {
+            Some(t) => out = out.temporal(t),
+            // A time-invariant source has no anchor, so a {date:...} token has
+            // nothing to expand against.
+            None => {
+                for t in std::iter::once(&out.url_template).chain(out.mirrors.iter()) {
+                    expand_esm_template(t, None, &subs).map_err(|e| template_err(name, e))?;
+                }
+            }
         }
         Ok(out)
     }

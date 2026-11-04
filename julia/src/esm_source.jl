@@ -10,8 +10,9 @@
     EsmSourceError(code, source, detail)
 
 An esm data source EarthSciIO cannot read. `code` is one of the `esm_source_*`
-codes of spec/esm-sources.md §3.3 (or `esm_period_invalid`); the message contains
-it and the source's name."""
+codes of spec/esm-sources.md §3.3, `esm_period_invalid`, or an `esm_template_*`
+code for a template of the entry; the message contains the code and the
+source's name."""
 struct EsmSourceError <: Exception
     code::String
     source::String
@@ -23,6 +24,19 @@ Base.showerror(io::IO, e::EsmSourceError) =
 const _URL_SCHEME = r"^[A-Za-z][A-Za-z0-9+.-]*://"
 
 _get(d, k) = d isa AbstractDict ? get(d, k, nothing) : nothing
+
+# A field the entry leaves out: missing, `null` or `""`.
+_absent(v) = v === nothing || (v isa AbstractString && isempty(v))
+
+# Run `f`, restating an `EsmTemplateError` to name the data source (§3.3).
+function _with_source(f, name::String)
+    try
+        return f()
+    catch e
+        e isa EsmTemplateError || rethrow()
+        throw(EsmSourceError(e.code, name, "$(e.detail) in esm URL template $(repr(e.template))"))
+    end
+end
 
 function _esm_check_url(name::String, t::String)
     occursin("\${", t) && throw(
@@ -59,6 +73,9 @@ function _esm_instant(name::String, field::String, v)
 end
 
 function _esm_period(name::String, field::String, v)
+    v isa AbstractString || throw(
+        EsmSourceError("esm_period_invalid", name, "temporal.$field must be a string")
+    )
     try
         return CalendarPeriod(String(v))
     catch e
@@ -73,11 +90,19 @@ function _esm_temporal(name::String, node, records_per_sample)
         EsmSourceError("esm_source_temporal", name, "temporal must be an object")
     )
     start = _get(node, "start")
-    (start === nothing || start == "") && return nothing
     freq = _get(node, "frequency")
     fp = _get(node, "file_period")
-    freq == "" && (freq = nothing)
-    fp == "" && (fp = nothing)
+    _absent(freq) && (freq = nothing)
+    _absent(fp) && (fp = nothing)
+    if _absent(start)
+        (freq === nothing && fp === nothing) || throw(
+            EsmSourceError(
+                "esm_source_temporal", name,
+                "temporal declares a frequency or file_period but no start to anchor it"
+            )
+        )
+        return nothing  # no anchor: a time-invariant source
+    end
     freq === nothing && fp === nothing && throw(
         EsmSourceError(
             "esm_source_temporal", name,
@@ -89,20 +114,21 @@ function _esm_temporal(name::String, node, records_per_sample)
     st = _esm_instant(name, "start", start)
     stop = _get(node, "end")
     tv = _get(node, "time_variable")
+    (_absent(tv) || tv isa AbstractString) || throw(
+        EsmSourceError("esm_source_temporal", name, "temporal.time_variable must be a string")
+    )
     temporal = SourceTemporal(
         st, f, p;
-        stop = (stop === nothing || stop == "") ? nothing : _esm_instant(name, "end", stop),
-        time_dim = (tv === nothing || tv == "") ? "time" : String(tv),
+        stop = _absent(stop) ? nothing : _esm_instant(name, "end", stop),
+        time_dim = _absent(tv) ? "time" : String(tv),
         records_per_sample = records_per_sample
     )
     rpf = _get(node, "records_per_file")
     if rpf !== nothing && rpf != "auto"
+        # The records of the first file: frequency anchors in [start, next
+        # file), counted from their indices (spec §2.3), not by stepping.
         nxt = next_file_anchor(temporal, st)
-        n, a = 0, first_record_anchor_from(temporal, st)
-        while a < nxt
-            n += 1
-            a = next_record_anchor(temporal, a)
-        end
+        n = period_ceil(f, st, nxt) - period_ceil(f, st, st)
         (rpf isa Integer && !(rpf isa Bool) && rpf == n) || throw(
             EsmSourceError(
                 "esm_source_records_per_file", name,
@@ -144,8 +170,14 @@ function provider_from_esm(
         EsmSourceError("esm_source_url", nm, "has no source.url_template")
     )
     template = String(template)
-    ms = url_override !== nothing ? Any[] : something(_get(src, "mirrors"), Any[])
-    mirrors = String[String(m) for m in ms]
+    ms = url_override !== nothing ? nothing : _get(src, "mirrors")
+    ms === nothing || ms isa AbstractVector || throw(
+        EsmSourceError("esm_source_url", nm, "source.mirrors must be an array")
+    )
+    ms === nothing || all(m -> m isa AbstractString, ms) || throw(
+        EsmSourceError("esm_source_url", nm, "every mirror must be a string")
+    )
+    mirrors = ms === nothing ? String[] : String[String(m) for m in ms]
     for t in (template, mirrors...)
         _esm_check_url(nm, t)
     end
@@ -163,8 +195,15 @@ function provider_from_esm(
         EsmSourceError("esm_source_invalid", nm, "reader_options must be an object")
     )
     reader_kwargs = Dict{Symbol, Any}(Symbol(k) => v for (k, v) in ropts)
-    url = EsmTemplate(template; substitutions = subs, mirrors = mirrors)
+    url = _with_source(() -> EsmTemplate(template; substitutions = subs, mirrors = mirrors), nm)
     temporal = _esm_temporal(nm, _get(entry, "temporal"), records_per_sample)
+    # A time-invariant source has no anchor, so a {date:...} token has nothing
+    # to expand against.
+    temporal === nothing && _with_source(nm) do
+        for t in (template, mirrors...)
+            expand_esm_template(t; substitutions = subs)
+        end
+    end
     common = (;
         format = String(fmt), variables = isempty(vars) ? nothing : vars,
         reader_kwargs = reader_kwargs, source_loader = nm,

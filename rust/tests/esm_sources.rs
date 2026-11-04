@@ -178,6 +178,7 @@ fn every_case_of_the_shared_scenario() {
 fn a_url_override_must_still_be_a_url() {
     let entry = serde_json::json!({
         "source": {"url_template": "https://h/{date:%Y}.nc"},
+        "temporal": {"start": "2020-01-01T00:00:00Z", "frequency": "P1Y"},
         "metadata": {"esio_format": "netcdf"}
     });
     let ok = EsmSourceOptions {

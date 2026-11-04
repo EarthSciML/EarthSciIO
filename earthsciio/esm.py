@@ -151,6 +151,17 @@ def esm_template_names(template: str) -> list[str]:
     return out
 
 
+def _check_esm_template(template: str, substitutions: Mapping[str, str]) -> None:
+    """Check every non-date token of ``template`` against ``substitutions``
+    without an anchor: a reserved, unbound or formatted substitution fails
+    here, at construction, rather than at the first fetch."""
+    expand_esm_template(
+        _TOKEN.sub(lambda m: m.group(0) if m.group(1) != "date" else "", template),
+        None,
+        substitutions,
+    )
+
+
 @dataclass(frozen=True)
 class EsmTemplate:
     """A loader URL that is an esm template (spec/esm-sources.md §1.5).
@@ -165,11 +176,7 @@ class EsmTemplate:
 
     def __post_init__(self) -> None:
         # Refuse a reserved name or an unbound one now, not at the first fetch.
-        expand_esm_template(
-            _TOKEN.sub(lambda m: m.group(0) if m.group(1) != "date" else "", self.template),
-            None,
-            self.substitutions,
-        )
+        _check_esm_template(self.template, self.substitutions)
 
     def __call__(self, anchor: _dt.datetime) -> str:
         return expand_esm_template(self.template, anchor, self.substitutions)

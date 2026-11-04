@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 from dataclasses import dataclass
 
 MANIFEST_SCHEMA_TAG = "earthsciio/manifest/v1"
@@ -76,15 +77,22 @@ def utc_now_rfc3339() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# A fraction of a second, up to the offset or the end.
+_FRACTION = re.compile(r"(?<=:\d\d)\.(\d+)(?=[+-]|$)")
+
+
 def parse_rfc3339(value: str) -> _dt.datetime:
     """Parse an RFC 3339 / ISO 8601 timestamp to an aware UTC ``datetime``.
 
-    Tolerates the trailing ``Z`` (Python 3.9's ``fromisoformat`` does not accept
-    it natively) and fractional seconds. A naive input is assumed UTC.
+    Tolerates the trailing ``Z`` and fractional seconds of any length (Python
+    3.9's ``fromisoformat`` accepts neither: it reads exactly 3 or 6 fraction
+    digits). A naive input is assumed UTC.
     """
     text = value.strip()
     if text.endswith("Z") or text.endswith("z"):
         text = text[:-1] + "+00:00"
+    # Fractional seconds to exactly 6 digits (truncated past microseconds).
+    text = _FRACTION.sub(lambda m: "." + (m.group(1) + "00000")[:6], text, count=1)
     dt = _dt.datetime.fromisoformat(text)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_dt.timezone.utc)

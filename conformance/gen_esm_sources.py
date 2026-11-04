@@ -72,13 +72,47 @@ ceds = {
 
 
 def err(id, entry, code, opts=None, mentions=()):
+    # Every message names the source (spec section 3.3), template errors too.
     return {
         "id": id,
         "name": "S",
         "entry": entry,
         "options": opts or {"variables": ["v"]},
         "error": code,
-        "mentions": list(mentions),
+        "mentions": ["S", *(m for m in mentions if m != "S")],
+    }
+
+
+six_hourly = {
+    "kind": "grid",
+    "source": {"url_template": "https://h/{date:%Y%m%d%H}.nc"},
+    "temporal": {"start": "2020-01-01T00:00:00Z", "frequency": "PT6H"},
+    "metadata": {"esio_format": "netcdf"},
+}
+
+
+def six_hourly_case(id, start):
+    """six_hourly with `start` spelled another way for the same instant."""
+    return {
+        "id": id,
+        "name": "H",
+        "entry": setp(six_hourly, ["temporal", "start"], start),
+        "options": {"variables": ["v"], "window_s": [s(2020, 1, 1), s(2020, 1, 1, 12)]},
+        "expect": {
+            "format": "netcdf",
+            "const": False,
+            "time_dim": "time",
+            "refresh_times_s": [s(2020, 1, 1), s(2020, 1, 1, 6)],
+            "files": [
+                {
+                    "t_s": s(2020, 1, 1, 7),
+                    "file_anchor_s": s(2020, 1, 1, 6),
+                    "record": 0,
+                    "url": "https://h/2020010106.nc",
+                    "mirrors": [],
+                }
+            ],
+        },
     }
 
 
@@ -281,27 +315,40 @@ cases = [
             ],
         },
     },
+    six_hourly_case("frequency-alone", "2020-01-01T00:00:00Z"),
+    # One instant, spelled every way an entry may (spec section 3.1).
+    six_hourly_case("start-offset", "2019-12-31T19:00:00-05:00"),
+    six_hourly_case("start-space-separator", "2020-01-01 00:00:00"),
+    six_hourly_case("start-space-separator-z", "2020-01-01 00:00:00Z"),
+    six_hourly_case("start-one-digit-fraction", "2020-01-01T00:00:00.0Z"),
     {
-        "id": "frequency-alone",
-        "name": "H",
+        # records_per_file is checked from anchor indices, not by stepping
+        # through 31.5M records.
+        "id": "records-per-file-many",
+        "name": "S1",
         "entry": {
             "kind": "grid",
-            "source": {"url_template": "https://h/{date:%Y%m%d%H}.nc"},
-            "temporal": {"start": "2020-01-01T00:00:00Z", "frequency": "PT6H"},
+            "source": {"url_template": "https://h/{date:%Y}.nc"},
+            "temporal": {
+                "start": "2015-01-01T00:00:00Z",
+                "frequency": "PT1S",
+                "file_period": "P1Y",
+                "records_per_file": 31536000,
+            },
             "metadata": {"esio_format": "netcdf"},
         },
-        "options": {"variables": ["v"], "window_s": [s(2020, 1, 1), s(2020, 1, 1, 12)]},
+        "options": {"variables": ["v"], "window_s": [s(2015, 1, 1), s(2015, 1, 1, 0, 0, 2)]},
         "expect": {
             "format": "netcdf",
             "const": False,
             "time_dim": "time",
-            "refresh_times_s": [s(2020, 1, 1), s(2020, 1, 1, 6)],
+            "refresh_times_s": [s(2015, 1, 1), s(2015, 1, 1, 0, 0, 1)],
             "files": [
                 {
-                    "t_s": s(2020, 1, 1, 7),
-                    "file_anchor_s": s(2020, 1, 1, 6),
-                    "record": 0,
-                    "url": "https://h/2020010106.nc",
+                    "t_s": s(2015, 1, 1, 0, 0, 1),
+                    "file_anchor_s": s(2015, 1, 1),
+                    "record": 1,
+                    "url": "https://h/2015.nc",
                     "mirrors": [],
                 }
             ],
@@ -348,6 +395,71 @@ cases = [
         setp(geos, ["temporal", "frequency"], "PT1.5H"),
         "esm_period_invalid",
         {"variables": ["T2M"]},
+    ),
+    err(
+        "unbound-sector-in-mirror",
+        {
+            "kind": "grid",
+            "source": {
+                "url_template": "https://x/{date:%m}.nc",
+                "mirrors": ["file:///data/{sector}_{date:%m}.nc"],
+            },
+            "temporal": {"start": "2016-01-01T00:00:00Z", "frequency": "P1M"},
+            "metadata": {"esio_format": "netcdf"},
+        },
+        "esm_template_unbound",
+        {"variables": ["v"]},
+        ["sector"],
+    ),
+    err(
+        "frequency-not-a-string",
+        drop(setp(geos, ["temporal", "frequency"], 3600), "temporal", "records_per_file"),
+        "esm_period_invalid",
+        {"variables": ["T2M"]},
+        ["frequency"],
+    ),
+    err(
+        "time-variable-not-a-string",
+        setp(geos, ["temporal", "time_variable"], 5),
+        "esm_source_temporal",
+        {"variables": ["T2M"]},
+        ["time_variable"],
+    ),
+    err(
+        "start-not-a-string",
+        setp(geos, ["temporal", "start"], 0),
+        "esm_source_temporal",
+        {"variables": ["T2M"]},
+        ["start"],
+    ),
+    err(
+        "cadence-without-start",
+        drop(nei_entry, "temporal", "start"),
+        "esm_source_temporal",
+        {"variables": ["NOX"], "substitutions": {"sector": "agr"}},
+    ),
+    err(
+        "date-without-anchor",
+        {
+            "kind": "static",
+            "source": {"url_template": "https://h/nei_{date:%m}.ncf"},
+            "metadata": {"esio_format": "netcdf"},
+        },
+        "esm_template_no_anchor",
+    ),
+    err(
+        "mirrors-not-an-array",
+        setp(geos, ["source", "mirrors"], "file:///data/x.nc"),
+        "esm_source_url",
+        {"variables": ["T2M"]},
+        ["array"],
+    ),
+    err(
+        "mirror-not-a-string",
+        setp(geos, ["source", "mirrors"], [1]),
+        "esm_source_url",
+        {"variables": ["T2M"]},
+        ["string"],
     ),
     err(
         "var-ambiguous",

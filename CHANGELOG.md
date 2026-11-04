@@ -38,9 +38,17 @@ package version is independent of the `.esm` format version.
   `metadata.esio_format`, the URL template and mirrors as esm templates (binding
   `{var}` when one variable is read), the calendar `temporal` block (checking
   `records_per_file` against the cadence) and `reader_options`. A source it
-  cannot read fails with an `esm_source_*` code and the source's name. Pinned by
-  the shared `esm-sources` scenario, which includes reseact's GEOS-FP A1 and
-  NEI 2016 entries.
+  cannot read fails with an `esm_source_*` code and the source's name; a
+  template error of the entry (an unbound mirror substitution, a `{date:…}` in
+  a time-invariant source) is restated the same way with its `esm_template_*`
+  code. Pinned by the shared `esm-sources` scenario, which includes reseact's
+  GEOS-FP A1 and NEI 2016 entries.
+
+- **fix:** the three tracks read an ISO 8601 instant alike: a `T` or space
+  separator, a `Z` or `±HH:MM` offset (converted to UTC) or none (UTC), and a
+  fraction of any length. Julia's string `start`/`stop` of a `SourceTemporal`
+  accepted only a UTC suffix; Python's `parse_rfc3339` on 3.9 and 3.10 refused
+  a fraction that was not 3 or 6 digits.
 
 ### Rust
 
