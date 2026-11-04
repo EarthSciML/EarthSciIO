@@ -2280,6 +2280,13 @@ CALENDAR_BAD_PERIODS = [
     "P1DT",
     "PT1D",
     "",
+    # Only ASCII digits are digits, and nothing may follow the last component.
+    "P\u0661M",
+    "P1M\n",
+    # Months and seconds are signed 64-bit integers in every track: a component
+    # past that, or a total past it, is refused rather than overflowing.
+    "P9223372036854775808D",
+    "P106751991167301D",
 ]
 
 CALENDAR_CADENCES = [
@@ -2349,10 +2356,23 @@ CALENDAR_CADENCES = [
         ["2016-05-01T23:00:00Z", "2016-05-02T01:30:00Z"],
         "a fixed cadence gives the anchors it always gave",
     ),
+    (
+        "window-past-end",
+        "2016-01-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        "2016-01-01T00:00:00Z",
+        "2016-07-01T00:00:00Z",
+        ["2016-05-15T00:00:00Z", "2016-07-15T00:00:00Z"],
+        "the window end, not the data end, bounds the refresh times: a window past "
+        "`end` still lists every anchor in it, and a time past both still locates "
+        "its record on the calendar",
+        "2016-04-01T00:00:00Z",
+    ),
 ]
 
 
-def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note):
+def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note, end=None):
     periods = {p: (m, s) for p, m, s in CALENDAR_PERIODS}
     st = _cal_dt(start)
     fm, fs = periods[freq]
@@ -2381,11 +2401,15 @@ def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note):
             "next_record_anchor_s": _cal_s(nxt),
         }
 
-    return {
+    case = {
         "id": cid,
         "note": note,
         "start": start,
         "start_s": _cal_s(st),
+    }
+    if end is not None:
+        case.update({"end": end, "end_s": _cal_s(_cal_dt(end))})
+    return case | {
         "frequency": freq,
         "file_period": fp,
         "window": [lower, upper],
@@ -2512,6 +2536,16 @@ def emit_calendar_scenario():
             "samples": [
                 {"t_s": s(2015, 11, 3), "records_per_sample": 1, "SO2": [10.0, 10.0]},
                 {"t_s": s(2016, 2, 29), "records_per_sample": 1, "SO2": [13.0, 13.0]},
+                # Outside the run window (but inside the data): read from the
+                # calendar, not clamped to the window's first or last record.
+                {"t_s": s(2015, 6, 10), "records_per_sample": 1, "SO2": [5.0, 5.0]},
+                {"t_s": s(2016, 7, 15), "records_per_sample": 1, "SO2": [18.0, 18.0]},
+                {
+                    "t_s": s(2016, 7, 15),
+                    "records_per_sample": 2,
+                    "SO2": [[18.0, 18.0], [19.0, 19.0]],
+                    "time_s": [s(2016, 7), s(2016, 8)],
+                },
                 {
                     "t_s": s(2015, 12, 15),
                     "records_per_sample": 2,
@@ -2530,7 +2564,8 @@ def emit_calendar_scenario():
             "description": (
                 "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO "
                 "duration parses to `months` and `seconds`; each of `bad_periods` is an "
-                "esm_period_invalid error. `cadences`: for start/frequency/file_period, "
+                "esm_period_invalid error. `cadences`: for start/frequency/file_period "
+                "(and `end`, the exclusive end of the data, where given), "
                 "refresh_times over the half-open window are `refresh_times_s`, and at "
                 "each `at[].t` the record anchor, the file anchor, the 0-based record in "
                 "its file and the next record's anchor are as given. All times are UTC; "

@@ -62,11 +62,14 @@ fn cadences_derive_the_calendar_anchors() {
     let sc = scenario();
     for c in sc["cadences"].as_array().unwrap() {
         let id = c["id"].as_str().unwrap();
-        let temporal = SourceTemporal::new(
+        let mut temporal = SourceTemporal::new(
             at(&c["start_s"]),
             CalendarPeriod::parse(c["frequency"].as_str().unwrap()).unwrap(),
             CalendarPeriod::parse(c["file_period"].as_str().unwrap()).unwrap(),
         );
+        if let Some(end) = c.get("end_s") {
+            temporal = temporal.end(at(end));
+        }
         let w = c["window_s"].as_array().unwrap();
         let window = (at(&w[0]), at(&w[1]));
         let loader = DataSource::new(id, "netcdf", "file:///unused.nc").temporal(temporal.clone());
@@ -80,42 +83,59 @@ fn cadences_derive_the_calendar_anchors() {
         assert_eq!(p.refresh_times(), want, "{id}: refresh times");
         for a in c["at"].as_array().unwrap() {
             let t = at(&a["t_s"]);
-            let loc = temporal.locate(t);
             let label = format!("{id} at {}", a["t"]);
+            let anchor = temporal.record_anchor(t);
+            let file_anchor = temporal.file_anchor(anchor);
             assert_eq!(
-                secs(loc.record_anchor),
+                secs(anchor),
                 a["record_anchor_s"].as_i64().unwrap(),
                 "{label}"
             );
             assert_eq!(
-                secs(loc.file_anchor),
+                secs(file_anchor),
                 a["file_anchor_s"].as_i64().unwrap(),
                 "{label}"
             );
-            assert_eq!(loc.record as i64, a["record"].as_i64().unwrap(), "{label}");
             assert_eq!(
-                secs(loc.next_record_anchor),
+                temporal.record_in_file(anchor, file_anchor),
+                a["record"].as_i64().unwrap(),
+                "{label}"
+            );
+            assert_eq!(
+                secs(temporal.next_record_anchor(t)),
                 a["next_record_anchor_s"].as_i64().unwrap(),
                 "{label}"
             );
-            // The named helpers agree with `locate`.
-            assert_eq!(temporal.record_anchor(t), loc.record_anchor, "{label}");
-            assert_eq!(
-                temporal.file_anchor(loc.record_anchor),
-                loc.file_anchor,
-                "{label}"
-            );
-            assert_eq!(
-                temporal.next_record_anchor(t),
-                loc.next_record_anchor,
-                "{label}"
-            );
-            assert_eq!(
-                temporal.record_in_file(loc.record_anchor, loc.file_anchor),
-                loc.record,
-                "{label}"
-            );
         }
+    }
+}
+
+#[test]
+fn a_record_before_its_file_is_negative_not_wrapped() {
+    let temporal = SourceTemporal::new(
+        at(&serde_json::json!(1_451_606_400)), // 2016-01-01
+        CalendarPeriod::months(1),
+        CalendarPeriod::months(1),
+    );
+    let jan = at(&serde_json::json!(1_451_606_400));
+    let feb = at(&serde_json::json!(1_454_284_800));
+    assert_eq!(temporal.record_in_file(jan, feb), -1);
+}
+
+#[test]
+fn a_fractional_or_zero_duration_step_is_refused_by_the_provider() {
+    use time::Duration;
+    for (freq, file) in [
+        (Duration::milliseconds(1500), Duration::hours(1)),
+        (Duration::hours(1), Duration::milliseconds(500)),
+        (Duration::ZERO, Duration::hours(1)),
+    ] {
+        let temporal = SourceTemporal::new(OffsetDateTime::UNIX_EPOCH, freq, file);
+        let loader = DataSource::new("x", "netcdf", "file:///unused.nc").temporal(temporal);
+        let e = Provider::new(loader, corpus_cache(), None)
+            .err()
+            .unwrap_or_else(|| panic!("{freq:?}/{file:?} was accepted"));
+        assert!(e.to_string().contains("esm_period_invalid"), "{e}");
     }
 }
 

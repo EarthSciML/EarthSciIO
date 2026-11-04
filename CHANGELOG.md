@@ -34,8 +34,10 @@ package version is independent of the `.esm` format version.
 
 - **breaking:** `SourceTemporal.frequency` and `.file_period` are
   `CalendarPeriod` values instead of `time::Duration`. `SourceTemporal::new`
-  still accepts a `Duration`. Monthly cadences are no longer approximated by a
-  fixed number of seconds. New `SourceTemporal::locate` / `RecordLocation`, and
+  still accepts a `Duration`; one that is not a positive whole number of
+  seconds (a fraction of a second is no longer dropped) is refused by
+  `Provider::new` with `esm_period_invalid`, as Python refuses it. Monthly
+  cadences are no longer approximated by a fixed number of seconds. New
   `Error::BadPeriod` (`esm_period_invalid`).
 
 ### Python
@@ -50,7 +52,8 @@ package version is independent of the `.esm` format version.
   and Rust do, in Unix seconds (UTC). Each tick reads its own record of its own
   file by the calendar, rather than `mod1(tick, file length)`, which was wrong
   whenever the ticks did not start at a file's first record. `refresh_times`
-  returns the anchors in the window.
+  returns the anchors in the window, and a time outside the window is read
+  from the calendar too, as in Python and Rust.
 - **feat:** mirror failover. `fetch_blob(…; mirrors)` tries each mirror after
   the primary URL and caches the blob under the primary's key, and `Provider`
   takes `mirrors`. As in Python and Rust, rung 0 of the `file://` recheck

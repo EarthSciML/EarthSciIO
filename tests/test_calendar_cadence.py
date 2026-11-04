@@ -49,7 +49,7 @@ def _temporal(c, **kw):
 
 @pytest.mark.parametrize("case", SC["cadences"], ids=[c["id"] for c in SC["cadences"]])
 def test_cadence(case):
-    temporal = _temporal(case)
+    temporal = _temporal(case, end=_t(case["end_s"]) if "end_s" in case else None)
     loader = DataSource(name="x", format="netcdf", url="file:///unused.nc", temporal=temporal)
     window = (_t(case["window_s"][0]), _t(case["window_s"][1]))
     p = Provider(loader, Cache(root="/nonexistent-unused", offline=True), window)

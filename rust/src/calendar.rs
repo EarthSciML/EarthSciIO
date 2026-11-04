@@ -27,9 +27,18 @@ pub struct CalendarPeriod {
 }
 
 impl From<Duration> for CalendarPeriod {
-    /// A fixed duration: `months = 0`, its whole seconds (a fraction of a
-    /// second is dropped).
+    /// A fixed duration: `months = 0` and its seconds. A cadence step is a
+    /// positive whole number of seconds, so a duration with a fraction of a
+    /// second, or one that is not positive, becomes the zero period, which is
+    /// not [positive](CalendarPeriod::is_positive): [`Provider::new`] refuses it
+    /// with an `esm_period_invalid` error, as the Python track refuses the same
+    /// `timedelta`. The fraction is never silently dropped.
+    ///
+    /// [`Provider::new`]: crate::Provider::new
     fn from(d: Duration) -> Self {
+        if d.subsec_nanoseconds() != 0 || d.whole_seconds() <= 0 {
+            return CalendarPeriod::default();
+        }
         CalendarPeriod {
             months: 0,
             seconds: d.whole_seconds(),
@@ -57,7 +66,12 @@ fn components(period: &str, s: &str, order: &[char]) -> Result<Vec<i64>> {
         if n == 0 {
             return Err(bad(
                 period,
-                format!("expected a whole number before {:?}", &rest[..1]),
+                // The first CHARACTER, not byte: a non-ASCII digit is refused,
+                // not a panic on a char boundary.
+                format!(
+                    "expected a whole number before {:?}",
+                    rest.chars().next().expect("rest is not empty")
+                ),
             ));
         }
         let d = rest[n..].chars().next().expect("a non-digit follows");
@@ -237,5 +251,21 @@ mod tests {
             -1,
             "a fraction of a second before an anchor is before it"
         );
+    }
+
+    #[test]
+    fn a_duration_that_is_not_whole_positive_seconds_is_not_a_period() {
+        assert_eq!(
+            CalendarPeriod::from(Duration::hours(3)),
+            CalendarPeriod::seconds(10_800)
+        );
+        for d in [
+            Duration::milliseconds(1500),
+            Duration::milliseconds(500),
+            Duration::ZERO,
+            Duration::hours(-1),
+        ] {
+            assert!(!CalendarPeriod::from(d).is_positive(), "{d:?}");
+        }
     }
 }

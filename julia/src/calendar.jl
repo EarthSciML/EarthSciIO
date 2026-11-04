@@ -37,16 +37,37 @@ struct CalendarPeriod
     end
 end
 
-const _ISO_PERIOD = r"^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$"
+# ASCII digits only, and `\z` (the very end) rather than `$`, which also
+# matches before a final newline — so this refuses what Python and Rust refuse.
+const _ISO_PERIOD = r"^P(?:([0-9]+)Y)?(?:([0-9]+)M)?(?:([0-9]+)W)?(?:([0-9]+)D)?(?:T(?=[0-9])(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+)S)?)?\z"
 
 function CalendarPeriod(iso::AbstractString)
-    m = match(_ISO_PERIOD, iso)
-    (m === nothing || iso == "P") && throw(
-        CalendarPeriodError("esm_period_invalid: cannot read $(repr(String(iso))) as an ISO 8601 period")
+    bad() = CalendarPeriodError(
+        "esm_period_invalid: cannot read $(repr(String(iso))) as an ISO 8601 period"
     )
-    n = [c === nothing ? 0 : parse(Int, c) for c in m.captures]
-    months = 12 * n[1] + n[2]
-    seconds = 604800 * n[3] + 86400 * n[4] + 3600 * n[5] + 60 * n[6] + n[7]
+    m = match(_ISO_PERIOD, iso)
+    (m === nothing || iso == "P") && throw(bad())
+    # Months and seconds are `Int`s (64-bit, as in Python and Rust): a component
+    # or a total past that is refused, never wrapped.
+    too_large() = CalendarPeriodError("esm_period_invalid: the period $(repr(String(iso))) is too large")
+    n = Int[]
+    for c in m.captures
+        v = c === nothing ? 0 : tryparse(Int, c)
+        v === nothing && throw(too_large())
+        push!(n, v)
+    end
+    months, seconds = try
+        (
+            Base.Checked.checked_add(Base.Checked.checked_mul(12, n[1]), n[2]),
+            foldl(
+                (acc, (k, unit)) -> Base.Checked.checked_add(acc, Base.Checked.checked_mul(unit, k)),
+                zip(n[3:7], (604800, 86400, 3600, 60, 1)); init = 0
+            ),
+        )
+    catch err
+        err isa OverflowError || rethrow()
+        throw(too_large())
+    end
     months == 0 && seconds == 0 && throw(
         CalendarPeriodError("esm_period_invalid: the period $(repr(String(iso))) is zero")
     )

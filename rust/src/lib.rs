@@ -178,9 +178,7 @@ pub use offline::{is_offline, OFFLINE_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use prefetch::{EpochSample, Order, PrefetchBuilder, PrefetchGroup, PrefetchStats, Sample};
 #[cfg(not(target_arch = "wasm32"))]
-pub use provider::{
-    DataSource, Provider, RecordLocation, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV,
-};
+pub use provider::{DataSource, Provider, SourceTemporal, StoreAccess, Window, STORE_ACCESS_ENV};
 #[cfg(not(target_arch = "wasm32"))]
 pub use s3_config::{
     bucket_options_from_env, options_for_bucket, options_for_url, parse_bucket_options,

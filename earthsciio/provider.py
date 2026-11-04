@@ -147,6 +147,32 @@ class SourceTemporal:
         p = self._file_period
         return p.anchor(self.start, p.floor(self.start, t) + 1)
 
+    def _record_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The frequency anchors in ``[lower, upper)``: one ``ceil``, then each
+        anchor by its index (no floor per step)."""
+        f = self._frequency
+        k = f.ceil(self.start, lower)
+        out: list[_dt.datetime] = []
+        anchor = f.anchor(self.start, k)
+        while anchor < upper:
+            out.append(anchor)
+            k += 1
+            anchor = f.anchor(self.start, k)
+        return out
+
+    def _file_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The file-period anchors from the one at or before ``lower`` while
+        ``< upper``: one ``floor``, then each anchor by its index."""
+        p = self._file_period
+        k = p.floor(self.start, lower)
+        out: list[_dt.datetime] = []
+        anchor = p.anchor(self.start, k)
+        while anchor < upper:
+            out.append(anchor)
+            k += 1
+            anchor = p.anchor(self.start, k)
+        return out
+
     def record_in_file(self, anchor: _dt.datetime, file_anchor: _dt.datetime) -> int:
         """The 0-based record of frequency anchor ``anchor`` in the file that
         starts at ``file_anchor``: the frequency steps between them."""
@@ -590,12 +616,7 @@ class Provider:
             return []  # unbounded — no enumerable schedule
         lower = self._lower_bound()
         # First aligned anchor >= lower, then each next one (spec §2.3).
-        anchor = temporal.first_record_anchor_from(lower)
-        out: list[_dt.datetime] = []
-        while anchor < upper:
-            out.append(anchor)
-            anchor = temporal.next_record_anchor(anchor)
-        return out
+        return temporal._record_anchors(lower, upper)
 
     # -- prefetch ----------------------------------------------------------- #
 
@@ -622,13 +643,11 @@ class Provider:
         start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
         entries: list[CacheEntry] = []
         seen: set = set()
-        file_anchor = temporal.file_anchor(start)
-        while file_anchor < upper:
+        for file_anchor in temporal._file_anchors(start, upper):
             url = self._resolve(file_anchor)
             if url not in seen:
                 seen.add(url)
                 entries.append(self._fetch(url))
-            file_anchor = temporal.next_file_anchor(file_anchor)
         return entries
 
     # -- internals ---------------------------------------------------------- #

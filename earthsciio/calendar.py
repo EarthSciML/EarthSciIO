@@ -17,10 +17,17 @@ from .errors import EarthSciIOError
 
 __all__ = ["CalendarPeriod", "CalendarPeriodError"]
 
+# ASCII digits only, and `\Z` rather than `$` (which also matches before a final
+# newline): `\d` on a `str` would also take other scripts' digits,
+# which the Julia and Rust tracks refuse.
 _ISO = re.compile(
-    r"^P(?:(?P<Y>\d+)Y)?(?:(?P<Mo>\d+)M)?(?:(?P<W>\d+)W)?(?:(?P<D>\d+)D)?"
-    r"(?:T(?=\d)(?:(?P<H>\d+)H)?(?:(?P<Mi>\d+)M)?(?:(?P<S>\d+)S)?)?$"
+    r"^P(?:(?P<Y>[0-9]+)Y)?(?:(?P<Mo>[0-9]+)M)?(?:(?P<W>[0-9]+)W)?(?:(?P<D>[0-9]+)D)?"
+    r"(?:T(?=[0-9])(?:(?P<H>[0-9]+)H)?(?:(?P<Mi>[0-9]+)M)?(?:(?P<S>[0-9]+)S)?)?\Z"
 )
+
+# The largest months or seconds a period may hold: a signed 64-bit integer, as
+# in the Julia and Rust tracks, so all three refuse the same periods.
+_INT64_MAX = 2**63 - 1
 
 
 class CalendarPeriodError(EarthSciIOError, ValueError):
@@ -53,6 +60,8 @@ class CalendarPeriod:
         g = {k: int(v) if v else 0 for k, v in m.groupdict().items()}
         months = 12 * g["Y"] + g["Mo"]
         seconds = 604800 * g["W"] + 86400 * g["D"] + 3600 * g["H"] + 60 * g["Mi"] + g["S"]
+        if months > _INT64_MAX or seconds > _INT64_MAX:
+            raise CalendarPeriodError(f"esm_period_invalid: the period {iso!r} is too large")
         if months == 0 and seconds == 0:
             raise CalendarPeriodError(f"esm_period_invalid: the period {iso!r} is zero")
         return cls(months, seconds)

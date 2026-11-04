@@ -24,6 +24,7 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
             end
             @test err isa CalendarPeriodError && occursin("esm_period_invalid", sprint(showerror, err))
         end
+        @test_throws CalendarPeriodError CalendarPeriod("P99999999999999999999D")
         @test CalendarPeriod(Month(1)) == CalendarPeriod("P1M")
         @test CalendarPeriod(Hour(3)) == CalendarPeriod("PT3H")
     end
@@ -31,7 +32,10 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
     u(t) = datetime2unix(t)
     for c in sc["cadences"]
         @testset "cadence $(c["id"])" begin
-            temporal = SourceTemporal(Float64(c["start_s"]), c["frequency"], c["file_period"])
+            temporal = SourceTemporal(
+                Float64(c["start_s"]), c["frequency"], c["file_period"];
+                stop = haskey(c, "end_s") ? Float64(c["end_s"]) : nothing
+            )
             p = Provider(
                 Cache(; root = mktempdir(), offline = true), "file:///unused.nc";
                 format = "netcdf", temporal = temporal,
@@ -70,9 +74,19 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                     window = (Float64(src["window_s"][1]), Float64(src["window_s"][2]))
                 )
                 @test refresh_times(p) == Float64.(src["refresh_times_s"])
-                for smp in src["samples"]
+                # The same bracket asked of the Provider rather than the temporal.
+                q = Provider(
+                    cache, url; format = src["format"], variables = String.(src["variables"]),
+                    temporal = SourceTemporal(
+                        Float64(src["start_s"]), src["frequency"], src["file_period"];
+                        stop = Float64(src["end_s"]), time_dim = src["time_dim"]
+                    ),
+                    window = (Float64(src["window_s"][1]), Float64(src["window_s"][2])),
+                    records_per_sample = rps
+                )
+                for smp in src["samples"], prov in (p, q)
                     smp["records_per_sample"] == rps || continue
-                    nds = sample_at(p, Float64(smp["t_s"]))
+                    nds = sample_at(prov, Float64(smp["t_s"]))
                     f = nds[var]
                     # the fixture nests in file (row-major) order
                     @test _cal_corder(f.data) == _cal_flatten(smp[var])
@@ -80,6 +94,13 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                         @test nds.coords[src["time_dim"]].data == Float64.(smp["time_s"])
                     end
                 end
+                # A group's epochs are the refresh times, nothing outside the window.
+                g = PrefetchGroup(Dict("x" => p))
+                @test boundaries(g) == refresh_times(p)
+                # `prefetch` warms the files over the window, as Python and Rust do.
+                @test length(prefetch(p)) == length(
+                    unique(file_anchor(temporal, t) for t in refresh_times(p))
+                )
             end
         end
     end

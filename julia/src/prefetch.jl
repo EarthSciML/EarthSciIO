@@ -564,7 +564,7 @@ end
 # member's first anchor), to be stored against the slot and raised by its take!.
 function _anchor(p::Provider, t::Float64)
     try
-        return p.times[_tick_index(p, t)]
+        return _sample_anchor(p, t)
     catch err
         return err
     end
@@ -708,13 +708,8 @@ end
 # two-record bracket the successor tick's. Best-effort, like the warm-up itself.
 function _sample_urls(p::Provider, t::Float64)
     try
-        tick = _tick_index(p, t)
-        ts = Float64[p.times[tick]]
-        if p.records_per_sample == 2 && p.time_dim !== nothing && tick < length(p.times)
-            push!(ts, p.times[tick + 1])
-        end
         out = Tuple{String, Float64}[]
-        for tt in ts
+        for tt in _sample_url_times(p, t)
             u = p.url_for(tt)
             any(x -> x[1] == u, out) || push!(out, (u, tt))
         end

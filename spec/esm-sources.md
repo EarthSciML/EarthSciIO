@@ -146,6 +146,7 @@ caller's unit, and located a record as `mod1(tick, file length)`, which is
 wrong when the list does not start at a file's first record. It now also takes
 a `SourceTemporal` and a run `window`, as Python and Rust do:
 `Provider(cache, url; format, temporal, window)`. Times are then Unix seconds
-(UTC), the ticks are the anchors from the one at or before the window start to
-the last before its end, the record of each tick is §2.3's, and
-`refresh_times` returns the anchors in the window, as in Python and Rust.
+(UTC). `refresh_times` returns §2.3's refresh times over the window, `upper`
+being the window end (else `stop`) and never clipped to `stop`, as in Python
+and Rust. A sample at any time from `start` on, inside the window or not, is
+located by §2.3 on the calendar, as in Python and Rust.

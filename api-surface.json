@@ -735,14 +735,6 @@
         "python": "CalendarPeriodError",
         "julia": "CalendarPeriodError"
       }
-    },
-    {
-      "name": "record_location",
-      "kind": "type",
-      "tier": "stable",
-      "bindings": {
-        "rust": "RecordLocation"
-      }
     }
   ]
 }

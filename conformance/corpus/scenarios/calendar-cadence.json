@@ -1,7 +1,7 @@
 {
   "schema": "earthsciio/scenario/v1",
   "id": "calendar-cadence",
-  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period, refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`).",
+  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`).",
   "blobs": [
     {
       "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf",
@@ -103,7 +103,11 @@
     "-P1M",
     "P1DT",
     "PT1D",
-    ""
+    "",
+    "P\u0661M",
+    "P1M\n",
+    "P9223372036854775808D",
+    "P106751991167301D"
   ],
   "cadences": [
     {
@@ -839,6 +843,106 @@
           "next_record_anchor_s": 1462163400
         }
       ]
+    },
+    {
+      "id": "window-past-end",
+      "note": "the window end, not the data end, bounds the refresh times: a window past `end` still lists every anchor in it, and a time past both still locates its record on the calendar",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "window": [
+        "2016-01-01T00:00:00Z",
+        "2016-07-01T00:00:00Z"
+      ],
+      "window_s": [
+        1451606400,
+        1467331200
+      ],
+      "refresh_times_s": [
+        1451606400,
+        1454284800,
+        1456790400,
+        1459468800,
+        1462060800,
+        1464739200
+      ],
+      "at": [
+        {
+          "t": "2016-01-01T00:00:00Z",
+          "t_s": 1451606400,
+          "record_anchor_s": 1451606400,
+          "file_anchor": "2016-01-01T00:00:00Z",
+          "file_anchor_s": 1451606400,
+          "record": 0,
+          "next_record_anchor_s": 1454284800
+        },
+        {
+          "t": "2016-02-01T00:00:00Z",
+          "t_s": 1454284800,
+          "record_anchor_s": 1454284800,
+          "file_anchor": "2016-02-01T00:00:00Z",
+          "file_anchor_s": 1454284800,
+          "record": 0,
+          "next_record_anchor_s": 1456790400
+        },
+        {
+          "t": "2016-03-01T00:00:00Z",
+          "t_s": 1456790400,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
+          "record": 0,
+          "next_record_anchor_s": 1459468800
+        },
+        {
+          "t": "2016-04-01T00:00:00Z",
+          "t_s": 1459468800,
+          "record_anchor_s": 1459468800,
+          "file_anchor": "2016-04-01T00:00:00Z",
+          "file_anchor_s": 1459468800,
+          "record": 0,
+          "next_record_anchor_s": 1462060800
+        },
+        {
+          "t": "2016-05-01T00:00:00Z",
+          "t_s": 1462060800,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        },
+        {
+          "t": "2016-06-01T00:00:00Z",
+          "t_s": 1464739200,
+          "record_anchor_s": 1464739200,
+          "file_anchor": "2016-06-01T00:00:00Z",
+          "file_anchor_s": 1464739200,
+          "record": 0,
+          "next_record_anchor_s": 1467331200
+        },
+        {
+          "t": "2016-05-15T00:00:00Z",
+          "t_s": 1463270400,
+          "record_anchor_s": 1462060800,
+          "file_anchor": "2016-05-01T00:00:00Z",
+          "file_anchor_s": 1462060800,
+          "record": 0,
+          "next_record_anchor_s": 1464739200
+        },
+        {
+          "t": "2016-07-15T00:00:00Z",
+          "t_s": 1468540800,
+          "record_anchor_s": 1467331200,
+          "file_anchor": "2016-07-01T00:00:00Z",
+          "file_anchor_s": 1467331200,
+          "record": 0,
+          "next_record_anchor_s": 1470009600
+        }
+      ]
     }
   ],
   "providers": {
@@ -1025,6 +1129,40 @@
           "SO2": [
             13.0,
             13.0
+          ]
+        },
+        {
+          "t_s": 1433894400,
+          "records_per_sample": 1,
+          "SO2": [
+            5.0,
+            5.0
+          ]
+        },
+        {
+          "t_s": 1468540800,
+          "records_per_sample": 1,
+          "SO2": [
+            18.0,
+            18.0
+          ]
+        },
+        {
+          "t_s": 1468540800,
+          "records_per_sample": 2,
+          "SO2": [
+            [
+              18.0,
+              18.0
+            ],
+            [
+              19.0,
+              19.0
+            ]
+          ],
+          "time_s": [
+            1467331200,
+            1470009600
           ]
         },
         {
