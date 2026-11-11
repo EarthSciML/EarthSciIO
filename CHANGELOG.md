@@ -29,6 +29,20 @@ package version is independent of the `.esm` format version.
   it is given as the constructor does, instead of clamping it to the data. In
   Python, a naive window bound is UTC, as everywhere else, instead of raising
   `TypeError` against an aware `start`.
+- **feat:** `refresh_times_closed` (Python and Rust `Provider` methods, Julia
+  function) gives the refresh times over the closed window `[lower, upper]`:
+  those of `refresh_times`, which stays half-open, plus the anchor at the
+  window end itself when it is a cadence anchor before the source's `end`
+  (`spec/esm-sources.md` §2.3). An integrator running over `[t0, tf]` can use
+  them as tstops and refresh at `tf` when `tf` lands on a record, without
+  widening the window by an epsilon (#36). Everything that refresh needs is
+  served: `window_records` lists the record at the window end (and, with
+  `records_per_sample = 2`, its successor), `prefetch` warms their files, so a
+  run over a whole day of hourly data in daily files also warms the next
+  day's file, and a `PrefetchGroup` builds its boundaries from
+  `refresh_times_closed`, so it has a last epoch at the window end
+  (`spec/esm-sources.md` §2.6, `spec/prefetch.md` §3.2). `refresh_times` is
+  unchanged.
 
 ## v0.3.0
 

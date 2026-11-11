@@ -167,7 +167,7 @@ its neighbours' windows in one pass and the integrator scatters them.
 ```
 PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=None,
               workers=1, windows=None, transform=None)
-  boundaries() -> [time]          # sorted ∪ of the members' refresh_times and window starts; epoch k = [B[k], B[k+1])
+  boundaries() -> [time]          # sorted ∪ of the members' refresh_times_closed and window starts; epoch k = [B[k], B[k+1])
   start(order, from=None)         # "forward" | "reverse" | [epoch, ...]; cancels any previous order
   take(k) -> EpochSample          # blocks; k must be the next entry of the order
   ready(k) -> bool                # non-blocking: k is the next entry and its slot is finished
@@ -187,11 +187,17 @@ PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=
   seconds `f64`, Julia the providers' own `Float64` cadence unit). That is the
   caller's to keep: the group cannot check it in Julia.
 - **`boundaries()`** is the sorted, de-duplicated union of the members'
-  `refresh_times` and, for a member with a run window, the window start, where
-  the record in effect there takes over ([esm-sources.md](esm-sources.md)
-  §2.6). A member whose window holds no record anchor has no refresh times but
-  still one epoch start. Epoch `k` is the interval `[B[k], B[k+1])`, and the last
-  epoch is open on the right. Epoch indices are 0-based in Python and Rust and
+  `refresh_times_closed` (the refresh times over the closed window,
+  [esm-sources.md](esm-sources.md) §2.3) and, for a member with a run window,
+  the window start, where the record in effect there takes over
+  ([esm-sources.md](esm-sources.md) §2.6). A member whose window holds no record
+  anchor has no refresh times but still one epoch start. Epoch `k` is the
+  interval `[B[k], B[k+1])`, and the last epoch is open on the right. When a
+  member's window ends on one of its records (before its `end`), the last
+  boundary is that window end `tf`: its epoch holds no step of a run over
+  `[t0, tf]`, but its sample is the refresh at `tf`, so a solver that stops
+  there takes it like any other. A member with no window, or whose window ends
+  at its `end`, adds no such epoch. Epoch indices are 0-based in Python and Rust and
   on the wire, 1-based in Julia.
 - **What epoch `k` is, per member:** `sample_at(B[k])`. A member whose own
   cadence is coarser than the union snaps `B[k]` down to its anchor, so its
@@ -390,6 +396,7 @@ per rank:  P[s] = provider(s).with_window(W[rank][s])      # halo included
 forward:   G.start(forward, from = restart_epoch)
            for k: ep = G.take(k); copy changed samples into the rank's forcing buffers
                   integrate macro steps with B[k] <= t0 < tf <= B[k+1]
+                  (none in a last epoch at the run's end: its take is the refresh there)
 backward:  G.start(reverse)            # or the revolve access list
            for k descending: ep = G.take(k); per macro step in reverse: restore, replay, adjoint
 ```

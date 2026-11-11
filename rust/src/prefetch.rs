@@ -2,9 +2,9 @@
 //! `spec/prefetch.md` §3.
 //!
 //! A group holds several DISCRETE [`Provider`]s ("members"), each keyed by a
-//! string, and the sorted union of their refresh times and run-window starts
-//! ([`boundaries`]). Epoch
-//! `k` is `[B[k], B[k+1])`, and what epoch `k` IS, per member, is
+//! string, and the sorted union of their refresh times over the closed window
+//! ([`Provider::refresh_times_closed`]) and run-window starts ([`boundaries`]).
+//! Epoch `k` is `[B[k], B[k+1])`, and what epoch `k` IS, per member, is
 //! `member.sample_at(B[k])`. The caller declares the order in which it will take
 //! epochs ([`Order`]: forward, reverse — the adjoint's backward sweep — or an
 //! explicit revolve schedule), and worker threads decode ahead of it under a
@@ -470,9 +470,13 @@ pub struct PrefetchGroup<T = NativeDataset> {
 }
 
 impl<T: Send + Sync + 'static> PrefetchGroup<T> {
-    /// The sorted, de-duplicated union of the members' refresh times and run-window
+    /// The sorted, de-duplicated union of the members'
+    /// [`refresh_times_closed`](Provider::refresh_times_closed) and run-window
     /// starts (where the record in effect there takes over,
-    /// `spec/esm-sources.md` §2.6), in Unix seconds. Epoch `k` is `[B[k], B[k+1])`; the last is open on the right.
+    /// `spec/esm-sources.md` §2.6), in Unix seconds. Epoch `k` is
+    /// `[B[k], B[k+1])`; the last is open on the right. When a member's window
+    /// ends on one of its records, the last boundary is that window end: its
+    /// epoch holds no step of the run, but its sample is the refresh there.
     pub fn boundaries(&self) -> Vec<f64> {
         self.shared.config.boundaries.clone()
     }

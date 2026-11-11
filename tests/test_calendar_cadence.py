@@ -57,6 +57,7 @@ def test_cadence(case):
     window = (_t(case["window_s"][0]), _t(case["window_s"][1]))
     p = Provider(loader, Cache(root="/nonexistent-unused", offline=True), window)
     assert [t.timestamp() for t in p.refresh_times()] == case["refresh_times_s"]
+    assert [t.timestamp() for t in p.refresh_times_closed()] == case["refresh_times_closed_s"]
     for at in case["at"]:
         t = _t(at["t_s"])
         a = temporal.record_anchor(t)
@@ -103,6 +104,47 @@ def test_provider_over_the_corpus(name):
                 )
 
 
+@pytest.mark.parametrize("rps", [1, 2])
+def test_a_group_serves_the_refresh_at_the_window_end(rps):
+    """A run over ``[t0, tf]`` with ``tf`` on a record: ``prefetch`` warms what
+    the refresh at ``tf`` reads, and a group's last epoch is ``tf`` itself,
+    whose sample is that refresh (spec/prefetch.md §3.2)."""
+    pytest.importorskip("xarray")
+    pytest.importorskip("netCDF4")
+    src = SC["providers"]["ceds_yearly_files"]
+    cache = Cache(root=str(CORPUS / "cache"), offline=True)
+    loader = DataSource(
+        name="ceds",
+        format=src["format"],
+        url=EsmTemplate(src["url_template"], src["substitutions"]),
+        variables=src["variables"],
+        temporal=SourceTemporal(
+            start=_t(src["start_s"]),
+            end=_t(src["end_s"]),
+            frequency=src["frequency"],
+            file_period=src["file_period"],
+            time_dim=src["time_dim"],
+            records_per_sample=rps,
+        ),
+    )
+    t0, tf = _t(src["window_s"][0]), _t(src["window_s"][1])
+    p = Provider(loader, cache, (t0, tf))
+    assert p.refresh_times_closed() == [*p.refresh_times(), tf]
+    p.prefetch()
+    var = src["variables"][0]
+    with PrefetchGroup({"x": p}) as g:
+        b = g.boundaries()
+        assert b[-1] == tf
+        g.start("forward")
+        for k, t in enumerate(b):
+            sample = g.take(k)["x"]
+            assert sample.anchor == t
+            want = p.sample_at(t)
+            np.testing.assert_array_equal(
+                np.asarray(sample.data[var].data), np.asarray(want[var].data)
+            )
+
+
 @pytest.mark.parametrize("case", SC["windows"], ids=[c["id"] for c in SC["windows"]])
 def test_window(case):
     """Which records serve a run window, and which windows are refused
@@ -123,11 +165,14 @@ def test_window(case):
     p = Provider(loader, cache, window)
     assert [t.timestamp() for t in p.window_records()] == case["window_records_s"]
     assert [t.timestamp() for t in p.refresh_times()] == case["refresh_times_s"]
+    # Over the closed window, a refresh at the window end itself when a record
+    # is there (spec/esm-sources.md §2.3).
+    assert [t.timestamp() for t in p.refresh_times_closed()] == case["refresh_times_closed_s"]
     # A group schedules it even with no refresh times: its first epoch starts
-    # at the window start (spec/prefetch.md §3.2).
+    # at the window start, and a run ending on a record has an epoch at its
+    # end (spec/prefetch.md §3.2).
     with PrefetchGroup({"x": p}) as g:
-        expected = sorted({case["window_s"][0], *case["refresh_times_s"]})
-        assert [t.timestamp() for t in g.boundaries()] == expected
+        assert [t.timestamp() for t in g.boundaries()] == case["boundaries_s"]
 
 
 @pytest.mark.parametrize(

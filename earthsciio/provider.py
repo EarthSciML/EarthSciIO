@@ -147,9 +147,13 @@ class SourceTemporal:
         p = self._file_period
         return p.anchor(self.start, p.floor(self.start, t) + 1)
 
-    def _record_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+    def _record_anchors(
+        self, lower: _dt.datetime, upper: _dt.datetime, closed: bool = False
+    ) -> list[_dt.datetime]:
         """The frequency anchors in ``[lower, upper)``: one ``ceil``, then each
-        anchor by its index (no floor per step)."""
+        anchor by its index (no floor per step). With ``closed``, also the
+        record at ``upper`` itself when there is one (:meth:`_closing_record`,
+        spec/esm-sources.md §2.3)."""
         f = self._frequency
         k = f.ceil(self.start, lower)
         out: list[_dt.datetime] = []
@@ -158,6 +162,8 @@ class SourceTemporal:
             out.append(anchor)
             k += 1
             anchor = f.anchor(self.start, k)
+        if closed and (closing := self._closing_record(upper)) is not None:
+            out.append(closing)
         return out
 
     def _file_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
@@ -206,27 +212,43 @@ class SourceTemporal:
         return a, b
 
     def _window_records(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
-        """The anchors of the records serving ``[lower, upper)``
-        (spec/esm-sources.md §2.6): the one in effect at ``lower``, each one
-        after it while ``< upper`` and, for a two-record bracket, the successor
-        of the last of them unless it is at or past ``end``."""
+        """The anchors of the records serving the run window from ``lower`` to
+        ``upper`` (spec/esm-sources.md §2.6): the one in effect at ``lower``,
+        each one after it while ``< upper``, then :meth:`_end_records`."""
         f = self._frequency
         k = f.floor(self.start, lower)
         out = [f.anchor(self.start, k)]
         while (anchor := f.anchor(self.start, k + 1)) < upper:
             out.append(anchor)
             k += 1
+        return out + self._end_records(upper)
+
+    def _end_records(self, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The records a run window ending at ``upper`` needs at or after
+        ``upper`` (spec/esm-sources.md §2.6, items 3 and 4): the record at
+        ``upper`` itself when there is one (:meth:`_closing_record`, the
+        refresh at the window end that ``refresh_times_closed`` adds), then,
+        for a two-record bracket, the successor of the last record, unless it
+        is at or past ``end``."""
+        closing = self._closing_record(upper)
+        out = [] if closing is None else [closing]
         if self.records_per_sample == 2:
-            nxt = self._bracket_successor(upper)
+            after = upper if closing is None else self.next_record_anchor(closing)
+            nxt = self._bracket_successor(after)
             if nxt is not None:
                 out.append(nxt)
         return out
 
+    def _closing_record(self, upper: _dt.datetime) -> _dt.datetime | None:
+        """``upper`` when a record is anchored there — it is a cadence anchor
+        before ``end`` — else ``None``: the refresh a closed window ``[lower,
+        upper]`` adds (spec/esm-sources.md §2.3)."""
+        return upper if self._bracket_successor(upper) == upper else None
+
     def _bracket_successor(self, upper: _dt.datetime) -> _dt.datetime | None:
-        """The record a two-record bracket needs past the end ``upper`` of a
-        window: the first anchor at or after ``upper`` — the successor of the
-        last record in the window — unless it is at or past ``end``
-        (spec/esm-sources.md §2.6)."""
+        """The first record anchor at or after ``upper``, unless it is at or
+        past ``end`` (no record is there): the record a two-record bracket
+        needs past a window ending at ``upper`` (spec/esm-sources.md §2.6)."""
         nxt = self.first_record_anchor_from(upper)
         return nxt if self.end is None or nxt < self.end else None
 
@@ -679,6 +701,17 @@ class Provider:
         anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
         return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
+    def refresh_times_closed(self) -> list[_dt.datetime]:
+        """:meth:`refresh_times` over the CLOSED window ``[lower, upper]``: the
+        same anchors plus the one at the window end itself, when the window
+        end is a cadence anchor before ``temporal.end`` (spec/esm-sources.md
+        §2.3). The tstops of a solver that integrates over ``[t0, tf]`` and
+        must refresh at ``tf`` when ``tf`` lands on a record. With no window
+        (``upper`` is ``temporal.end``, where no record is) it equals
+        :meth:`refresh_times`.
+        """
+        return self._refresh_times(closed=True)
+
     def refresh_times(self) -> list[_dt.datetime]:
         """The cadence anchors at which the data changes and the solver must
         :meth:`refresh` — the solver tstops.
@@ -690,8 +723,12 @@ class Provider:
         for a window inside one record's interval, which that record serves
         (:meth:`window_records`). Each is a timezone-aware
         :class:`datetime.datetime`; a solver integrating in epoch seconds takes
-        ``t.timestamp()``.
+        ``t.timestamp()``. A refresh at exactly the window end is not among
+        them; :meth:`refresh_times_closed` includes it.
         """
+        return self._refresh_times(closed=False)
+
+    def _refresh_times(self, closed: bool) -> list[_dt.datetime]:
         temporal = self.loader.temporal
         if temporal is None:
             return []
@@ -700,15 +737,16 @@ class Provider:
             return []  # unbounded — no enumerable schedule
         lower = self._lower_bound()
         # First aligned anchor >= lower, then each next one (spec §2.3).
-        return temporal._record_anchors(lower, upper)
+        return temporal._record_anchors(lower, upper, closed)
 
     def window_records(self) -> list[_dt.datetime]:
         """The anchors of the records that serve the run window, in order
         (spec/esm-sources.md §2.6): the record in effect at the window start,
-        every record whose anchor is inside the window and, with
-        ``records_per_sample = 2``, the record after the window that the
-        bracket of its last interval reads (unless that is at or past
-        ``temporal.end``).
+        every record whose anchor is inside the window, the record at the
+        window end itself when there is one (the refresh
+        :meth:`refresh_times_closed` adds) and, with ``records_per_sample =
+        2``, the record after the last of these that its bracket reads (unless
+        that is at or past ``temporal.end``).
 
         Unlike :meth:`refresh_times` it is never empty for a bounded DISCRETE
         provider: a window inside one record's interval is served by that
@@ -729,7 +767,10 @@ class Provider:
         """Warm the cache for every file the provider will need, WITHOUT decoding.
 
         CONST: the single file. DISCRETE: each unique file covering the window
-        (``window`` arg, else the provider's window). Lets a caller pull all
+        (``window`` arg, else the provider's window), and the files of the
+        records past it that the window needs: the record at its end, which
+        :meth:`refresh_times_closed` refreshes at, and a two-record bracket's
+        successor (spec/esm-sources.md §2.6). Lets a caller pull all
         blobs up front (e.g. before a solve, or while online) so later
         :meth:`materialize`/:meth:`refresh` hit a warm, offline-readable cache.
         Returns the :class:`~earthsciio.cache.CacheEntry` for each unique file.
@@ -749,12 +790,9 @@ class Provider:
             )
         start = win[0] if win is not None else temporal.start
         file_anchors = temporal._file_anchors(start, upper)
-        # A two-record bracket in the window's last interval also reads the
-        # record after the window, which may sit in a later file (§2.6).
-        if temporal.records_per_sample == 2:
-            nxt = temporal._bracket_successor(upper)
-            if nxt is not None:
-                file_anchors.append(temporal.file_anchor(nxt))
+        # The record at the window end (a refresh over the closed window) and a
+        # two-record bracket's successor may sit in a later file (§2.6).
+        file_anchors += [temporal.file_anchor(r) for r in temporal._end_records(upper)]
         entries: list[CacheEntry] = []
         seen: set = set()
         for file_anchor in file_anchors:
@@ -882,11 +920,13 @@ class Provider:
 
     def _epoch_starts(self) -> list[_dt.datetime]:
         """Where this provider's sample can change over its run window: its
-        :meth:`refresh_times` and the window start, where the record in effect
-        there takes over (spec/esm-sources.md §2.6) — the schedule a
+        :meth:`refresh_times_closed` and the window start, where the record in
+        effect there takes over (spec/esm-sources.md §2.6) — the schedule a
         :class:`~earthsciio.prefetch.PrefetchGroup` builds its epochs from
-        (spec/prefetch.md §3.2). Empty for a CONST or unbounded provider."""
-        times = self.refresh_times()
+        (spec/prefetch.md §3.2). Over the closed window, so a run that ends on
+        a record gets an epoch at its end. Empty for a CONST or unbounded
+        provider."""
+        times = self.refresh_times_closed()
         if self.window is None or self.loader.temporal is None:
             return times
         lower = self._lower_bound()

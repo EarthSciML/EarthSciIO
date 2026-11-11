@@ -134,11 +134,24 @@ With `f` the frequency and `F` the file period, both anchored at `start`:
 | Quantity | Rule |
 |---|---|
 | refresh times over `[lower, upper)` | `anchor_f(k)` for `k = ceil_f(lower), …` while `< upper` (as before); possibly none |
-| records serving `[lower, upper)` | §2.6 |
+| refresh times over `[lower, upper]` | those over `[lower, upper)`, then the closing record: `upper` itself when it is an anchor before `end`, i.e. when the bracket successor at `upper` (§2.6) is `upper` |
+| records serving the window | §2.6 |
 | record anchor of a time `t` | `anchor_f(floor_f(t))` |
 | file anchor of a record anchor `a` | `anchor_F(floor_F(a))` — the URL is expanded here |
 | record index in its file | `floor_f(a) − ceil_f(file anchor)`, 0-based |
 | next record (two-record bracket) | `anchor_f(floor_f(t) + 1)` |
+
+`refresh_times` is over the half-open window, `lower` being the window start
+(else `start`) and `upper` the window end (else `end`).
+`refresh_times_closed` is over the closed window `[lower, upper]`: an
+integrator over `[t0, tf]` passes that as the window and uses these as its
+tstops, so that when `tf` lands on a record it refreshes there too. Everything
+that refresh needs is served: the closing record and its bracket successor are
+among the window's records, and `prefetch` warms their files (§2.6); the
+prefetch boundaries and epochs (`prefetch.md` §3.2) are built from
+`refresh_times_closed`. With no window `upper` is `end`, where no record is,
+so the two agree. In the `calendar-cadence` fixture they are
+`refresh_times_s` and `refresh_times_closed_s`.
 
 A fixed-length cadence (`months = 0`) gives exactly the anchors it gave
 before. The record index in its file is the cadence offset: it is what every
@@ -220,20 +233,33 @@ is handed the file's raw `time_dim` coordinate with its attributes
 Fixture: `windows`, and the `prefetch` entries of `providers`, in
 [`../conformance/corpus/scenarios/calendar-cadence.json`](../conformance/corpus/scenarios/calendar-cadence.json).
 
-A provider over a run window `[a, b)` (UTC, half-open) is served by these
+A provider over a run window from `a` to `b` (UTC) is served by these
 records, in order (Python `Provider.window_records`, Julia `window_records`,
 Rust `Provider::window_records`, each as record anchors):
 
 1. the record in effect at `a`: `anchor_f(floor_f(a))`, whether or not it is
    timestamped inside the window;
 2. every record after it whose anchor is `< b`;
-3. with `records_per_sample = 2`, the record after the last of those,
-   `anchor_f(ceil_f(b))`, unless it is at or past `end`. The bracket of the
-   window's last interval interpolates toward it. When it is at or past
-   `end`, the bracket holds the last record instead (§2.5).
+3. the closing record: `b` itself when it is an anchor before `end`, where
+   `refresh_times_closed` refreshes (§2.3). An integrator over the closed
+   window `[a, b]` reads it at `b`;
+4. with `records_per_sample = 2`, the record after the last of those, unless
+   it is at or past `end`. The bracket of the window's last interval (or, with
+   a closing record, of the refresh at `b`) interpolates toward it. When it is
+   at or past `end`, the bracket holds the last record instead (§2.5).
+
+Each track computes items 3 and 4 from one helper, the bracket successor at
+`b`: the first anchor at or after `b`, `anchor_f(ceil_f(b))`, unless it is at
+or past `end`. When it is `b`, it is the closing record, and item 4 is the
+bracket successor at the next anchor after `b`; otherwise it is item 4
+itself. Without a closing record the list is that of the half-open window
+`[a, b)`; listing the extra records costs nothing when the run stops short of
+`b`.
 
 A window inside one record's interval is served by that record alone (two
-records with a bracket), and has no refresh times. Without a window, `a` is
+records with a bracket), and has no refresh times.
+The window check below is over the half-open window: a closing record exists
+only when `b < end`, so the closed window needs no further check. Without a window, `a` is
 `start` and `b` is `end`.
 
 Records cover the data from `start` up to `end` (exclusive; open-ended when
@@ -256,7 +282,9 @@ A window before or after the data is never read as an empty run. With no
 exists fails when its file is read.
 
 `prefetch` warms the files of these records: every file anchor from
-`anchor_F(floor_F(a))` while `< b` and, for item 3, that record's file.
+`anchor_F(floor_F(a))` while `< b` and the files of items 3 and 4. So a run
+over `[a, b]` with hourly records in daily files and `b` at midnight warms the
+next day's file too, whose first record is the refresh at `b`.
 
 ## 3. A provider from an esm data source
 

@@ -75,6 +75,7 @@ end
         p = const_provider(cache, era5; format = "netcdf", source_loader = "era5")
         @test is_const(p)
         @test refresh_times(p) == Float64[]          # CONST ⇒ never refreshes
+        @test refresh_times_closed(p) == Float64[]
 
         nds = materialize(p)
         @test Set(variable_names(nds)) == Set(["t2m", "sp"])
@@ -576,6 +577,7 @@ end
         # time_dim the provider returns the file's full native arrays per tick.
         p = discrete_provider(cache, _ -> era5, [0.0, 1.0]; format = "netcdf")
         @test refresh_times(p) == [0.0, 1.0]
+        @test refresh_times_closed(p) == [0.0, 1.0]   # no window: the caller's grid
         @test size(refresh(p, 1.0)["t2m"].data) == (2, 3, 3)
     end
 
