@@ -184,8 +184,11 @@ PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=
   an empty member map is an error at construction: the caller materializes a
   CONST source once, outside the group.
 - All members share one time type and unit (Python `datetime`, Rust Unix
-  seconds `f64`, Julia the providers' own `Float64` cadence unit). That is the
-  caller's to keep: the group cannot check it in Julia.
+  seconds `f64`, Julia the providers' own `Float64` cadence unit), or, when
+  they are built with a time origin, seconds `f64` from it
+  ([esm-sources.md](esm-sources.md) §4). Members with different time origins
+  are refused at construction. Otherwise the unit is the caller's to keep: the
+  group cannot check a Julia member built from `times`.
 - **`boundaries()`** is the sorted, de-duplicated union of the members'
   `refresh_times` and, for a member with a run window, the window start, where
   the record in effect there takes over ([esm-sources.md](esm-sources.md)
@@ -234,7 +237,9 @@ Sample = { data, anchor, changed }
   `data` is **read-only**: a binding may hand the same object to several
   epochs (a repeated anchor), so a caller that mutates copies first.
 - `anchor` — the member's cadence anchor for `B[k]` (Python `datetime`, Rust
-  Unix seconds `f64`, Julia the tick value from `refresh_times`).
+  Unix seconds `f64`, Julia the tick value from `refresh_times`; seconds from
+  the members' time origin when they have one, [esm-sources.md](esm-sources.md)
+  §4).
 - `changed` — whether `anchor` differs from this member's anchor at the
   previous `take` of the current order. Always true on the first `take` after
   `start`. A caller copies only the changed samples into its forcing buffers.

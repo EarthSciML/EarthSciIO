@@ -1,0 +1,450 @@
+{
+  "schema": "earthsciio/scenario/v1",
+  "id": "time-origin",
+  "description": "A provider that counts time from a time origin (spec/esm-sources.md section 4). Each case builds the provider from the esm `entry` (named `name`) with `options`: variables, substitutions, `time_origin` (an RFC 3339 instant, or null for none) and the run `window`, in seconds from the origin (Unix seconds without one). A case with `error` fails, when the provider is built, with that code in the message. Otherwise, in seconds from the origin: `refresh_times`; `window_records` with records_per_sample 1 and 2; a PrefetchGroup of this one provider (records_per_sample 1) has the `epochs[].boundary` as its boundaries and takes `epochs[].anchor` as the anchor of each epoch; `samples[]` at model time `t` return the arrays given (file dimension order) and, for a two-record bracket, the time coordinate `time` with units `time_units`. Samples read the calendar-cadence blobs, offline.",
+  "cases": [
+    {
+      "id": "nei-monthly",
+      "note": "The origin is the source start: model time 0 is the first record.",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf"
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-04-01T00:00:00Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "time_origin": "2016-01-01T00:00:00Z",
+        "window": [
+          0,
+          7862400
+        ]
+      },
+      "expect": {
+        "time_units": "seconds since 2016-01-01T00:00:00Z",
+        "refresh_times": [
+          0,
+          2678400,
+          5184000
+        ],
+        "window_records": {
+          "1": [
+            0,
+            2678400,
+            5184000
+          ],
+          "2": [
+            0,
+            2678400,
+            5184000
+          ]
+        },
+        "epochs": [
+          {
+            "boundary": 0,
+            "anchor": 0
+          },
+          {
+            "boundary": 2678400,
+            "anchor": 2678400
+          },
+          {
+            "boundary": 5184000,
+            "anchor": 5184000
+          }
+        ],
+        "samples": [
+          {
+            "t": 5097600,
+            "records_per_sample": 1,
+            "NOX": [
+              [
+                200.0,
+                201.0,
+                202.0
+              ],
+              [
+                210.0,
+                211.0,
+                212.0
+              ]
+            ]
+          },
+          {
+            "t": 3888000,
+            "records_per_sample": 2,
+            "NOX": [
+              [
+                [
+                  200.0,
+                  201.0,
+                  202.0
+                ],
+                [
+                  210.0,
+                  211.0,
+                  212.0
+                ]
+              ],
+              [
+                [
+                  300.0,
+                  301.0,
+                  302.0
+                ],
+                [
+                  310.0,
+                  311.0,
+                  312.0
+                ]
+              ]
+            ],
+            "time": [
+              2678400,
+              5184000
+            ]
+          },
+          {
+            "t": 6480000,
+            "records_per_sample": 2,
+            "NOX": [
+              [
+                [
+                  300.0,
+                  301.0,
+                  302.0
+                ],
+                [
+                  310.0,
+                  311.0,
+                  312.0
+                ]
+              ],
+              [
+                [
+                  300.0,
+                  301.0,
+                  302.0
+                ],
+                [
+                  310.0,
+                  311.0,
+                  312.0
+                ]
+              ]
+            ],
+            "time": [
+              5184000,
+              5184000
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ceds-origin-off-cadence",
+      "note": "An origin between two records: the window starts at model time 0, where the November record (anchored before the origin, at a negative time) is in effect.",
+      "name": "CEDS",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/ceds_{species}_{date:%Y}.nc"
+        },
+        "temporal": {
+          "start": "2015-01-01T00:00:00Z",
+          "end": "2017-01-01T00:00:00Z",
+          "file_period": "P1Y",
+          "frequency": "P1M",
+          "records_per_file": 12,
+          "time_variable": "time"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "SO2"
+        ],
+        "substitutions": {
+          "species": "so2"
+        },
+        "time_origin": "2015-11-15T12:00:00Z",
+        "window": [
+          0,
+          9201600
+        ]
+      },
+      "expect": {
+        "time_units": "seconds since 2015-11-15T12:00:00Z",
+        "refresh_times": [
+          1339200,
+          4017600,
+          6696000
+        ],
+        "window_records": {
+          "1": [
+            -1252800,
+            1339200,
+            4017600,
+            6696000
+          ],
+          "2": [
+            -1252800,
+            1339200,
+            4017600,
+            6696000,
+            9201600
+          ]
+        },
+        "epochs": [
+          {
+            "boundary": 0,
+            "anchor": -1252800
+          },
+          {
+            "boundary": 1339200,
+            "anchor": 1339200
+          },
+          {
+            "boundary": 4017600,
+            "anchor": 4017600
+          },
+          {
+            "boundary": 6696000,
+            "anchor": 6696000
+          }
+        ],
+        "samples": [
+          {
+            "t": 0,
+            "records_per_sample": 1,
+            "SO2": [
+              10.0,
+              10.0
+            ]
+          },
+          {
+            "t": 9115200,
+            "records_per_sample": 1,
+            "SO2": [
+              13.0,
+              13.0
+            ]
+          },
+          {
+            "t": 2980800,
+            "records_per_sample": 2,
+            "SO2": [
+              [
+                11.0,
+                11.0
+              ],
+              [
+                12.0,
+                12.0
+              ]
+            ],
+            "time": [
+              1339200,
+              4017600
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-origin",
+      "note": "No time origin: times are Unix seconds, as before (Python returns datetimes).",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf"
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-04-01T00:00:00Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "time_origin": null,
+        "window": [
+          1451606400,
+          1459468800
+        ]
+      },
+      "expect": {
+        "time_units": "seconds since 1970-01-01T00:00:00Z",
+        "refresh_times": [
+          1451606400,
+          1454284800,
+          1456790400
+        ],
+        "window_records": {
+          "1": [
+            1451606400,
+            1454284800,
+            1456790400
+          ],
+          "2": [
+            1451606400,
+            1454284800,
+            1456790400
+          ]
+        },
+        "epochs": [
+          {
+            "boundary": 1451606400,
+            "anchor": 1451606400
+          },
+          {
+            "boundary": 1454284800,
+            "anchor": 1454284800
+          },
+          {
+            "boundary": 1456790400,
+            "anchor": 1456790400
+          }
+        ],
+        "samples": [
+          {
+            "t": 1455494400,
+            "records_per_sample": 2,
+            "NOX": [
+              [
+                [
+                  200.0,
+                  201.0,
+                  202.0
+                ],
+                [
+                  210.0,
+                  211.0,
+                  212.0
+                ]
+              ],
+              [
+                [
+                  300.0,
+                  301.0,
+                  302.0
+                ],
+                [
+                  310.0,
+                  311.0,
+                  312.0
+                ]
+              ]
+            ],
+            "time": [
+              1454284800,
+              1456790400
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "window-before-data",
+      "note": "A window in model seconds is checked as any other (spec section 2.6).",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf"
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-04-01T00:00:00Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "time_origin": "2016-01-01T00:00:00Z",
+        "window": [
+          -86400,
+          86400
+        ]
+      },
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "origin-not-whole-second",
+      "name": "NEI2016",
+      "entry": {
+        "kind": "grid",
+        "source": {
+          "url_template": "https://data.earthsci.dev/calendar/nei2016_{sector}_month_{date:%m}.ncf"
+        },
+        "temporal": {
+          "start": "2016-01-01T00:00:00Z",
+          "end": "2016-04-01T00:00:00Z",
+          "file_period": "P1M",
+          "frequency": "P1M",
+          "records_per_file": 1,
+          "time_variable": "TSTEP"
+        },
+        "metadata": {
+          "esio_format": "netcdf"
+        }
+      },
+      "options": {
+        "variables": [
+          "NOX"
+        ],
+        "substitutions": {
+          "sector": "agr"
+        },
+        "time_origin": "2016-01-01T00:00:00.500Z",
+        "window": [
+          0,
+          86400
+        ]
+      },
+      "error": "time_origin_invalid"
+    }
+  ]
+}

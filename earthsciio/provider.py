@@ -57,16 +57,30 @@ import numpy as np
 
 from .cache import Cache, CacheEntry
 from .calendar import CalendarPeriod, CalendarPeriodError
-from .errors import UnknownReaderOption, WindowNotCovered
+from .errors import TimeOriginInvalid, UnknownReaderOption, WindowNotCovered
 from .esm import EsmTemplate
+from .manifest import parse_rfc3339
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
 from .selection import _as_dims_select, _WindowUnion
 
-__all__ = ["DataLoader", "DataSource", "LoaderTemporal", "Provider", "SourceTemporal", "Window"]
+__all__ = [
+    "DataLoader",
+    "DataSource",
+    "LoaderTemporal",
+    "Provider",
+    "SourceTemporal",
+    "TimeLike",
+    "Window",
+]
+
+#: A time a provider takes: a :class:`datetime.datetime` (an instant; naive is
+#: UTC), or a number of seconds from the provider's ``time_origin`` (the Unix
+#: epoch when it has none), spec/esm-sources.md §4.
+TimeLike = Union[_dt.datetime, float, int]
 
 #: A run window ``(start, end)`` — half-open ``[start, end)``.
-Window = tuple[_dt.datetime, _dt.datetime]
+Window = tuple[TimeLike, TimeLike]
 
 #: A URL spec: a literal URL, a ``strftime`` template (contains ``%``), or a
 #: callable ``anchor -> url`` (the most general, per-file-anchor resolver).
@@ -74,6 +88,43 @@ UrlSpec = Union[str, Callable[[_dt.datetime], str]]
 
 _EPOCH = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
 _ZERO = _dt.timedelta(0)
+
+
+def time_origin_instant(origin: _dt.datetime | str | None) -> _dt.datetime | None:
+    """A provider's ``time_origin`` as an aware UTC datetime, or ``None``.
+
+    ``origin`` is a :class:`datetime.datetime` (naive is UTC) or an ISO 8601 /
+    RFC 3339 string. It must be a whole second (spec/esm-sources.md §4), else
+    :class:`~earthsciio.errors.TimeOriginInvalid`."""
+    if origin is None:
+        return None
+    if isinstance(origin, str):
+        try:
+            d = parse_rfc3339(origin)
+        except ValueError as exc:
+            raise TimeOriginInvalid(
+                f"time_origin_invalid: {origin!r} is not an ISO 8601 instant"
+            ) from exc
+    elif isinstance(origin, _dt.datetime):
+        d = origin
+    else:
+        raise TimeOriginInvalid(
+            "time_origin_invalid: a time origin is a datetime or an ISO 8601 string, "
+            f"got {type(origin).__name__}"
+        )
+    d = d.replace(tzinfo=_dt.timezone.utc) if d.tzinfo is None else d.astimezone(_dt.timezone.utc)
+    if d.microsecond:
+        raise TimeOriginInvalid(
+            f"time_origin_invalid: the time origin {d.isoformat()} is not a whole second"
+        )
+    return d
+
+
+def _origin_units(origin: _dt.datetime | None) -> str:
+    """The CF ``units`` of a time in seconds from ``origin`` (the Unix epoch
+    when ``None``): ``seconds since YYYY-MM-DDTHH:MM:SSZ``."""
+    o = origin if origin is not None else _EPOCH
+    return f"seconds since {o.strftime('%Y-%m-%dT%H:%M:%S')}Z"
 
 
 @dataclass(frozen=True)
@@ -93,7 +144,8 @@ class SourceTemporal:
     or ``1`` (default) returns the single at-or-before record with ``time_dim``
     dropped (held piecewise-constant); ``2`` returns the two bracketing records
     (floor + successor) with ``time_dim`` retained at length 2 and a canonical
-    2-element ``time_dim`` coordinate of Unix epoch seconds, so a downstream model
+    2-element ``time_dim`` coordinate of Unix epoch seconds (seconds from the
+    provider's ``time_origin`` when it has one), so a downstream model
     can interpolate in time. The successor is read across a file boundary when
     needed; at the last available record the bracket degenerates to ``[last, last]``
     so the downstream weight clamps. Only 1 and 2 are supported; higher-order
@@ -418,6 +470,16 @@ class Provider:
         The format registry to resolve the reader from (defaults to the global
         :data:`~earthsciio.registry.format_registry`) — the seam that lets a new
         format plug in with no Provider change.
+    time_origin:
+        Optional instant (a datetime, naive is UTC, or an ISO 8601 string; a
+        whole second) that the provider counts time from (spec/esm-sources.md
+        §4) — an esm model's time origin. With one, every time the provider
+        takes may be a number of seconds from it (a datetime is still read as
+        an instant), and every time it returns is one: :meth:`refresh_times`,
+        :meth:`window_records`, a prefetch group's boundaries and anchors, and
+        a two-record bracket's time coordinate (``units`` ``seconds since
+        <origin>``). Without one, a number is Unix seconds and the times it
+        returns are datetimes, as before.
 
     Raises :class:`~earthsciio.errors.BackendNotRegistered` if no reader is
     registered for ``loader.format``.
@@ -430,12 +492,14 @@ class Provider:
         window: Window | None = None,
         *,
         formats: Registry | None = None,
+        time_origin: _dt.datetime | str | None = None,
     ) -> None:
+        self.time_origin = time_origin_instant(time_origin)
+        self.loader = loader
         # A window some stretch of which no record serves is refused here, not
         # mid-run (spec/esm-sources.md §2.6).
         if window is not None and loader.temporal is not None:
-            window = loader.temporal._check_window(window)
-        self.loader = loader
+            window = loader.temporal._check_window(self._window_instants(window))
         self.cache = cache
         self.window = window
         registry = formats if formats is not None else format_registry
@@ -522,13 +586,14 @@ class Provider:
             return ds
         return self.refresh(self._lower_bound(), select=select)
 
-    def refresh(self, t: _dt.datetime, select: Any | None = None) -> NativeDataset:
+    def refresh(self, t: TimeLike, select: Any | None = None) -> NativeDataset:
         """Refresh the buffer to the cadence anchor for time ``t`` and return it.
 
         Snaps ``t`` down to the loader's cadence anchor, re-reads the covering
         file only when the **file** anchor changed (stepping within one file
         decodes it once), slices the current record on ``time_dim``, and returns
-        the native arrays. For a CONST loader this returns the constant data
+        the native arrays. ``t`` is a datetime or seconds from the
+        ``time_origin`` (spec/esm-sources.md §4). For a CONST loader this returns the constant data
         (materializing once if needed). Raises :class:`ValueError` if ``t``
         precedes the loader epoch, :class:`IndexError` if the snapped record is
         absent from its file.
@@ -560,7 +625,7 @@ class Provider:
         self._current_anchor = anchor
         return sliced
 
-    def sample_at(self, t: _dt.datetime) -> NativeDataset:
+    def sample_at(self, t: TimeLike) -> NativeDataset:
         """The dataset :meth:`refresh` would return for ``t`` — data variables
         AND coordinates — computed without touching any provider buffer
         (``spec/prefetch.md`` §1).
@@ -608,12 +673,13 @@ class Provider:
         )
         clone.cache = self.cache
         clone.window = self.window
+        clone.time_origin = self.time_origin
         clone._reader = self._reader
         check_reader_options(clone._reader, clone.loader)
         clone._init_buffers()
         return clone
 
-    def sample_windows_at(self, t: _dt.datetime, windows: Sequence[Any]) -> list[NativeDataset]:
+    def sample_windows_at(self, t: TimeLike, windows: Sequence[Any]) -> list[NativeDataset]:
         """K windows of :meth:`sample_at` ``(t)``, from ONE fetch and decode.
 
         Dataset ``i`` is identical — bitwise, coordinates included — to
@@ -679,7 +745,7 @@ class Provider:
         anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
         return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
-    def refresh_times(self) -> list[_dt.datetime]:
+    def refresh_times(self) -> list[Any]:
         """The cadence anchors at which the data changes and the solver must
         :meth:`refresh` — the solver tstops.
 
@@ -688,9 +754,9 @@ class Provider:
         ``[lower, upper)`` where ``lower`` is the window start (else the loader
         epoch) and ``upper`` is the window end (else ``temporal.end``) — none
         for a window inside one record's interval, which that record serves
-        (:meth:`window_records`). Each is a timezone-aware
-        :class:`datetime.datetime`; a solver integrating in epoch seconds takes
-        ``t.timestamp()``.
+        (:meth:`window_records`). Each is a :class:`datetime.datetime`, or,
+        for a provider with a ``time_origin``, the seconds from it (a ``float``,
+        spec/esm-sources.md §4).
         """
         temporal = self.loader.temporal
         if temporal is None:
@@ -700,9 +766,9 @@ class Provider:
             return []  # unbounded — no enumerable schedule
         lower = self._lower_bound()
         # First aligned anchor >= lower, then each next one (spec §2.3).
-        return temporal._record_anchors(lower, upper)
+        return [self._out(a) for a in temporal._record_anchors(lower, upper)]
 
-    def window_records(self) -> list[_dt.datetime]:
+    def window_records(self) -> list[Any]:
         """The anchors of the records that serve the run window, in order
         (spec/esm-sources.md §2.6): the record in effect at the window start,
         every record whose anchor is inside the window and, with
@@ -713,7 +779,8 @@ class Provider:
         Unlike :meth:`refresh_times` it is never empty for a bounded DISCRETE
         provider: a window inside one record's interval is served by that
         record. Empty for a CONST loader, or an unbounded DISCRETE one with no
-        run window and no ``temporal.end``.
+        run window and no ``temporal.end``. Datetimes, or seconds from the
+        ``time_origin``, as :meth:`refresh_times`.
         """
         temporal = self.loader.temporal
         if temporal is None:
@@ -721,7 +788,7 @@ class Provider:
         upper = self.window[1] if self.window is not None else temporal.end
         if upper is None:
             return []
-        return temporal._window_records(self._lower_bound(), upper)
+        return [self._out(a) for a in temporal._window_records(self._lower_bound(), upper)]
 
     # -- prefetch ----------------------------------------------------------- #
 
@@ -729,7 +796,8 @@ class Provider:
         """Warm the cache for every file the provider will need, WITHOUT decoding.
 
         CONST: the single file. DISCRETE: each unique file covering the window
-        (``window`` arg, else the provider's window). Lets a caller pull all
+        (``window`` arg, else the provider's window; its bounds datetimes or
+        seconds from the ``time_origin``). Lets a caller pull all
         blobs up front (e.g. before a solve, or while online) so later
         :meth:`materialize`/:meth:`refresh` hit a warm, offline-readable cache.
         Returns the :class:`~earthsciio.cache.CacheEntry` for each unique file.
@@ -740,7 +808,11 @@ class Provider:
 
         # A window passed here is checked as the constructor checks its own
         # (spec/esm-sources.md §2.6): never silently clamped to the data.
-        win = temporal._check_window(window) if window is not None else self.window
+        win = (
+            temporal._check_window(self._window_instants(window))
+            if window is not None
+            else self.window
+        )
         upper = win[1] if win is not None else temporal.end
         if upper is None:
             raise ValueError(
@@ -792,23 +864,49 @@ class Provider:
             )
         return select
 
-    def _anchor_of(self, t: _dt.datetime) -> _dt.datetime:
+    def _instant(self, t: TimeLike) -> _dt.datetime:
+        """``t`` as an instant: a datetime as given, a number as that many
+        seconds from the ``time_origin`` (the Unix epoch when there is none),
+        spec/esm-sources.md §4."""
+        if isinstance(t, _dt.datetime):
+            return t
+        if isinstance(t, bool) or not isinstance(t, (int, float, np.integer, np.floating)):
+            raise TypeError(
+                f"a provider time is a datetime or a number of seconds, got {type(t).__name__}"
+            )
+        origin = self.time_origin if self.time_origin is not None else _EPOCH
+        d = origin + _dt.timedelta(seconds=float(t))
+        temporal = self.loader.temporal
+        return _like(d, temporal.start) if temporal is not None else d
+
+    def _window_instants(self, window: Window) -> tuple[_dt.datetime, _dt.datetime]:
+        return self._instant(window[0]), self._instant(window[1])
+
+    def _out(self, d: _dt.datetime) -> Any:
+        """An instant as this provider returns it: the datetime itself, or with
+        a ``time_origin`` the seconds from it (spec/esm-sources.md §4)."""
+        return d if self.time_origin is None else self._out_seconds(d)
+
+    def _out_seconds(self, d: _dt.datetime) -> float:
+        """Seconds from the ``time_origin`` (the Unix epoch when none)."""
+        origin = 0.0 if self.time_origin is None else _epoch_seconds(self.time_origin)
+        return _epoch_seconds(d) - origin
+
+    def _anchor_of(self, t: TimeLike) -> _dt.datetime:
         """The cadence anchor ``t`` snaps to, UNVALIDATED (it may precede the
         loader start; :meth:`_anchor` is the validating spelling)."""
         temporal = self.loader.temporal
         assert temporal is not None
-        return temporal.record_anchor(t)
+        return temporal.record_anchor(self._instant(t))
 
-    def _anchor(self, t: _dt.datetime) -> _dt.datetime:
+    def _anchor(self, t: TimeLike) -> _dt.datetime:
         anchor = self._anchor_of(t)
         temporal = self.loader.temporal
         if anchor < temporal.start:
             raise ValueError(f"t={t!r} precedes the loader start {temporal.start!r}")
         return anchor
 
-    def _sample(
-        self, t: _dt.datetime, files: Callable[[_dt.datetime], NativeDataset]
-    ) -> NativeDataset:
+    def _sample(self, t: TimeLike, files: Callable[[_dt.datetime], NativeDataset]) -> NativeDataset:
         """The ONE sampling path behind :meth:`refresh`, :meth:`sample_at` and a
         prefetch group's decode (``spec/prefetch.md`` §1).
 
@@ -830,7 +928,7 @@ class Provider:
         return _slice_record(file_ds, temporal.time_dim, rec)
 
     def _sample_windows(
-        self, t: _dt.datetime, union: _WindowUnion, files: Callable[[_dt.datetime], NativeDataset]
+        self, t: TimeLike, union: _WindowUnion, files: Callable[[_dt.datetime], NativeDataset]
     ) -> list[NativeDataset]:
         """:meth:`_sample` over files decoded under ``union.select``, split back
         into its windows. Record slicing and window slicing are both pure
@@ -853,7 +951,7 @@ class Provider:
             self._current_file_anchor = file_anchor
         return self._current_file
 
-    def _sample_urls(self, t: _dt.datetime) -> list[_FileRef]:
+    def _sample_urls(self, t: TimeLike) -> list[_FileRef]:
         """The files a sample at ``t`` reads (the successor's file too, for a
         bracket) — what a prefetch group's ``fetch_ahead`` warms. Best-effort:
         computed from the cadence grid, never from a decode."""
@@ -880,7 +978,7 @@ class Provider:
         assert temporal is not None
         return self.window[0] if self.window is not None else temporal.start
 
-    def _epoch_starts(self) -> list[_dt.datetime]:
+    def _epoch_starts(self) -> list[Any]:
         """Where this provider's sample can change over its run window: its
         :meth:`refresh_times` and the window start, where the record in effect
         there takes over (spec/esm-sources.md §2.6) — the schedule a
@@ -889,7 +987,7 @@ class Provider:
         times = self.refresh_times()
         if self.window is None or self.loader.temporal is None:
             return times
-        lower = self._lower_bound()
+        lower = self._out(self._lower_bound())
         return times if times and times[0] == lower else [lower, *times]
 
     def _resolve(self, anchor: _dt.datetime) -> _FileRef:
@@ -1023,8 +1121,9 @@ class Provider:
             succ[0],
             succ[1],
             time_dim,
-            _epoch_seconds(anchor),
-            _epoch_seconds(next_anchor),
+            self._out_seconds(anchor),
+            self._out_seconds(next_anchor),
+            _origin_units(self.time_origin),
         )
 
 
@@ -1089,10 +1188,13 @@ def _bracket_record(
     time_dim: str,
     t0_epoch: float,
     t1_epoch: float,
+    units: str = "seconds since 1970-01-01T00:00:00Z",
 ) -> NativeDataset:
     """Assemble the 2-record bracket dataset: every temporal variable stacked to a
     size-2 ``time_dim`` axis, non-temporal coords passed through, and a canonical
-    2-element ``time_dim`` coordinate of Unix epoch seconds ``[t0, t1]``."""
+    2-element ``time_dim`` coordinate ``[t0, t1]`` in seconds from the
+    provider's time origin (Unix epoch seconds without one), with those
+    ``units``."""
     variables = {
         name: _stack_two(f, file1.variables[name], time_dim, rec0, rec1)
         for name, f in file0.variables.items()
@@ -1101,7 +1203,7 @@ def _bracket_record(
     coords[time_dim] = NativeField(
         np.array([t0_epoch, t1_epoch], dtype=np.float64),
         (time_dim,),
-        {"units": "seconds since 1970-01-01T00:00:00Z", "calendar": "standard"},
+        {"units": units, "calendar": "standard"},
     )
     return NativeDataset(variables, coords)
 

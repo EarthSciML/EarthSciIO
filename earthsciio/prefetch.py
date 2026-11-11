@@ -93,14 +93,15 @@ class Sample(NamedTuple):
     <that>)``). It is **read-only** — the same object may be handed to several
     epochs when the member's anchor repeats, so its numpy arrays are marked
     non-writeable; copy before mutating. ``anchor`` is the member's cadence
-    anchor for ``B[k]``. ``changed`` says whether ``anchor`` differs from this
+    anchor for ``B[k]``: a datetime, or seconds from the members'
+    ``time_origin`` when they have one (spec/esm-sources.md §4). ``changed`` says whether ``anchor`` differs from this
     member's anchor at the previous ``take`` of the current order (always true
     on the first ``take`` after ``start``): copy only the changed samples into
     the forcing buffers.
     """
 
     data: Any
-    anchor: _dt.datetime
+    anchor: Any
     changed: bool
 
 
@@ -113,7 +114,7 @@ class EpochSample(Mapping):
 
     __slots__ = ("_samples", "epoch", "time")
 
-    def __init__(self, epoch: int, time: _dt.datetime, samples: dict[str, Sample]) -> None:
+    def __init__(self, epoch: int, time: Any, samples: dict[str, Sample]) -> None:
         self.epoch = epoch
         self.time = time
         self._samples = samples
@@ -363,7 +364,10 @@ class PrefetchGroup:
         ``{key: Provider}``, every one DISCRETE with an enumerable schedule
         (a run window or ``SourceTemporal.end``). A
         CONST or unbounded member, or an empty map, is a :class:`ValueError`:
-        materialize a CONST source once, outside the group.
+        materialize a CONST source once, outside the group. Every member has
+        the same ``time_origin`` (or none), which the boundaries and anchors
+        count from (spec/esm-sources.md §4); members with different ones are
+        a :class:`ValueError`.
     depth:
         Epoch slots held ahead of the consumer, decoded or decoding, counting
         the one :meth:`take` returns next (at least 1).
@@ -429,6 +433,16 @@ class PrefetchGroup:
                     "give it a run window or SourceTemporal.end)"
                 )
             self._members[key] = prov
+        # One clock for the boundaries: every member counts time from the same
+        # origin (spec/esm-sources.md §4).
+        origins = {p.time_origin for p in self._members.values()}
+        if len(origins) > 1:
+            shown = sorted("none" if o is None else o.isoformat() for o in origins)
+            raise ValueError(
+                f"the members' time origins differ ({', '.join(shown)}): a group's "
+                "boundaries and anchors are on one clock, so build every member with "
+                "the same time_origin"
+            )
         # Byte-wise string order: the order a multi-member failure is reported in.
         self._keys: list[str] = sorted(self._members)
         self._depth = _positive("depth", depth)
@@ -466,7 +480,7 @@ class PrefetchGroup:
         bounds = set()
         for prov in self._members.values():
             bounds.update(prov._epoch_starts())
-        self._B: list[_dt.datetime] = sorted(bounds)
+        self._B: list[Any] = sorted(bounds)
 
         select = self._union.select if self._union is not None else None
         self._files = {k: _FileShare(p, select) for k, p in self._members.items()}
@@ -527,10 +541,11 @@ class PrefetchGroup:
 
     # -- the consumer's API ------------------------------------------------- #
 
-    def boundaries(self) -> list[_dt.datetime]:
+    def boundaries(self) -> list[Any]:
         """The sorted, de-duplicated union of the members' ``refresh_times``
         and run-window starts (where the record in effect there takes over,
-        spec/esm-sources.md §2.6). Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right."""
+        spec/esm-sources.md §2.6). Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right.
+        Datetimes, or seconds from the members' ``time_origin`` (§4)."""
         return list(self._B)
 
     def start(self, order: Any = "forward", from_: int | None = None) -> None:
@@ -603,7 +618,7 @@ class PrefetchGroup:
                 task = slot.tasks[key]
                 changed = self._prev_anchor.get(key) != task.anchor
                 self._prev_anchor[key] = task.anchor
-                samples[key] = Sample(task.data, task.anchor, changed)
+                samples[key] = Sample(task.data, self._members[key]._out(task.anchor), changed)
                 self._release_locked(task)
                 self._last[key] = task
             ep = EpochSample(k, self._B[k], samples)

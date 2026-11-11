@@ -234,9 +234,17 @@ def provider_from_esm(
     url_override: str | None = None,
     records_per_sample: int | None = None,
     window=None,
+    time_origin=None,
 ):
     """A :class:`~earthsciio.Provider` over an esm ``data_sources`` entry,
-    bound to ``cache`` and the run ``window`` (UTC datetimes)."""
+    bound to ``cache`` and the run ``window`` (UTC datetimes, or seconds from
+    ``time_origin``).
+
+    ``time_origin`` (a datetime or ISO 8601 string, a whole second) is the
+    instant the provider counts time from, usually the model's time origin
+    (EarthSciAST's ``time_origin(document)``); with it, every time in and out
+    is seconds from it (spec/esm-sources.md §4). An entry does not carry the
+    model's origin, so there is no default: without one, times are as before."""
     from .provider import Provider
 
     return Provider(
@@ -250,4 +258,5 @@ def provider_from_esm(
         ),
         cache,
         window,
+        time_origin=time_origin,
     )

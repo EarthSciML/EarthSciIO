@@ -143,17 +143,22 @@ end
 """
     provider_from_esm(name, entry, cache; variables, substitutions=Dict(),
                       url_override=nothing, records_per_sample=nothing,
-                      window=nothing) -> Provider
+                      window=nothing, time_origin=nothing) -> Provider
 
 A [`Provider`](@ref) over one esm `data_sources` entry (a parsed JSON object, as
 a document carries it after EarthSciAST loaded it), bound to `cache` and the run
-`window` (UTC: `DateTime`s or Unix seconds). See spec/esm-sources.md §3. A
-time-varying source's ticks are Unix seconds."""
+`window` (UTC: `DateTime`s, or seconds from `time_origin`). See
+spec/esm-sources.md §3. A time-varying source's ticks are Unix seconds, or,
+with a `time_origin` (a `DateTime` or ISO 8601 string, a whole second, usually
+the model's time origin from EarthSciAST's `time_origin(document)`), seconds
+from it, in and out (§4). An entry does not carry the model's origin, so there
+is no default."""
 function provider_from_esm(
         name::AbstractString, entry, cache::Cache;
         variables = String[],
         substitutions::AbstractDict = Dict{String, String}(),
-        url_override = nothing, records_per_sample = nothing, window = nothing
+        url_override = nothing, records_per_sample = nothing, window = nothing,
+        time_origin = nothing
     )
     nm = String(name)
     entry isa AbstractDict || throw(EsmSourceError("esm_source_invalid", nm, "the entry must be an object"))
@@ -208,6 +213,10 @@ function provider_from_esm(
         format = String(fmt), variables = isempty(vars) ? nothing : vars,
         reader_kwargs = reader_kwargs, source_loader = nm,
     )
-    temporal === nothing && return Provider(cache, url(0.0); common..., mirrors = esm_mirrors(url, 0.0))
-    return Provider(cache, url; common..., temporal = temporal, window = window)
+    temporal === nothing && return Provider(
+        cache, url(0.0); common..., mirrors = esm_mirrors(url, 0.0), time_origin = time_origin
+    )
+    return Provider(
+        cache, url; common..., temporal = temporal, window = window, time_origin = time_origin
+    )
 end

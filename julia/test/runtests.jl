@@ -33,6 +33,7 @@ import TiffImages  # activates the EarthSciIOTiffImagesExt weakdep ext for the g
     include("test_esm.jl")           # esm URL templates + mirror failover (spec/esm-sources.md)
     include("test_calendar.jl")      # calendar cadences + the temporal Provider (spec/esm-sources.md §2)
     include("test_esm_source.jl")    # provider_from_esm (spec/esm-sources.md §3)
+    include("test_time_origin.jl")   # a provider on the model's clock (spec/esm-sources.md §4)
     include("test_decoded_time_axis.jl")  # records found by the file's own time axis (§2.5)
     # epoch prefetch + named-dimension windows (spec/prefetch.md, RFC U11)
     include("test_windows.jl")       # `dims` select, sample_at, with_window, multi-window scenario

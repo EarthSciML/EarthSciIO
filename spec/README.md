@@ -35,7 +35,7 @@ Extensibility is by construction via the **three registries** below.
 | (d) | Conformance corpus (offline golden fixtures + expected arrays) | [conformance.md](conformance.md) · [../conformance/](../conformance) |
 | (e) | Epoch prefetch + named-dimension windows (`sample_at`, `select.dims`, `with_window`, `sample_windows_at`, `PrefetchGroup`) | [prefetch.md](prefetch.md) |
 | (f) | The streaming writer contract: regions, roles + commit tokens, indexed records, statics, blobs, read-back, resume, output manifest v2 | [writer.md](writer.md) |
-| (g) | Reading an esm data source: esm URL templates, calendar cadences, a provider from a `data_sources` entry | [esm-sources.md](esm-sources.md) |
+| (g) | Reading an esm data source: esm URL templates, calendar cadences, a provider from a `data_sources` entry, a provider on the model's time origin | [esm-sources.md](esm-sources.md) |
 
 JSON Schemas: [schemas/manifest.schema.json](schemas/manifest.schema.json),
 [schemas/cache-case.schema.json](schemas/cache-case.schema.json),
@@ -54,7 +54,7 @@ the registries have a consumer to point at. The invariant this spec guarantees:
 register without touching it.
 
 ```
-Provider(loader, *, window, offline=false, auth=None)   # bound to one loader
+Provider(loader, *, window, time_origin=None, offline=false, auth=None)   # bound to one loader
     materialize()      -> { file_variable: NativeField }       # CONST: call once
     refresh(t)         -> { file_variable: NativeField } | None # DISCRETE: at a cadence tstop; None if unchanged
     refresh_times()    -> [float]                              # the data_ingest schedule (solver tstops)

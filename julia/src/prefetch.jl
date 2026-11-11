@@ -226,6 +226,19 @@ function PrefetchGroup(
         )
         byname[key] = p
     end
+    # One clock for the boundaries: every `temporal` member counts time from the
+    # same origin (spec/esm-sources.md §4). A member built from `times` is in
+    # the caller's own unit, which is the caller's to keep.
+    origins = unique(
+        (p.plan::_TemporalPlan).origin for p in values(byname) if p.plan !== nothing
+    )
+    length(origins) <= 1 || throw(
+        ArgumentError(
+            "the members' time origins differ ($(join(sort!(string.(origins)), ", "))): a " *
+                "group's boundaries and anchors are on one clock, so build every member " *
+                "with the same time_origin"
+        )
+    )
     depth >= 1 || throw(ArgumentError("depth must be at least 1, got $depth"))
     workers >= 1 || throw(ArgumentError("workers must be at least 1, got $workers"))
     max_bytes === nothing || (max_bytes isa Integer && max_bytes >= 0) || throw(

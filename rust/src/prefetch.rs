@@ -78,8 +78,9 @@ pub struct Sample<T> {
     /// of that. Shared, and **read-only**: the same object may be handed to
     /// several epochs (a repeated anchor), so a caller that mutates copies first.
     pub data: Arc<T>,
-    /// The member's cadence anchor for `B[k]`, in Unix seconds (as
-    /// [`Provider::refresh_times`]).
+    /// The member's cadence anchor for `B[k]`, in seconds from the members'
+    /// time origin — Unix seconds when they have none — as
+    /// [`Provider::refresh_times`].
     pub anchor: f64,
     /// Whether `anchor` differs from this member's anchor at the previous `take`
     /// of the current order — always `true` on the first `take` after `start`.
@@ -320,8 +321,9 @@ impl<D: 'static> PrefetchBuilder<D, D> {
 impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
     /// Validate the members and start the workers. Errors (as
     /// [`Error::Prefetch`], or the window precondition's own error) for: no
-    /// members, a repeated key, a CONST or unbounded member, `depth` or
-    /// `workers` of 0, or a window a member cannot take.
+    /// members, a repeated key, a CONST or unbounded member, members with
+    /// different time origins (`spec/esm-sources.md` §4), `depth` or `workers`
+    /// of 0, or a window a member cannot take.
     pub fn build(self) -> Result<PrefetchGroup<T>> {
         let refuse = |detail: String| Error::Prefetch { detail };
         if self.members.is_empty() {
@@ -341,6 +343,24 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
         members.sort_by(|a, b| a.0.cmp(&b.0));
         if let Some(w) = members.windows(2).find(|w| w[0].0 == w[1].0) {
             return Err(refuse(format!("member key {:?} is given twice", w[0].0)));
+        }
+
+        // One clock for the boundaries: every member counts time from the same
+        // origin (`spec/esm-sources.md` §4); none is the Unix epoch.
+        let origin_of = |p: &Provider| p.time_origin().unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        let clock = members[0].1.clone();
+        if let Some((key, p)) = members
+            .iter()
+            .find(|(_, p)| origin_of(p) != origin_of(&clock))
+        {
+            return Err(refuse(format!(
+                "member {key:?} counts time from {}, but member {:?} from {}: a group's \
+                 boundaries and anchors are on one clock, so give every member the \
+                 same time origin",
+                origin_of(p),
+                members[0].0,
+                origin_of(&clock)
+            )));
         }
 
         let mut boundaries: Vec<f64> = Vec::new();
@@ -376,9 +396,7 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
 
         let mut times = Vec::with_capacity(boundaries.len());
         for &b in &boundaries {
-            times.push(OffsetDateTime::from_unix_timestamp(b as i64).map_err(|e| {
-                refuse(format!("boundary {b} is not a representable instant: {e}"))
-            })?);
+            times.push(clock.instant(b)?);
         }
         let anchors: Vec<Vec<OffsetDateTime>> = built
             .iter()
@@ -454,7 +472,7 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
 ///     .member("V", Arc::new(p_v.with_window(w)?))
 ///     .depth(2).max_bytes(8 << 30).workers(4)
 ///     .build()?;
-/// let b: Vec<f64> = g.boundaries();          // Unix seconds, as refresh_times
+/// let b: Vec<f64> = g.boundaries();          // seconds from the time origin, as refresh_times
 /// g.start(Order::Forward, None)?;
 /// for k in 0..b.len() {
 ///     let ep = g.take(k)?;
@@ -472,7 +490,9 @@ pub struct PrefetchGroup<T = NativeDataset> {
 impl<T: Send + Sync + 'static> PrefetchGroup<T> {
     /// The sorted, de-duplicated union of the members' refresh times and run-window
     /// starts (where the record in effect there takes over,
-    /// `spec/esm-sources.md` §2.6), in Unix seconds. Epoch `k` is `[B[k], B[k+1])`; the last is open on the right.
+    /// `spec/esm-sources.md` §2.6), in seconds from the members' time origin
+    /// (Unix seconds when they have none, §4). Epoch `k` is `[B[k], B[k+1])`;
+    /// the last is open on the right.
     pub fn boundaries(&self) -> Vec<f64> {
         self.shared.config.boundaries.clone()
     }
@@ -618,7 +638,7 @@ impl<T: Send + Sync + 'static> PrefetchGroup<T> {
                 shared.config.members[i].key.clone(),
                 Sample {
                     data,
-                    anchor: key.1.unix_timestamp() as f64,
+                    anchor: shared.config.members[i].provider.seconds(key.1),
                     changed,
                 },
             );
@@ -1071,7 +1091,9 @@ impl<T> State<T> {
         if cfg.fetch_ahead > 0 && !self.any_failed() {
             let end = (self.admitted + cfg.fetch_ahead).min(self.order.len());
             for pos in self.fetch_end.max(self.admitted)..end {
-                let t = OffsetDateTime::from_unix_timestamp(cfg.boundaries[self.order[pos]] as i64)
+                let t = cfg.members[0]
+                    .provider
+                    .instant(cfg.boundaries[self.order[pos]])
                     .expect("boundaries were validated at build");
                 for (i, m) in cfg.members.iter().enumerate() {
                     for file in m.provider.warm_files(t) {

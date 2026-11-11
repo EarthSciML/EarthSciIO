@@ -8,6 +8,25 @@ package version is independent of the `.esm` format version.
 
 ### All tracks
 
+- **feat:** a provider can count time from a time origin, such as an esm
+  model's (`spec/esm-sources.md` §4, #37). Built with one (Python and Julia
+  `time_origin=` on `Provider` and `provider_from_esm`; Rust
+  `DataSource::time_origin(origin)`, so `DataSource::from_esm(…)?.time_origin(origin)`),
+  every time it takes and returns is seconds from that origin: `sample_at`,
+  `refresh`, `sample_windows_at`, the run window and `prefetch(window)`,
+  `refresh_times`, `window_records`, a `PrefetchGroup`'s boundaries and
+  anchors, and a two-record bracket's time coordinate (`units` `seconds since
+  <origin>`). A caller no longer converts to Unix seconds on every call. It is
+  opt-in: an entry does not carry the model's origin, so without one nothing
+  changes. The origin must be a whole second (`time_origin_invalid`: Python
+  and Julia `TimeOriginInvalid`, Rust `Error::Time`), and a `PrefetchGroup`
+  refuses members on different origins. Python's provider times may now be
+  numbers (seconds from the origin, Unix seconds without one) as well as
+  `datetime`s (`TimeLike`); Rust's `sample_at`, `refresh`,
+  `refresh_with_select` and `sample_windows_at` take `impl Into<ProviderTime>`
+  (an `OffsetDateTime` or an `f64`), and `DataSource::run_window` /
+  `Provider::run_window` build a run window from either. Rust `DataSource`
+  gains a public `time_origin` field.
 - **fix (breaking):** the three tracks now agree on which records serve a run
   window, and refuse the same windows (`spec/esm-sources.md` §2.6). A window
   is served by the record in effect at its start, every record inside it and,
