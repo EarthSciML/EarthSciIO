@@ -42,8 +42,16 @@ def _secs(times):
     return [t.timestamp() if isinstance(t, dt.datetime) else t for t in times]
 
 
-@pytest.mark.parametrize("case", SC["cases"], ids=[c["id"] for c in SC["cases"]])
+CASES = pytest.mark.parametrize("case", SC["cases"], ids=[c["id"] for c in SC["cases"]])
+DATA_CASES = pytest.mark.parametrize(
+    "case", [c for c in SC["cases"] if "error" not in c], ids=lambda c: c["id"]
+)
+
+
+@CASES
 def test_case(case):
+    """The schedule: refresh times, window records, group boundaries. Reads no
+    data, so it runs without the netcdf stack."""
     if "error" in case:
         with pytest.raises(EarthSciIOError) as ei:
             _build(case)
@@ -56,15 +64,20 @@ def test_case(case):
     assert _secs(p.refresh_times()) == exp["refresh_times"]
     for rps, want in exp["window_records"].items():
         assert _secs(_build(case, int(rps)).window_records()) == want
-
     with PrefetchGroup({"m": _build(case, 1)}, depth=2) as g:
         assert _secs(g.boundaries()) == [e["boundary"] for e in exp["epochs"]]
+
+
+@pytest.mark.needs_format("netcdf")
+@DATA_CASES
+def test_case_data(case):
+    """The data: each epoch's anchor, and the samples at model times."""
+    exp = case["expect"]
+    with PrefetchGroup({"m": _build(case, 1)}, depth=2) as g:
         g.start("forward")
         for k, e in enumerate(exp["epochs"]):
             assert _secs([g.take(k)["m"].anchor]) == [e["anchor"]]
 
-    pytest.importorskip("xarray")
-    pytest.importorskip("netCDF4")
     var = case["options"]["variables"][0]
     for smp in exp["samples"]:
         p = _build(case, smp["records_per_sample"])
@@ -85,6 +98,7 @@ NEI = next(c for c in SC["cases"] if c["id"] == "nei-monthly")
 ORIGIN = dt.datetime(2016, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.needs_format("netcdf")
 def test_datetimes_still_read_as_instants():
     """With an origin, a datetime is still an instant: the same sample, and the
     same window, as the model seconds that name it."""
@@ -108,6 +122,7 @@ def test_origin_must_be_a_whole_second():
         _build(NEI, time_origin="not a time")
 
 
+@pytest.mark.needs_format("netcdf")
 def test_without_origin_numbers_are_unix_seconds():
     """No origin: refresh_times stay datetimes, and a number is Unix seconds."""
     p = _build(NEI, 1, time_origin=None, window=(ORIGIN, dt.datetime(2016, 4, 1, tzinfo=UTC)))
@@ -119,7 +134,11 @@ def test_without_origin_numbers_are_unix_seconds():
 
 def test_prefetch_window_in_model_seconds():
     p = _build(NEI)
-    assert len(p.prefetch((0, 2678400))) == 1  # January's file only
+    # A window ending on February's record also serves the refresh there, so
+    # it warms February's file too (spec/esm-sources.md §2.6); one ending just
+    # before it needs January's file only.
+    assert len(p.prefetch((0, 2678400))) == 2
+    assert len(p.prefetch((0, 2678399))) == 1
     with pytest.raises(EarthSciIOError, match="esm_window_uncovered"):
         p.prefetch((-1, 2678400))
 
