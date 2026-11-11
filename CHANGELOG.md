@@ -4,7 +4,17 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
-## Unreleased
+## v0.4.0
+
+Changes since v0.3.0. A minor bump because of the **breaking** change below:
+a run window that starts before a source's `start`, ends past its `end`, or
+is empty is now refused (`esm_window_uncovered`) in every track instead of
+clamped to the data.
+
+Run windows served the same way in all three tracks: a provider can count
+time from a time origin, such as an esm model's, the tracks agree on which
+records serve a window, and `refresh_times_closed` gives an integrator a
+refresh at the window end, with prefetch and `PrefetchGroup` serving it.
 
 ### All tracks
 
