@@ -179,6 +179,14 @@
       }
     },
     {
+      "name": "window_records",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "window_records"
+      }
+    },
+    {
       "name": "prefetch",
       "kind": "function",
       "tier": "stable",
@@ -745,6 +753,15 @@
       "bindings": {
         "python": "CalendarPeriodError",
         "julia": "CalendarPeriodError"
+      }
+    },
+    {
+      "name": "window_not_covered",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "WindowNotCovered",
+        "julia": "WindowNotCovered"
       }
     },
     {

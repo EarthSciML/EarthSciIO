@@ -2455,17 +2455,172 @@ CALENDAR_CADENCES = [
         "a fixed cadence gives the anchors it always gave",
     ),
     (
-        "window-past-end",
+        "time-past-end",
         "2016-01-01T00:00:00Z",
         "P1M",
         "P1M",
         "2016-01-01T00:00:00Z",
-        "2016-07-01T00:00:00Z",
-        ["2016-05-15T00:00:00Z", "2016-07-15T00:00:00Z"],
-        "the window end, not the data end, bounds the refresh times: a window past "
-        "`end` still lists every anchor in it, and a time past both still locates "
-        "its record on the calendar",
         "2016-04-01T00:00:00Z",
+        ["2016-03-15T00:00:00Z", "2016-07-15T00:00:00Z"],
+        "a window ending at `end` lists every anchor in it, and a time past the end "
+        "of the data still locates its record on the calendar (a window past `end` "
+        "is refused: see `windows`)",
+        "2016-04-01T00:00:00Z",
+    ),
+]
+
+# The run window (spec/esm-sources.md §2.6): which records serve a window, and
+# which windows are refused because some stretch of them has no record.
+# (id, start, end, frequency, file_period, records_per_sample, lower, upper, note)
+CALENDAR_WINDOWS = [
+    (
+        "between-two-records",
+        "2016-01-01T00:00:00Z",
+        None,
+        "PT3H",
+        "P1D",
+        1,
+        "2016-01-01T01:30:00Z",
+        "2016-01-01T02:30:01Z",
+        "GEOS-FP I3-like: no record is timestamped inside the window, so the "
+        "record in effect at its start (00:00) serves it all; no refresh times",
+    ),
+    (
+        "between-two-records-bracket",
+        "2016-01-01T00:00:00Z",
+        None,
+        "PT3H",
+        "P1D",
+        2,
+        "2016-01-01T01:30:00Z",
+        "2016-01-01T02:30:01Z",
+        "as `between-two-records` with a two-record bracket: the record after the "
+        "window (03:00) is read too",
+    ),
+    (
+        "bracket-successor-in-next-file",
+        "2016-01-01T00:00:00Z",
+        None,
+        "PT3H",
+        "P1D",
+        2,
+        "2016-01-01T19:30:00Z",
+        "2016-01-01T22:30:00Z",
+        "the record in effect at the start (18:00), the one inside (21:00) and the "
+        "bracket's successor (00:00 the next day, in the next file)",
+    ),
+    (
+        "starts-on-a-record",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2016-01-01T00:00:00Z",
+        "2016-02-15T00:00:00Z",
+        "a window starting on the first record: that record and the next",
+    ),
+    (
+        "ends-at-the-end-of-the-data",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        2,
+        "2016-03-10T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "the last record covers the window up to `end`; its bracket successor "
+        "would be at `end`, so there is none and the bracket holds",
+    ),
+    (
+        "open-ended-far-future",
+        "2016-01-01T00:00:00Z",
+        None,
+        "P1M",
+        "P1M",
+        1,
+        "2030-06-10T00:00:00Z",
+        "2030-06-20T00:00:00Z",
+        "with no `end`, the data is taken to run on: a window after every file "
+        "that exists is not refused here (its files are missing when read)",
+    ),
+    (
+        "entirely-before-the-data",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2015-11-01T00:00:00Z",
+        "2015-12-01T00:00:00Z",
+        "no record is in effect before the first one",
+    ),
+    (
+        "starts-before-the-data",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2015-12-31T00:00:00Z",
+        "2016-01-15T00:00:00Z",
+        "the window's first day precedes the first record",
+    ),
+    (
+        "model-time-at-1970",
+        "2013-01-01T00:30:00Z",
+        None,
+        "PT1H",
+        "P1D",
+        2,
+        "1970-01-01T00:30:00Z",
+        "1970-01-01T02:30:01Z",
+        "a model with no time origin whose times are read as Unix seconds: the "
+        "window lies decades before GEOS-FP's first record",
+    ),
+    (
+        "entirely-after-the-data",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2016-05-01T00:00:00Z",
+        "2016-06-01T00:00:00Z",
+        "no record is in effect at or after `end`",
+    ),
+    (
+        "partly-past-the-end",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2016-03-15T00:00:00Z",
+        "2016-04-15T00:00:00Z",
+        "the window runs past `end`, where the last record stops",
+    ),
+    (
+        "one-second-past-the-end",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        2,
+        "2016-03-15T00:00:00Z",
+        "2016-04-01T00:00:01Z",
+        "a run ending at `end`, whose window ends one second later, is past it",
+    ),
+    (
+        "empty",
+        "2016-01-01T00:00:00Z",
+        "2016-04-01T00:00:00Z",
+        "P1M",
+        "P1M",
+        1,
+        "2016-02-01T00:00:00Z",
+        "2016-02-01T00:00:00Z",
+        "an empty window is served by no record",
     ),
 ]
 
@@ -2514,6 +2669,42 @@ def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note, end
         "window_s": [_cal_s(lo), _cal_s(hi)],
         "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, k)) for k in times],
         "at": [at(_cal_anchor(st, fm, fs, k)) for k in times] + [at(_cal_dt(p)) for p in probes],
+    }
+
+
+def _calendar_window_case(cid, start, end, freq, fp, rps, lower, upper, note):
+    periods = {p: (m, s) for p, m, s in CALENDAR_PERIODS}
+    st = _cal_dt(start)
+    fm, fs = periods[freq]
+    lo, hi = _cal_dt(lower), _cal_dt(upper)
+    en = None if end is None else _cal_dt(end)
+    case = {"id": cid, "note": note, "start": start, "start_s": _cal_s(st)}
+    if end is not None:
+        case.update({"end": end, "end_s": _cal_s(en)})
+    case.update(
+        {
+            "frequency": freq,
+            "file_period": fp,
+            "records_per_sample": rps,
+            "window": [lower, upper],
+            "window_s": [_cal_s(lo), _cal_s(hi)],
+        }
+    )
+    if hi <= lo or lo < st or (en is not None and hi > en):
+        return case | {"error": "esm_window_uncovered"}
+    # The record in effect at the window start, each one after it inside the
+    # window, and for a bracket the next one unless it is at or past `end`.
+    k = _cal_floor(st, fm, fs, lo)
+    records = [k]
+    while _cal_anchor(st, fm, fs, records[-1] + 1) < hi:
+        records.append(records[-1] + 1)
+    nxt = _cal_anchor(st, fm, fs, records[-1] + 1)
+    if rps == 2 and (en is None or nxt < en):
+        records.append(records[-1] + 1)
+    refresh = [r for r in records if lo <= _cal_anchor(st, fm, fs, r) < hi]
+    return case | {
+        "window_records_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in records],
+        "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in refresh],
     }
 
 
@@ -2631,6 +2822,29 @@ def emit_calendar_scenario():
             "time_dim": "time",
             "window_s": [s(2015, 11), s(2016, 3)],
             "refresh_times_s": [s(2015, 11), s(2015, 12), s(2016, 1), s(2016, 2)],
+            # The files are 2015 and 2016 only. A bracket over a window in the
+            # last month of 2016 also reads January 2017 (spec/esm-sources.md
+            # §2.6), so prefetching it reaches for the 2017 file.
+            "prefetch": [
+                {
+                    "window_s": [s(2016, 12, 5), s(2016, 12, 10)],
+                    "records_per_sample": 1,
+                    "open_ended": True,
+                    "missing_url": None,
+                },
+                {
+                    "window_s": [s(2016, 12, 5), s(2016, 12, 10)],
+                    "records_per_sample": 2,
+                    "open_ended": True,
+                    "missing_url": CALENDAR_BASE + "/ceds_so2_2017.nc",
+                },
+                {
+                    "window_s": [s(2016, 12, 5), s(2016, 12, 10)],
+                    "records_per_sample": 2,
+                    "open_ended": False,
+                    "missing_url": None,
+                },
+            ],
             "samples": [
                 {"t_s": s(2015, 11, 3), "records_per_sample": 1, "SO2": [10.0, 10.0]},
                 {"t_s": s(2016, 2, 29), "records_per_sample": 1, "SO2": [13.0, 13.0]},
@@ -2670,12 +2884,21 @@ def emit_calendar_scenario():
                 "`*_s` are Unix seconds. `providers`: a provider over the committed blobs "
                 "(offline, the corpus cache), its URL an esm template, returns `samples` "
                 "at `t_s` (array values in file dimension order; with records_per_sample "
-                "2 the time dimension comes first and its coordinate is `time_s`)."
+                "2 the time dimension comes first and its coordinate is `time_s`). "
+                "`windows` (spec/esm-sources.md section 2.6): a provider over the run "
+                "window `window_s` (half-open) with the given cadence, `end` and "
+                "`records_per_sample` is either refused with the error code `error` "
+                "or is served by the records anchored at `window_records_s` and "
+                "refreshes at `refresh_times_s`. A provider's `prefetch` entries: "
+                "offline over the corpus cache, prefetching `window_s` with "
+                "`records_per_sample` (and no `end` when `open_ended`) succeeds, or "
+                "is a cache miss for `missing_url` when it is given."
             ),
             "blobs": blobs,
             "periods": [{"iso": p, "months": m, "seconds": sec} for p, m, sec in CALENDAR_PERIODS],
             "bad_periods": CALENDAR_BAD_PERIODS,
             "cadences": [_calendar_cadence_case(*c) for c in CALENDAR_CADENCES],
+            "windows": [_calendar_window_case(*w) for w in CALENDAR_WINDOWS],
             "providers": providers,
         },
     )

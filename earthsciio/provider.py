@@ -57,7 +57,7 @@ import numpy as np
 
 from .cache import Cache, CacheEntry
 from .calendar import CalendarPeriod, CalendarPeriodError
-from .errors import UnknownReaderOption
+from .errors import UnknownReaderOption, WindowNotCovered
 from .esm import EsmTemplate
 from .native import NativeDataset, NativeField
 from .registry import Registry, format_registry, supports_selection
@@ -172,6 +172,58 @@ class SourceTemporal:
             k += 1
             anchor = p.anchor(self.start, k)
         return out
+
+    def _check_window(self, window: Window) -> None:
+        """Refuse a run window some stretch of which no record serves
+        (spec/esm-sources.md §2.6), with :class:`WindowNotCovered`.
+
+        The records serving ``[a, b)`` are the one in effect at ``a``, every one
+        whose anchor is inside the window, and, for a two-record bracket, the
+        successor of the last of them. They cover it unless ``a`` precedes
+        ``start`` (no record is in effect there yet) or ``b`` is past ``end``
+        (the last record ends at ``end``). An empty or reversed window is
+        refused too: no record serves it."""
+        a, b = window
+        if b <= a:
+            raise WindowNotCovered(
+                f"esm_window_uncovered: the run window [{a.isoformat()}, {b.isoformat()}) "
+                "is empty: its end must be after its start"
+            )
+        if a < self.start:
+            raise WindowNotCovered(
+                f"esm_window_uncovered: the run window [{a.isoformat()}, {b.isoformat()}) "
+                f"starts before the source's first record, at {self.start.isoformat()}"
+            )
+        if self.end is not None and b > self.end:
+            raise WindowNotCovered(
+                f"esm_window_uncovered: the run window [{a.isoformat()}, {b.isoformat()}) "
+                f"runs past the end of the source's data, at {self.end.isoformat()}"
+            )
+
+    def _window_records(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+        """The anchors of the records serving ``[lower, upper)``
+        (spec/esm-sources.md §2.6): the one in effect at ``lower``, each one
+        after it while ``< upper`` and, for a two-record bracket, the successor
+        of the last of them unless it is at or past ``end``."""
+        f = self._frequency
+        k = f.floor(self.start, lower)
+        out: list[_dt.datetime] = []
+        anchor = f.anchor(self.start, k)
+        while anchor < upper or not out:
+            out.append(anchor)
+            k += 1
+            anchor = f.anchor(self.start, k)
+        if self.records_per_sample == 2 and (self.end is None or anchor < self.end):
+            out.append(anchor)
+        return out
+
+    def _bracket_successor(self, upper: _dt.datetime) -> _dt.datetime | None:
+        """The record a two-record bracket needs past the end ``upper`` of a
+        window: the first anchor at or after ``upper`` — the successor of the
+        last record in the window — unless it is at or past ``end``
+        (spec/esm-sources.md §2.6)."""
+        nxt = self.first_record_anchor_from(upper)
+        return nxt if self.end is None or nxt < self.end else None
 
     def record_in_file(self, anchor: _dt.datetime, file_anchor: _dt.datetime) -> int:
         """The 0-based record of frequency anchor ``anchor`` in the file that
@@ -352,6 +404,11 @@ class Provider:
     window:
         Optional run window ``(start, end)`` bounding :meth:`refresh_times` /
         :meth:`prefetch` and priming :meth:`materialize` for a DISCRETE loader.
+        It is served by the record in effect at its start, every record inside
+        it and, for a two-record bracket, the record after it; a window that
+        starts before the source's first record or runs past its ``end`` is
+        refused with :class:`~earthsciio.errors.WindowNotCovered`
+        (spec/esm-sources.md §2.6).
     formats:
         The format registry to resolve the reader from (defaults to the global
         :data:`~earthsciio.registry.format_registry`) — the seam that lets a new
@@ -369,6 +426,10 @@ class Provider:
         *,
         formats: Registry | None = None,
     ) -> None:
+        # A window some stretch of which no record serves is refused here, not
+        # mid-run (spec/esm-sources.md §2.6).
+        if window is not None and loader.temporal is not None:
+            loader.temporal._check_window(window)
         self.loader = loader
         self.cache = cache
         self.window = window
@@ -619,10 +680,12 @@ class Provider:
 
         Empty for a CONST loader, or for an unbounded DISCRETE loader with no run
         window and no ``temporal.end``. Otherwise the aligned anchors in
-        ``[lower, upper)`` where ``lower`` is the window start clamped to the
-        loader epoch and ``upper`` is the window end (else ``temporal.end``).
-        Each is a timezone-aware :class:`datetime.datetime`; a solver integrating
-        in epoch seconds takes ``t.timestamp()``.
+        ``[lower, upper)`` where ``lower`` is the window start (else the loader
+        epoch) and ``upper`` is the window end (else ``temporal.end``) — none
+        for a window inside one record's interval, which that record serves
+        (:meth:`window_records`). Each is a timezone-aware
+        :class:`datetime.datetime`; a solver integrating in epoch seconds takes
+        ``t.timestamp()``.
         """
         temporal = self.loader.temporal
         if temporal is None:
@@ -633,6 +696,27 @@ class Provider:
         lower = self._lower_bound()
         # First aligned anchor >= lower, then each next one (spec §2.3).
         return temporal._record_anchors(lower, upper)
+
+    def window_records(self) -> list[_dt.datetime]:
+        """The anchors of the records that serve the run window, in order
+        (spec/esm-sources.md §2.6): the record in effect at the window start,
+        every record whose anchor is inside the window and, with
+        ``records_per_sample = 2``, the record after the window that the
+        bracket of its last interval reads (unless that is at or past
+        ``temporal.end``).
+
+        Unlike :meth:`refresh_times` it is never empty for a bounded DISCRETE
+        provider: a window inside one record's interval is served by that
+        record. Empty for a CONST loader, or an unbounded DISCRETE one with no
+        run window and no ``temporal.end``.
+        """
+        temporal = self.loader.temporal
+        if temporal is None:
+            return []
+        upper = self.window[1] if self.window is not None else temporal.end
+        if upper is None:
+            return []
+        return temporal._window_records(self._lower_bound(), upper)
 
     # -- prefetch ----------------------------------------------------------- #
 
@@ -657,9 +741,16 @@ class Provider:
                 "SourceTemporal.end"
             )
         start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
+        file_anchors = temporal._file_anchors(start, upper)
+        # A two-record bracket in the window's last interval also reads the
+        # record after the window, which may sit in a later file (§2.6).
+        if temporal.records_per_sample == 2:
+            nxt = temporal._bracket_successor(upper)
+            if nxt is not None:
+                file_anchors.append(temporal.file_anchor(nxt))
         entries: list[CacheEntry] = []
         seen: set = set()
-        for file_anchor in temporal._file_anchors(start, upper):
+        for file_anchor in file_anchors:
             ref = self._resolve(file_anchor)
             if ref.url not in seen:
                 seen.add(ref.url)

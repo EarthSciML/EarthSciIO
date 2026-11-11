@@ -70,7 +70,10 @@ A data provider over the shared cache.
     `(start, stop)` in UTC, as in the Python and Rust tracks (spec/esm-sources.md
     §2.4), in place of `cadence`/`times`/`time_dim`. Times are then Unix
     seconds, and [`refresh_times`] returns the record anchors in the window
-    (its start clamped to the source start; its end, else the source's `stop`).
+    (its end, else the source's `stop`), possibly none; [`window_records`](@ref)
+    returns the records that serve it. A window that starts before the source's
+    `start`, runs past its `stop` or is empty is refused with
+    [`WindowNotCovered`](@ref) (spec/esm-sources.md §2.6).
     A sample at any `t` at or after the source start — inside the window or
     not — reads the record at or before `t` from its own file by the calendar
     (months and years exact), and a two-record bracket's successor is the next
@@ -114,13 +117,55 @@ struct _TemporalPlan
     lock::ReentrantLock
 end
 
+"""
+    WindowNotCovered(msg)
+
+A provider's run window some stretch of which no record serves
+(spec/esm-sources.md §2.6): it starts before the source's first record, runs
+past the end of its data, or is empty. The message starts with the code
+`esm_window_uncovered`, the same in every track."""
+struct WindowNotCovered <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::WindowNotCovered) = print(io, e.msg)
+
+# Refuse a run window `[a, b)` some stretch of which no record serves
+# (spec/esm-sources.md §2.6). The records serving it are the one in effect at
+# `a`, every one whose anchor is inside it and, for a two-record bracket, the
+# successor of the last of them; they cover it unless `a` precedes `start` (no
+# record is in effect there yet) or `b` is past `stop` (the last record ends
+# there). An empty or reversed window is refused too: no record serves it.
+function _check_window(temporal::SourceTemporal, a::DateTime, b::DateTime)
+    span = "the run window [$(a)Z, $(b)Z)"
+    b <= a && throw(
+        WindowNotCovered("esm_window_uncovered: $span is empty: its end must be after its start")
+    )
+    a < temporal.start && throw(
+        WindowNotCovered(
+            "esm_window_uncovered: $span starts before the source's first record, " *
+                "at $(temporal.start)Z"
+        )
+    )
+    temporal.stop !== nothing && b > temporal.stop && throw(
+        WindowNotCovered(
+            "esm_window_uncovered: $span runs past the end of the source's data, " *
+                "at $(temporal.stop)Z"
+        )
+    )
+    return nothing
+end
+
 # The plan of a `temporal` provider over `window` (UTC; `DateTime`s or Unix
 # seconds) and its ticks: the record anchors in `[lo, hi)`, where `lo` is the
-# window start clamped to the source start and `hi` the window end, else the
-# source's `stop` — exactly Python's and Rust's `refresh_times`. The window end
-# is NOT clipped to `stop`, as it is not in those tracks.
+# window start (else the source start) and `hi` the window end, else the
+# source's `stop` — exactly Python's and Rust's `refresh_times`. A window some
+# stretch of which no record serves is refused (`_check_window`); one inside a
+# single record's interval has no ticks, and is served by that record.
 function _temporal_plan(temporal::SourceTemporal, window)
-    lo = window === nothing ? temporal.start : max(_utc(window[1]), temporal.start)
+    if window !== nothing
+        _check_window(temporal, _utc(window[1]), _utc(window[2]))
+    end
+    lo = window === nothing ? temporal.start : _utc(window[1])
     hi = window === nothing ? temporal.stop : _utc(window[2])
     hi === nothing && throw(
         ArgumentError(
@@ -137,10 +182,24 @@ function _temporal_plan(temporal::SourceTemporal, window)
         k += 1
         a = period_anchor(f, s, k)
     end
-    isempty(ticks) && throw(
-        ArgumentError("the window [$lo, $hi) holds no record of the source")
-    )
     return _TemporalPlan(temporal, lo, hi, Pair{DateTime, Any}[], ReentrantLock()), ticks
+end
+
+# The anchors (`DateTime`) of the records serving `[lo, hi)` (spec/esm-sources.md
+# §2.6): the one in effect at `lo`, each one after it while `< hi` and, for a
+# two-record bracket, the successor of the last of them unless at or past `stop`.
+function _window_records(temporal::SourceTemporal, lo::DateTime, hi::DateTime, bracket::Bool)
+    f, s = temporal.frequency, temporal.start
+    k = period_floor(f, s, lo)
+    out = DateTime[period_anchor(f, s, k)]
+    a = period_anchor(f, s, k + 1)
+    while a < hi
+        push!(out, a)
+        k += 1
+        a = period_anchor(f, s, k + 1)
+    end
+    bracket && (temporal.stop === nothing || a < temporal.stop) && push!(out, a)
+    return out
 end
 
 function Provider(
@@ -189,7 +248,7 @@ function Provider(
                 "a CONST provider has no refresh times, got $(length(tvec)) — use cadence=DISCRETE"
             )
         )
-    elseif cadence == DISCRETE && isempty(tvec)
+    elseif cadence == DISCRETE && isempty(tvec) && plan === nothing
         throw(
             ArgumentError(
                 "a DISCRETE provider requires a non-empty cadence (times=...)"
@@ -313,6 +372,27 @@ The discrete time points at which the data changes and the solver must
 solver (e.g. `PresetTimeCallback(refresh_times(p), …)`)."""
 refresh_times(p::Provider) = copy(p.times)
 
+"""
+    window_records(p::Provider) -> Vector{Float64}
+
+The anchors, in Unix seconds, of the records that serve a `temporal`
+provider's run window, in order (spec/esm-sources.md §2.6): the record in
+effect at the window start, every record whose anchor is inside the window and,
+with `records_per_sample = 2`, the record after the window that the bracket of
+its last interval reads (unless that is at or past the source's `stop`).
+
+Unlike [`refresh_times`](@ref) it is never empty for a `temporal` provider: a
+window inside one record's interval has no refresh times and is served by that
+record. Empty for a provider not built from a [`SourceTemporal`](@ref)."""
+function window_records(p::Provider)
+    p.plan === nothing && return Float64[]
+    plan = p.plan::_TemporalPlan
+    return Float64[
+        _unix(a) for a in
+            _window_records(plan.temporal, plan.lo, plan.hi, p.records_per_sample == 2)
+    ]
+end
+
 """True if `p`'s data is time-invariant ([`CONST`])."""
 is_const(p::Provider) = p.cadence == CONST
 
@@ -433,7 +513,7 @@ shape is not knowable without reading the blob)."""
 function array_shape(p::Provider, var::AbstractString)
     reader = _reader_for(p)
     store_backed(reader) || return nothing
-    t0 = p.cadence == CONST ? 0.0 : first(p.times)
+    t0 = p.cadence == CONST ? 0.0 : p.plan === nothing ? first(p.times) : first(window_records(p))
     return array_shape(reader, p.cache, p.url_for(t0), var)
 end
 
@@ -974,7 +1054,7 @@ cache. Returns the [`CacheEntry`] for each."""
 function prefetch(p::Provider)
     ts = Float64[]
     seen = Set{String}()
-    for t in (p.cadence == CONST ? Float64[0.0] : p.plan === nothing ? p.times : _plan_file_times(p.plan))
+    for t in (p.cadence == CONST ? Float64[0.0] : p.plan === nothing ? p.times : _plan_file_times(p.plan, p.records_per_sample == 2))
         u = p.url_for(t)
         u in seen && continue
         push!(seen, u)
@@ -985,8 +1065,10 @@ end
 
 # A `temporal` provider's files over its window, as Python's and Rust's
 # `prefetch`: each file anchor (Unix seconds) from the one at or before `lo`
-# while before `hi`.
-function _plan_file_times(plan::_TemporalPlan)
+# while before `hi` and, for a two-record bracket, the file of the record after
+# the window, which the bracket of its last interval reads (spec/esm-sources.md
+# §2.6).
+function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
     s, F = plan.temporal, plan.temporal.file_period
     k = period_floor(F, s.start, plan.lo)
     out = Float64[]
@@ -995,6 +1077,13 @@ function _plan_file_times(plan::_TemporalPlan)
         push!(out, _unix(a))
         k += 1
         a = period_anchor(F, s.start, k)
+    end
+    if bracket
+        nxt = first_record_anchor_from(s, plan.hi)
+        if s.stop === nothing || nxt < s.stop
+            fa = _unix(file_anchor(s, nxt))
+            (isempty(out) || last(out) != fa) && push!(out, fa)
+        end
     end
     return out
 end

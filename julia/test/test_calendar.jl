@@ -104,4 +104,70 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
             end
         end
     end
+
+    # Which records serve a run window, and which windows are refused
+    # (spec/esm-sources.md §2.6).
+    for c in sc["windows"]
+        @testset "window $(c["id"])" begin
+            temporal = SourceTemporal(
+                Float64(c["start_s"]), c["frequency"], c["file_period"];
+                stop = haskey(c, "end_s") ? Float64(c["end_s"]) : nothing,
+                records_per_sample = c["records_per_sample"]
+            )
+            make() = Provider(
+                Cache(; root = mktempdir(), offline = true), "file:///unused.nc";
+                format = "netcdf", temporal = temporal,
+                window = (Float64(c["window_s"][1]), Float64(c["window_s"][2]))
+            )
+            if haskey(c, "error")
+                err = try
+                    make()
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa WindowNotCovered
+                @test startswith(sprint(showerror, err), c["error"])
+            else
+                p = make()
+                @test window_records(p) == Float64.(c["window_records_s"])
+                @test refresh_times(p) == Float64.(c["refresh_times_s"])
+            end
+        end
+    end
+
+    # A two-record bracket over the window's last interval reads the record
+    # after the window, so prefetch warms that record's file too (§2.6).
+    for (name, src) in sc["providers"]
+        haskey(src, "prefetch") || continue
+        @testset "prefetch $name reaches the bracket successor" begin
+            url = EsmTemplate(
+                src["url_template"];
+                substitutions = Dict{String, String}(src["substitutions"])
+            )
+            for c in src["prefetch"]
+                temporal = SourceTemporal(
+                    Float64(src["start_s"]), src["frequency"], src["file_period"];
+                    stop = c["open_ended"] ? nothing : Float64(src["end_s"]),
+                    time_dim = src["time_dim"], records_per_sample = c["records_per_sample"]
+                )
+                p = Provider(
+                    cache, url; format = src["format"], variables = String.(src["variables"]),
+                    temporal = temporal,
+                    window = (Float64(c["window_s"][1]), Float64(c["window_s"][2]))
+                )
+                if c["missing_url"] === nothing
+                    @test !isempty(prefetch(p))
+                else
+                    err = try
+                        prefetch(p)
+                        nothing
+                    catch e
+                        e
+                    end
+                    @test err isa CacheMiss && err.url == c["missing_url"]
+                end
+            end
+        end
+    end
 end

@@ -12,12 +12,14 @@ import pytest
 
 from earthsciio import (
     Cache,
+    CacheMiss,
     CalendarPeriod,
     CalendarPeriodError,
     DataSource,
     EsmTemplate,
     Provider,
     SourceTemporal,
+    WindowNotCovered,
 )
 
 CORPUS = pathlib.Path(__file__).resolve().parents[1] / "conformance" / "corpus"
@@ -98,3 +100,58 @@ def test_provider_over_the_corpus(name):
                 np.testing.assert_array_equal(
                     np.asarray(ds.coords[src["time_dim"]].data), sample["time_s"]
                 )
+
+
+@pytest.mark.parametrize("case", SC["windows"], ids=[c["id"] for c in SC["windows"]])
+def test_window(case):
+    """Which records serve a run window, and which windows are refused
+    (spec/esm-sources.md §2.6)."""
+    temporal = _temporal(
+        case,
+        end=_t(case["end_s"]) if "end_s" in case else None,
+        records_per_sample=case["records_per_sample"],
+    )
+    loader = DataSource(name="x", format="netcdf", url="file:///unused.nc", temporal=temporal)
+    window = (_t(case["window_s"][0]), _t(case["window_s"][1]))
+    cache = Cache(root="/nonexistent-unused", offline=True)
+    if "error" in case:
+        with pytest.raises(WindowNotCovered, match=case["error"]) as err:
+            Provider(loader, cache, window)
+        assert err.value.code == case["error"]
+        return
+    p = Provider(loader, cache, window)
+    assert [t.timestamp() for t in p.window_records()] == case["window_records_s"]
+    assert [t.timestamp() for t in p.refresh_times()] == case["refresh_times_s"]
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n in SC["providers"] if "prefetch" in SC["providers"][n])
+)
+def test_prefetch_reaches_the_bracket_successor(name):
+    """A two-record bracket over the window's last interval reads the record
+    after the window, so prefetch warms that record's file too (§2.6)."""
+    src = SC["providers"][name]
+    cache = Cache(root=str(CORPUS / "cache"), offline=True)
+    for case in src["prefetch"]:
+        loader = DataSource(
+            name=name,
+            format=src["format"],
+            url=EsmTemplate(src["url_template"], src["substitutions"]),
+            variables=src["variables"],
+            temporal=SourceTemporal(
+                start=_t(src["start_s"]),
+                end=None if case["open_ended"] else _t(src["end_s"]),
+                frequency=src["frequency"],
+                file_period=src["file_period"],
+                time_dim=src["time_dim"],
+                records_per_sample=case["records_per_sample"],
+            ),
+        )
+        window = (_t(case["window_s"][0]), _t(case["window_s"][1]))
+        p = Provider(loader, cache, window)
+        if case["missing_url"] is None:
+            p.prefetch()
+        else:
+            with pytest.raises(CacheMiss) as err:
+                p.prefetch()
+            assert err.value.resolved_url == case["missing_url"], case

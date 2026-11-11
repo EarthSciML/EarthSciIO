@@ -133,7 +133,8 @@ With `f` the frequency and `F` the file period, both anchored at `start`:
 
 | Quantity | Rule |
 |---|---|
-| refresh times over `[lower, upper)` | `anchor_f(k)` for `k = ceil_f(lower), …` while `< upper` (as before) |
+| refresh times over `[lower, upper)` | `anchor_f(k)` for `k = ceil_f(lower), …` while `< upper` (as before); possibly none |
+| records serving `[lower, upper)` | §2.6 |
 | record anchor of a time `t` | `anchor_f(floor_f(t))` |
 | file anchor of a record anchor `a` | `anchor_F(floor_F(a))` — the URL is expanded here |
 | record index in its file | `floor_f(a) − ceil_f(file anchor)`, 0-based |
@@ -152,10 +153,10 @@ wrong when the list does not start at a file's first record. It now also takes
 a `SourceTemporal` and a run `window`, as Python and Rust do:
 `Provider(cache, url; format, temporal, window)`. Times are then Unix seconds
 (UTC). `refresh_times` returns §2.3's refresh times over the window, `upper`
-being the window end (else `stop`) and never clipped to `stop`, as in Python
-and Rust. A sample at any time from `start` on, inside the window or not, is
-located by §2.3 on the calendar, its record in the covering file found as in
-§2.5, as in Python and Rust.
+being the window end (else `stop`), as in Python and Rust; a window is checked
+as in §2.6 and may have no refresh times. A sample at any time from `start`
+on, inside the window or not, is located by §2.3 on the calendar, its record in
+the covering file found as in §2.5, as in Python and Rust.
 
 ### 2.5 The file's own time axis
 
@@ -213,6 +214,47 @@ In Julia the record is chosen inside the `netcdf` reader's one open: the
 `records` option takes a two-argument resolver `(len, axis) -> indices`, which
 is handed the file's raw `time_dim` coordinate with its attributes
 ([registries.md](registries.md) §2, the `netcdf` reader's `records`).
+
+### 2.6 The run window
+
+Fixture: `windows`, and the `prefetch` entries of `providers`, in
+[`../conformance/corpus/scenarios/calendar-cadence.json`](../conformance/corpus/scenarios/calendar-cadence.json).
+
+A provider over a run window `[a, b)` (UTC, half-open) is served by these
+records, in order (Python `Provider.window_records`, Julia `window_records`,
+Rust `Provider::window_records`, each as record anchors):
+
+1. the record in effect at `a`: `anchor_f(floor_f(a))`, whether or not it is
+   timestamped inside the window;
+2. every record after it whose anchor is `< b`;
+3. with `records_per_sample = 2`, the record after the last of those,
+   `anchor_f(ceil_f(b))`, unless it is at or past `end`. The bracket of the
+   window's last interval interpolates toward it. When it is at or past
+   `end`, the bracket holds the last record instead (§2.5).
+
+A window inside one record's interval is served by that record alone (two
+records with a bracket), and has no refresh times. Without a window, `a` is
+`start` and `b` is `end`.
+
+Records cover the data from `start` up to `end` (exclusive; open-ended when
+there is no `end`), each record until the next one's anchor. So every
+part of the window is served unless the provider is built with a window that
+
+| Window | Why |
+|---|---|
+| starts before `start`, `a < start` | no record is in effect before the first one |
+| ends past `end`, `b > end` | the last record stops at `end` |
+| is empty, `b ≤ a` | no record serves it |
+
+which every track refuses when the provider is built, before any I/O, with
+the code `esm_window_uncovered` at the start of the message (Python
+`WindowNotCovered`, Julia `WindowNotCovered`, Rust `Error::WindowNotCovered`).
+A window before or after the data is never read as an empty run. With no
+`end` there is no upper limit to check: a window past the last file that
+exists fails when its file is read.
+
+`prefetch` warms the files of these records: every file anchor from
+`anchor_F(floor_F(a))` while `< b` and, for item 3, that record's file.
 
 ## 3. A provider from an esm data source
 
