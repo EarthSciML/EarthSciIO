@@ -42,6 +42,7 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                 window = (Float64(c["window_s"][1]), Float64(c["window_s"][2]))
             )
             @test refresh_times(p) == Float64.(c["refresh_times_s"])
+            @test refresh_times_closed(p) == Float64.(c["refresh_times_closed_s"])
             for at in c["at"]
                 t = Float64(at["t_s"])
                 a = record_anchor(temporal, t)
@@ -135,6 +136,9 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                 p = make()
                 @test window_records(p) == Float64.(c["window_records_s"])
                 @test refresh_times(p) == Float64.(c["refresh_times_s"])
+                # Over the closed window, a refresh at the window end itself
+                # when a record is there (spec/esm-sources.md §2.3).
+                @test refresh_times_closed(p) == Float64.(c["refresh_times_closed_s"])
                 # A group schedules it even with no refresh times: its first
                 # epoch starts at the window start (spec/prefetch.md §3.2).
                 @test boundaries(PrefetchGroup(Dict("x" => p))) == sort!(

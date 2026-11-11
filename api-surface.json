@@ -179,6 +179,14 @@
       }
     },
     {
+      "name": "refresh_times_closed",
+      "kind": "function",
+      "tier": "stable",
+      "bindings": {
+        "julia": "refresh_times_closed"
+      }
+    },
+    {
       "name": "window_records",
       "kind": "function",
       "tier": "stable",

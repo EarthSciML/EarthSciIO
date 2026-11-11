@@ -82,6 +82,17 @@ fn cadences_derive_the_calendar_anchors() {
             .map(|v| v.as_f64().unwrap())
             .collect();
         assert_eq!(p.refresh_times(), want, "{id}: refresh times");
+        let want_closed: Vec<f64> = c["refresh_times_closed_s"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert_eq!(
+            p.refresh_times_closed(),
+            want_closed,
+            "{id}: closed refresh times"
+        );
         for a in c["at"].as_array().unwrap() {
             let t = at(&a["t_s"]);
             let label = format!("{id} at {}", a["t"]);
@@ -272,6 +283,13 @@ fn windows_are_served_or_refused() {
             p.refresh_times(),
             secs("refresh_times_s"),
             "{id}: refresh times"
+        );
+        // Over the closed window, a refresh at the window end itself when a
+        // record is there (`spec/esm-sources.md` §2.3).
+        assert_eq!(
+            p.refresh_times_closed(),
+            secs("refresh_times_closed_s"),
+            "{id}: closed refresh times"
         );
         // A group schedules it even with no refresh times: its first epoch
         // starts at the window start (`spec/prefetch.md` §3.2).

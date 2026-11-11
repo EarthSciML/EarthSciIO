@@ -292,6 +292,37 @@ def test_refresh_times_window_start_clamped_to_epoch(cache):
     assert p.refresh_times() == [_utc(1), _utc(2)]
 
 
+def test_refresh_times_closed_includes_the_window_end(cache):
+    # A run over [t0, tf] whose tf lands on a record refreshes at tf too
+    # (issue #36); the half-open schedule stays as it was.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    p = Provider(
+        DataSource("era5", "netcdf", ERA5_URL, temporal=temporal),
+        cache,
+        window=(START + dt.timedelta(minutes=30), _utc(3)),
+    )
+    assert p.refresh_times() == [_utc(1), _utc(2)]
+    assert p.refresh_times_closed() == [_utc(1), _utc(2), _utc(3)]
+
+
+def test_refresh_times_closed_never_at_temporal_end(cache):
+    # No record is at `end`: without a window the closed schedule is the
+    # half-open one, and a window ending at `end` gets no refresh there.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY, end=_utc(3))
+    loader = DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
+    assert Provider(loader, cache).refresh_times_closed() == [_utc(0), _utc(1), _utc(2)]
+    p = Provider(loader, cache, window=(_utc(1), _utc(3)))
+    assert p.refresh_times_closed() == [_utc(1), _utc(2)]
+
+
+def test_refresh_times_closed_empty_for_const_and_unbounded(cache):
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
+    assert p.refresh_times_closed() == []
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    assert p.refresh_times_closed() == []
+
+
 # --------------------------------------------------------------------------- #
 # Per-file URL resolution (strftime template + callable) and prefetch.
 # --------------------------------------------------------------------------- #

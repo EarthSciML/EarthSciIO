@@ -57,6 +57,7 @@ def test_cadence(case):
     window = (_t(case["window_s"][0]), _t(case["window_s"][1]))
     p = Provider(loader, Cache(root="/nonexistent-unused", offline=True), window)
     assert [t.timestamp() for t in p.refresh_times()] == case["refresh_times_s"]
+    assert [t.timestamp() for t in p.refresh_times_closed()] == case["refresh_times_closed_s"]
     for at in case["at"]:
         t = _t(at["t_s"])
         a = temporal.record_anchor(t)
@@ -123,6 +124,9 @@ def test_window(case):
     p = Provider(loader, cache, window)
     assert [t.timestamp() for t in p.window_records()] == case["window_records_s"]
     assert [t.timestamp() for t in p.refresh_times()] == case["refresh_times_s"]
+    # Over the closed window, a refresh at the window end itself when a record
+    # is there (spec/esm-sources.md §2.3).
+    assert [t.timestamp() for t in p.refresh_times_closed()] == case["refresh_times_closed_s"]
     # A group schedules it even with no refresh times: its first epoch starts
     # at the window start (spec/prefetch.md §3.2).
     with PrefetchGroup({"x": p}) as g:

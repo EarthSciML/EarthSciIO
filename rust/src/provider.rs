@@ -891,7 +891,26 @@ impl Provider {
     ///
     /// Each value is `anchor.unix_timestamp()`; a solver integrating in
     /// "seconds since window start" subtracts the window's start epoch.
+    ///
+    /// The window is half-open `[lower, upper)`: a refresh at exactly the
+    /// window end is not among them;
+    /// [`refresh_times_closed`](Self::refresh_times_closed) includes it.
     pub fn refresh_times(&self) -> Vec<f64> {
+        self.refresh_times_over(false)
+    }
+
+    /// [`refresh_times`](Self::refresh_times) over the **closed** window
+    /// `[lower, upper]` (`spec/esm-sources.md` §2.3): the same anchors plus the
+    /// one at the window end itself, when the window end is a cadence anchor
+    /// before [`SourceTemporal::end`]. The tstops of a solver that integrates
+    /// over `[t0, tf]` and must refresh at `tf` when `tf` lands on a record.
+    /// With no window (`upper` is the source's end, where no record is) it
+    /// equals [`refresh_times`](Self::refresh_times).
+    pub fn refresh_times_closed(&self) -> Vec<f64> {
+        self.refresh_times_over(true)
+    }
+
+    fn refresh_times_over(&self, closed: bool) -> Vec<f64> {
         let Some(temporal) = &self.loader.temporal else {
             return Vec::new(); // CONST: no refreshes
         };
@@ -910,6 +929,11 @@ impl Provider {
         loop {
             let anchor = freq.anchor(temporal.start, k);
             if anchor >= upper {
+                // The closed end: the anchor at `upper` itself, unless no
+                // record is there (at or past the source's end).
+                if closed && anchor == upper && temporal.end.is_none_or(|e| anchor < e) {
+                    out.push(anchor.unix_timestamp() as f64);
+                }
                 break;
             }
             out.push(anchor.unix_timestamp() as f64);

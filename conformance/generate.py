@@ -2545,6 +2545,31 @@ CALENDAR_WINDOWS = [
         "that exists is not refused here (its files are missing when read)",
     ),
     (
+        "run-ends-on-a-record",
+        "1970-01-01T00:00:00Z",
+        None,
+        "PT1H",
+        "P1D",
+        1,
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T04:00:00Z",
+        "a run over [00:00, 04:00] with hourly data (issue #36): the half-open "
+        "refresh times stop at 03:00, the closed ones also refresh at 04:00",
+    ),
+    (
+        "run-ends-on-a-record-before-the-end",
+        "1970-01-01T00:00:00Z",
+        "1970-01-02T00:00:00Z",
+        "PT1H",
+        "P1D",
+        2,
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T04:00:00Z",
+        "as `run-ends-on-a-record` with an `end` after the window and a "
+        "two-record bracket: 04:00 is the bracket's successor and a closed "
+        "refresh time",
+    ),
+    (
         "entirely-before-the-data",
         "2016-01-01T00:00:00Z",
         "2016-04-01T00:00:00Z",
@@ -2625,6 +2650,13 @@ CALENDAR_WINDOWS = [
 ]
 
 
+def _cal_closes(st, fm, fs, hi, end):
+    """Whether the closed window ending at `hi` adds a refresh there: `hi` is an
+    anchor and before `end` (spec/esm-sources.md §2.3)."""
+    on_anchor = _cal_anchor(st, fm, fs, _cal_floor(st, fm, fs, hi)) == hi
+    return on_anchor and (end is None or hi < _cal_dt(end))
+
+
 def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note, end=None):
     periods = {p: (m, s) for p, m, s in CALENDAR_PERIODS}
     st = _cal_dt(start)
@@ -2636,6 +2668,8 @@ def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note, end
     while _cal_anchor(st, fm, fs, k) < hi:
         times.append(k)
         k += 1
+    # Over the closed window: also `hi` itself when it is an anchor before `end`.
+    closed = [*times, k] if _cal_closes(st, fm, fs, hi, end) else times
 
     def at(t):
         kf = _cal_floor(st, fm, fs, t)
@@ -2668,6 +2702,7 @@ def _calendar_cadence_case(cid, start, freq, fp, lower, upper, probes, note, end
         "window": [lower, upper],
         "window_s": [_cal_s(lo), _cal_s(hi)],
         "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, k)) for k in times],
+        "refresh_times_closed_s": [_cal_s(_cal_anchor(st, fm, fs, k)) for k in closed],
         "at": [at(_cal_anchor(st, fm, fs, k)) for k in times] + [at(_cal_dt(p)) for p in probes],
     }
 
@@ -2702,9 +2737,13 @@ def _calendar_window_case(cid, start, end, freq, fp, rps, lower, upper, note):
     if rps == 2 and (en is None or nxt < en):
         records.append(records[-1] + 1)
     refresh = [r for r in records if lo <= _cal_anchor(st, fm, fs, r) < hi]
+    refresh_closed = [_cal_s(_cal_anchor(st, fm, fs, r)) for r in refresh]
+    if _cal_closes(st, fm, fs, hi, end):
+        refresh_closed.append(_cal_s(hi))
     return case | {
         "window_records_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in records],
         "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in refresh],
+        "refresh_times_closed_s": refresh_closed,
     }
 
 
@@ -2878,7 +2917,8 @@ def emit_calendar_scenario():
                 "duration parses to `months` and `seconds`; each of `bad_periods` is an "
                 "esm_period_invalid error. `cadences`: for start/frequency/file_period "
                 "(and `end`, the exclusive end of the data, where given), "
-                "refresh_times over the half-open window are `refresh_times_s`, and at "
+                "refresh_times over the half-open window are `refresh_times_s` and "
+                "refresh_times_closed over the closed window `refresh_times_closed_s`, and at "
                 "each `at[].t` the record anchor, the file anchor, the 0-based record in "
                 "its file and the next record's anchor are as given. All times are UTC; "
                 "`*_s` are Unix seconds. `providers`: a provider over the committed blobs "
@@ -2888,8 +2928,9 @@ def emit_calendar_scenario():
                 "`windows` (spec/esm-sources.md section 2.6): a provider over the run "
                 "window `window_s` (half-open) with the given cadence, `end` and "
                 "`records_per_sample` is either refused with the error code `error` "
-                "or is served by the records anchored at `window_records_s` and "
-                "refreshes at `refresh_times_s`. A provider's `prefetch` entries: "
+                "or is served by the records anchored at `window_records_s`, "
+                "refreshes at `refresh_times_s` and, over the closed window, at "
+                "`refresh_times_closed_s`. A provider's `prefetch` entries: "
                 "offline over the corpus cache, prefetching `window_s` with "
                 "`records_per_sample` (and no `end` when `open_ended`) succeeds, or "
                 "is a cache miss for `missing_url` when it is given."

@@ -390,8 +390,34 @@ discrete_provider(cache::Cache, url, times; kwargs...) =
 The discrete time points at which the data changes and the solver must
 [`refresh`]. Empty for a [`CONST`] provider; the sorted cadence grid for a
 [`DISCRETE`] one. The library exposes these; the user wires them into the
-solver (e.g. `PresetTimeCallback(refresh_times(p), …)`)."""
+solver (e.g. `PresetTimeCallback(refresh_times(p), …)`).
+
+For a `temporal` provider these are the record anchors in the half-open window
+`[lo, hi)`: a refresh at exactly the window end is not among them;
+[`refresh_times_closed`](@ref) includes it."""
 refresh_times(p::Provider) = copy(p.times)
+
+"""
+    refresh_times_closed(p::Provider) -> Vector{Float64}
+
+[`refresh_times`](@ref) over the CLOSED window `[lo, hi]` (spec/esm-sources.md
+§2.3): the same anchors plus the one at the window end itself, when the window
+end is a cadence anchor before the source's `stop`. The tstops of a solver that
+integrates over `[t0, tf]` and must refresh at `tf` when `tf` lands on a record.
+With no window (`hi` is `stop`, where no record is) it equals `refresh_times`,
+as it does for a provider over a caller-made `times` grid, which has no window."""
+function refresh_times_closed(p::Provider)
+    times = refresh_times(p)
+    p.plan === nothing && return times
+    plan = p.plan::_TemporalPlan
+    temporal, hi = plan.temporal, plan.hi
+    f, s = temporal.frequency, temporal.start
+    at_anchor = period_anchor(f, s, period_ceil(f, s, hi)) == hi
+    if at_anchor && (temporal.stop === nothing || hi < temporal.stop)
+        push!(times, _unix(hi))
+    end
+    return times
+end
 
 """
     window_records(p::Provider) -> Vector{Float64}

@@ -147,9 +147,13 @@ class SourceTemporal:
         p = self._file_period
         return p.anchor(self.start, p.floor(self.start, t) + 1)
 
-    def _record_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
+    def _record_anchors(
+        self, lower: _dt.datetime, upper: _dt.datetime, closed: bool = False
+    ) -> list[_dt.datetime]:
         """The frequency anchors in ``[lower, upper)``: one ``ceil``, then each
-        anchor by its index (no floor per step)."""
+        anchor by its index (no floor per step). With ``closed``, also the
+        anchor at ``upper`` itself, unless it is at or past ``end`` (no record
+        is there) — spec/esm-sources.md §2.3."""
         f = self._frequency
         k = f.ceil(self.start, lower)
         out: list[_dt.datetime] = []
@@ -158,6 +162,8 @@ class SourceTemporal:
             out.append(anchor)
             k += 1
             anchor = f.anchor(self.start, k)
+        if closed and anchor == upper and (self.end is None or anchor < self.end):
+            out.append(anchor)
         return out
 
     def _file_anchors(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
@@ -679,6 +685,17 @@ class Provider:
         anchor = _EPOCH if self.loader.temporal is None else self.loader.temporal.start
         return shape_fn(self.cache, self.loader.resolve_url(anchor), var)
 
+    def refresh_times_closed(self) -> list[_dt.datetime]:
+        """:meth:`refresh_times` over the CLOSED window ``[lower, upper]``: the
+        same anchors plus the one at the window end itself, when the window
+        end is a cadence anchor before ``temporal.end`` (spec/esm-sources.md
+        §2.3). The tstops of a solver that integrates over ``[t0, tf]`` and
+        must refresh at ``tf`` when ``tf`` lands on a record. With no window
+        (``upper`` is ``temporal.end``, where no record is) it equals
+        :meth:`refresh_times`.
+        """
+        return self._refresh_times(closed=True)
+
     def refresh_times(self) -> list[_dt.datetime]:
         """The cadence anchors at which the data changes and the solver must
         :meth:`refresh` — the solver tstops.
@@ -690,8 +707,12 @@ class Provider:
         for a window inside one record's interval, which that record serves
         (:meth:`window_records`). Each is a timezone-aware
         :class:`datetime.datetime`; a solver integrating in epoch seconds takes
-        ``t.timestamp()``.
+        ``t.timestamp()``. A refresh at exactly the window end is not among
+        them; :meth:`refresh_times_closed` includes it.
         """
+        return self._refresh_times(closed=False)
+
+    def _refresh_times(self, closed: bool) -> list[_dt.datetime]:
         temporal = self.loader.temporal
         if temporal is None:
             return []
@@ -700,7 +721,7 @@ class Provider:
             return []  # unbounded — no enumerable schedule
         lower = self._lower_bound()
         # First aligned anchor >= lower, then each next one (spec §2.3).
-        return temporal._record_anchors(lower, upper)
+        return temporal._record_anchors(lower, upper, closed)
 
     def window_records(self) -> list[_dt.datetime]:
         """The anchors of the records that serve the run window, in order

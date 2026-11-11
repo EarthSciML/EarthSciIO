@@ -134,11 +134,22 @@ With `f` the frequency and `F` the file period, both anchored at `start`:
 | Quantity | Rule |
 |---|---|
 | refresh times over `[lower, upper)` | `anchor_f(k)` for `k = ceil_f(lower), …` while `< upper` (as before); possibly none |
+| refresh times over `[lower, upper]` | those over `[lower, upper)`, then `upper` itself when it is an anchor (`anchor_f(ceil_f(upper)) = upper`) and before `end` (no record is at or past `end`) |
 | records serving `[lower, upper)` | §2.6 |
 | record anchor of a time `t` | `anchor_f(floor_f(t))` |
 | file anchor of a record anchor `a` | `anchor_F(floor_F(a))` — the URL is expanded here |
 | record index in its file | `floor_f(a) − ceil_f(file anchor)`, 0-based |
 | next record (two-record bracket) | `anchor_f(floor_f(t) + 1)` |
+
+`refresh_times` is over the half-open window, `lower` being the window start
+(else `start`) and `upper` the window end (else `end`); the prefetch
+boundaries and epochs (`prefetch.md` §3.2) are built from it.
+`refresh_times_closed` is over the closed window `[lower, upper]`: an
+integrator over `[t0, tf]` passes that as the window and uses these as its
+tstops, so that when `tf` lands on a record it refreshes there too. With no
+window `upper` is `end`, where no record is, so the two agree. In the
+`calendar-cadence` fixture they are `refresh_times_s` and
+`refresh_times_closed_s`.
 
 A fixed-length cadence (`months = 0`) gives exactly the anchors it gave
 before. The record index in its file is the cadence offset: it is what every
