@@ -188,6 +188,17 @@ pub enum Error {
         detail: String,
     },
 
+    /// A provider time EarthSciIO cannot use (`spec/esm-sources.md` §4): a
+    /// time origin that is not a whole second (`code` `time_origin_invalid`),
+    /// or a number of seconds that names no representable instant
+    /// (`time_invalid`). The message starts with `code`.
+    Time {
+        /// `time_origin_invalid` or `time_invalid`.
+        code: &'static str,
+        /// Which time, and why it cannot be used.
+        detail: String,
+    },
+
     /// An esm `data_sources` entry EarthSciIO cannot read
     /// (`spec/esm-sources.md` §3.3). The message carries `code` and the
     /// source's name.
@@ -276,6 +287,7 @@ impl std::fmt::Display for Error {
                 detail,
             } => write!(f, "{code}: data source {source:?}: {detail}"),
             Error::WindowNotCovered { detail } => write!(f, "esm_window_uncovered: {detail}"),
+            Error::Time { code, detail } => write!(f, "{code}: {detail}"),
             Error::BadPeriod { period, detail } => {
                 write!(
                     f,

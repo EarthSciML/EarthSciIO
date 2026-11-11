@@ -139,6 +139,15 @@
       }
     },
     {
+      "name": "provider_time",
+      "kind": "type",
+      "tier": "stable",
+      "bindings": {
+        "python": "TimeLike",
+        "rust": "ProviderTime"
+      }
+    },
+    {
       "name": "const_provider",
       "kind": "function",
       "tier": "stable",
@@ -770,6 +779,15 @@
       "bindings": {
         "python": "WindowNotCovered",
         "julia": "WindowNotCovered"
+      }
+    },
+    {
+      "name": "time_origin_invalid",
+      "kind": "error",
+      "tier": "stable",
+      "bindings": {
+        "python": "TimeOriginInvalid",
+        "julia": "TimeOriginInvalid"
       }
     },
     {

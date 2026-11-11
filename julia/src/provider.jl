@@ -56,7 +56,8 @@ A data provider over the shared cache.
     at-or-before record with `time_dim` DROPPED (held piecewise-constant); `2`
     returns the TWO bracketing records (floor + successor) with `time_dim`
     RETAINED at length 2 and a canonical 2-element `time_dim` coordinate of Unix
-    epoch seconds, so a downstream model interpolates in time. `2` requires a
+    epoch seconds (seconds from the `time_origin` when given), so a downstream
+    model interpolates in time. `2` requires a
     `time_dim`; the successor is read across a file boundary when needed, and at
     the last cadence tick the bracket degenerates to `[last, last]` (equal
     timestamps) so the downstream weight clamps. The provider does pure I/O
@@ -80,6 +81,15 @@ A data provider over the shared cache.
     record unless it is at or past `stop`. `records_per_sample` here, else the
     temporal's, chooses one record or two. `url` is a `String`, a function of
     the file anchor in Unix seconds, or an [`EsmTemplate`](@ref) expanded there.
+  * `time_origin` — with `temporal`, the instant the provider counts time from
+    (spec/esm-sources.md §4), usually an esm model's time origin: a `DateTime`
+    (UTC) or an ISO 8601 string, a whole second. Every time it takes (`t`, a
+    `Real` window bound) and returns ([`refresh_times`], [`window_records`],
+    the anchors and boundaries of a [`PrefetchGroup`], a two-record bracket's
+    time coordinate, whose `units` become `seconds since <origin>`) is then
+    seconds from it. `nothing` (the default) is the Unix epoch, as before. A
+    malformed or fractional origin is [`TimeOriginInvalid`](@ref). A CONST
+    provider has no times and ignores it; one built from `times` refuses it.
   * `mirrors` — fallback URLs tried in order when the primary fetch fails; the
     blob is still cached under the primary URL's key. With an
     [`EsmTemplate`](@ref) `url`, leave this empty and give the mirrors to the
@@ -101,6 +111,26 @@ struct Provider
     plan::Any                     # `nothing`, or the `_TemporalPlan` of a `temporal` provider
 end
 
+# The clock of a `temporal` provider (spec/esm-sources.md §4): the time origin
+# its ticks count from (`nothing` is the Unix epoch), the origin's Unix seconds,
+# and the CF `units` of a tick, each computed once. Every tick it takes goes
+# through `_instant` and every tick it returns through `_tick`: the one place
+# the origin applies.
+struct _Clock
+    origin::Union{Nothing, DateTime}
+    off::Float64
+    units::String
+end
+_Clock(origin::Union{Nothing, DateTime}) =
+    _Clock(origin, origin === nothing ? 0.0 : _unix(origin), _origin_units(origin))
+
+# The tick (seconds from the origin) of the instant `a`: its Unix seconds minus
+# the origin's, as every track computes it.
+_tick(c::_Clock, a::DateTime) = _unix(a) - c.off
+# The instant a tick `t` names; a `DateTime` (or an ISO 8601 string) is one as given.
+_instant(c::_Clock, t::Real) = unix2datetime(Float64(t) + c.off)
+_instant(::_Clock, t) = _utc(t)
+
 # What a provider built from a `SourceTemporal` keeps (spec/esm-sources.md
 # §2.4): the cadence, from which every sample is located on the calendar — any
 # `t` at or after `temporal.start`, inside the window or not, as in Python and
@@ -117,6 +147,59 @@ struct _TemporalPlan
     closing::Union{Nothing, DateTime}
     axes::Vector{Pair{DateTime, Any}}
     lock::ReentrantLock
+    clock::_Clock   # the time origin its ticks count from (spec/esm-sources.md §4)
+end
+
+# A tick of a `temporal` provider and the instant it names, through its clock.
+_tick(plan::_TemporalPlan, a::DateTime) = _tick(plan.clock, a)
+_instant(plan::_TemporalPlan, t) = _instant(plan.clock, t)
+
+"""
+    TimeOriginInvalid(msg)
+
+A provider's `time_origin` that is not a whole-second UTC instant
+(spec/esm-sources.md §4). The message starts with the code
+`time_origin_invalid`, the same in every track."""
+struct TimeOriginInvalid <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::TimeOriginInvalid) = print(io, e.msg)
+
+# A `time_origin` as a `DateTime`, or `nothing` (spec/esm-sources.md §4). Any
+# nonzero fraction of a second is refused, however small: a string's fraction is
+# checked as written, since a `DateTime` keeps only milliseconds.
+function _time_origin(origin)
+    origin === nothing && return nothing
+    if origin isa AbstractString
+        m = match(_ISO_INSTANT, strip(String(origin)))
+        frac = m === nothing ? nothing : m.captures[7]
+        frac === nothing || all(==('0'), frac) || throw(
+            TimeOriginInvalid(
+                "time_origin_invalid: the time origin $(repr(origin)) is not a whole second"
+            )
+        )
+    end
+    o = try
+        origin isa Union{DateTime, AbstractString} || throw(ArgumentError("not a time"))
+        _utc(origin)
+    catch err
+        err isa InterruptException && rethrow()
+        throw(
+            TimeOriginInvalid(
+                "time_origin_invalid: $(repr(origin)) is not a DateTime or an ISO 8601 instant"
+            )
+        )
+    end
+    Dates.millisecond(o) == 0 || throw(
+        TimeOriginInvalid("time_origin_invalid: the time origin $(o)Z is not a whole second")
+    )
+    return o
+end
+
+# The CF `units` of a time in seconds from `origin` (the Unix epoch when `nothing`).
+function _origin_units(origin)
+    o = origin === nothing ? DateTime(1970) : origin
+    return "seconds since " * Dates.format(o, dateformat"yyyy-mm-ddTHH:MM:SS") * "Z"
 end
 
 """
@@ -157,18 +240,21 @@ function _check_run_window(temporal::SourceTemporal, a::DateTime, b::DateTime)
     return nothing
 end
 
-# The plan of a `temporal` provider over `window` (UTC; `DateTime`s or Unix
-# seconds) and its ticks: the record anchors in `[lo, hi)`, where `lo` is the
+# The plan of a `temporal` provider over `window` (UTC `DateTime`s, or seconds
+# from `origin`, the Unix epoch when `nothing`) and its ticks, in seconds from
+# `origin`: the record anchors in `[lo, hi)`, where `lo` is the
 # window start (else the source start) and `hi` the window end, else the
 # source's `stop` — exactly Python's and Rust's `refresh_times`. A window some
 # stretch of which no record serves is refused (`_check_run_window`); one inside a
 # single record's interval has no ticks, and is served by that record.
-function _temporal_plan(temporal::SourceTemporal, window)
+function _temporal_plan(temporal::SourceTemporal, window, origin = nothing)
+    clock = _Clock(origin)
+    at(x) = _instant(clock, x)
     if window !== nothing
-        _check_run_window(temporal, _utc(window[1]), _utc(window[2]))
+        _check_run_window(temporal, at(window[1]), at(window[2]))
     end
-    lo = window === nothing ? temporal.start : _utc(window[1])
-    hi = window === nothing ? temporal.stop : _utc(window[2])
+    lo = window === nothing ? temporal.start : at(window[1])
+    hi = window === nothing ? temporal.stop : at(window[2])
     hi === nothing && throw(
         ArgumentError(
             "a temporal provider needs a bounded window: pass window = (start, stop) " *
@@ -180,12 +266,13 @@ function _temporal_plan(temporal::SourceTemporal, window)
     k = period_ceil(f, s, lo)               # one ceil, then each anchor by index
     a = period_anchor(f, s, k)
     while a < hi
-        push!(ticks, _unix(a))
+        push!(ticks, _tick(clock, a))
         k += 1
         a = period_anchor(f, s, k)
     end
     closing = _closing_record(temporal, hi)
-    return _TemporalPlan(temporal, lo, hi, closing, Pair{DateTime, Any}[], ReentrantLock()), ticks
+    plan = _TemporalPlan(temporal, lo, hi, closing, Pair{DateTime, Any}[], ReentrantLock(), clock)
+    return plan, ticks
 end
 
 # The anchors (`DateTime`) of the records serving the run window of `plan`
@@ -242,7 +329,8 @@ end
 function _epoch_starts(p::Provider)
     times = refresh_times_closed(p)
     p.plan === nothing && return times
-    lo = _unix((p.plan::_TemporalPlan).lo)
+    plan = p.plan::_TemporalPlan
+    lo = _tick(plan, plan.lo)
     return !isempty(times) && first(times) == lo ? times : pushfirst!(times, lo)
 end
 
@@ -253,10 +341,12 @@ function Provider(
         reader_kwargs = NamedTuple(),
         source_loader = nothing, auth_realm = nothing,
         records_per_sample = nothing, mirrors = String[],
-        temporal::Union{Nothing, SourceTemporal} = nothing, window = nothing
+        temporal::Union{Nothing, SourceTemporal} = nothing, window = nothing,
+        time_origin = nothing
     )
     plan = nothing
     file_url = url
+    origin = _time_origin(time_origin)
     if temporal !== nothing
         (isempty(times) && time_dim === nothing && cadence == CONST) || throw(
             ArgumentError(
@@ -264,20 +354,28 @@ function Provider(
                     "`times` or `time_dim`"
             )
         )
-        plan, times = _temporal_plan(temporal, window)
+        plan, times = _temporal_plan(temporal, window, origin)
         cadence = DISCRETE
         time_dim = temporal.time_dim
         records_per_sample === nothing && (records_per_sample = temporal.records_per_sample)
-        # The URL names a FILE: expand it at the tick's file anchor, in Unix seconds.
+        # The URL names a FILE: expand it at the tick's file anchor, in Unix
+        # seconds (a tick `t` counts from the time origin).
         file_url = if url isa AbstractString
             String(url)
         else
-            let f = url
-                t -> f(_unix(file_anchor(temporal, t)))
+            let f = url, clock = plan.clock
+                t -> f(_unix(file_anchor(temporal, _instant(clock, t))))
             end
         end
     elseif window !== nothing
         throw(ArgumentError("`window` applies to a `temporal` provider only"))
+    elseif origin !== nothing && cadence == DISCRETE
+        throw(
+            ArgumentError(
+                "`time_origin` applies to a `temporal` provider: the `times` of this one " *
+                    "are in the caller's own unit"
+            )
+        )
     end
     haskey(FORMAT_REGISTRY, format) || throw(
         ArgumentError(
@@ -352,8 +450,13 @@ function Provider(
                     "a separate `mirrors` list would not be expanded at the anchor"
             )
         )
-        mirrors_for = plan === nothing ? (t -> esm_mirrors(url, t)) :
-            (t -> esm_mirrors(url, _unix(file_anchor(temporal, t))))
+        mirrors_for = if plan === nothing
+            t -> esm_mirrors(url, t)
+        else
+            let clock = plan.clock
+                t -> esm_mirrors(url, _unix(file_anchor(temporal, _instant(clock, t))))
+            end
+        end
     else
         mirrors_for = _ -> literal_mirrors
     end
@@ -433,20 +536,20 @@ function refresh_times_closed(p::Provider)
     times = refresh_times(p)
     p.plan === nothing && return times
     closing = (p.plan::_TemporalPlan).closing
-    closing === nothing || push!(times, _unix(closing))
+    closing === nothing || push!(times, _tick(p.plan::_TemporalPlan, closing))
     return times
 end
 
 """
     window_records(p::Provider) -> Vector{Float64}
 
-The anchors, in Unix seconds, of the records that serve a `temporal`
-provider's run window, in order (spec/esm-sources.md §2.6): the record in
-effect at the window start, every record whose anchor is inside the window, the
-record at the window end itself when there is one (the refresh
-[`refresh_times_closed`](@ref) adds) and, with `records_per_sample = 2`, the
-record after the last of these that its bracket reads (unless that is at or
-past the source's `stop`).
+The anchors, in seconds from the provider's `time_origin` when it has one
+(Unix seconds otherwise), of the records that serve a `temporal` provider's run
+window, in order (spec/esm-sources.md §2.6): the record in effect at the window
+start, every record whose anchor is inside the window, the record at the window
+end itself when there is one ([`refresh_times_closed`](@ref) adds it) and, with
+`records_per_sample = 2`, the record after the last of these that its bracket
+reads (unless that is at or past the source's `stop`).
 
 Unlike [`refresh_times`](@ref) it is never empty for a `temporal` provider: a
 window inside one record's interval has no refresh times and is served by that
@@ -455,8 +558,7 @@ function window_records(p::Provider)
     p.plan === nothing && return Float64[]
     plan = p.plan::_TemporalPlan
     return Float64[
-        _unix(a) for a in
-            _window_records(plan, p.records_per_sample == 2)
+        _tick(plan, a) for a in _window_records(plan, p.records_per_sample == 2)
     ]
 end
 
@@ -581,7 +683,8 @@ function array_shape(p::Provider, var::AbstractString)
     reader = _reader_for(p)
     store_backed(reader) || return nothing
     t0 = p.cadence == CONST ? 0.0 :
-        p.plan === nothing ? first(p.times) : _unix(record_anchor(p.plan.temporal, p.plan.lo))
+        p.plan === nothing ? first(p.times) :
+        _tick(p.plan, record_anchor(p.plan.temporal, p.plan.lo))
     return array_shape(reader, p.cache, p.url_for(t0), var)
 end
 
@@ -783,11 +886,13 @@ _stack_bracket(a0, i0::Integer, a1, i1::Integer, pos::Integer) =
 # Assemble the 2-record bracket: every variable carrying `dim` gets records
 # (`nds0`,`i0`) and (`nds1`,`i1`) stacked to a size-2 `dim` axis (dims/order/attrs
 # preserved); non-temporal variables and non-`dim` coords pass through from
-# `nds0`; `dim` becomes a 2-element epoch-seconds coordinate `[t0, t1]`.
+# `nds0`; `dim` becomes a 2-element coordinate `[t0, t1]` in seconds since
+# `units`' instant (the Unix epoch, else the provider's time origin).
 function _bracket_build(
         nds0::NativeDataset, i0::Integer,
         nds1::NativeDataset, i1::Integer,
-        dim::String, t0::Float64, t1::Float64
+        dim::String, t0::Float64, t1::Float64,
+        units::String = "seconds since 1970-01-01T00:00:00Z"
     )
     vars = Dict{String, NativeField}()
     for (name, f0) in nds0.variables
@@ -807,7 +912,7 @@ function _bracket_build(
     coords[dim] = NativeField(
         Float64[t0, t1], [dim],
         Dict{String, Any}(
-            "units" => "seconds since 1970-01-01T00:00:00Z",
+            "units" => units,
             "calendar" => "standard"
         )
     )
@@ -854,11 +959,11 @@ end
 # `_axis_record`: by the file's decoded time axis when the anchor lies in its
 # span, else the cadence offset. A trimmed or irregular file is read right.
 
-# The record anchor `t` (Unix seconds) snaps to, as a `DateTime`, or the error
-# for a `t` before the source start.
+# The record anchor `t` (seconds from the time origin, Unix seconds without
+# one) snaps to, as a `DateTime`, or the error for a `t` before the source start.
 function _temporal_anchor(p::Provider, t::Real)
     s = p.plan.temporal
-    a = record_anchor(s, Float64(t))
+    a = record_anchor(s, _instant(p.plan, t))
     a < s.start && throw(
         ArgumentError("t=$t precedes the source start $(s.start)")
     )
@@ -905,7 +1010,7 @@ end
 function _load_located(p::Provider, fa::DateTime, anchor::DateTime, choose; select = nothing)
     plan = p.plan::_TemporalPlan
     dim = p.time_dim::String
-    t_url = _unix(anchor)
+    t_url = _tick(plan, anchor)
     cached, times = _axis_cached(plan, fa)
     decode(axis) = _axis_store!(plan, fa, axis === nothing ? nothing : decode_time_axis(axis))
     if !_records_pushdown(p)
@@ -979,9 +1084,11 @@ function _temporal_sample(p::Provider, t::Real; select = nothing)
         return Int[r]
     end
     nds0, pos0 = _load_located(p, fa, anchor, choose0; select = select)
-    t0 = _unix(anchor)
+    units = plan.clock.units
+    t0 = _tick(plan, anchor)
+    t1 = _tick(plan, nxt)
     if same_file && !held[]
-        return _bracket_build(nds0, pos0[1], nds0, pos0[end], dim, t0, _unix(nxt))
+        return _bracket_build(nds0, pos0[1], nds0, pos0[end], dim, t0, t1, units)
     end
     if has_succ && !same_file
         succ = try
@@ -997,19 +1104,20 @@ function _temporal_sample(p::Provider, t::Real; select = nothing)
             nothing
         end
         succ === nothing ||
-            return _bracket_build(nds0, pos0[1], succ[1], succ[2], dim, t0, _unix(nxt))
+            return _bracket_build(nds0, pos0[1], succ[1], succ[2], dim, t0, t1, units)
     end
-    return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, t0, t0)
+    return _bracket_build(nds0, pos0[1], nds0, pos0[1], dim, t0, t0, units)
 end
 
-# The tick value `sample_at(p, t)` resolves: the record anchor (Unix seconds)
-# for a `temporal` provider, else the cadence tick in effect at `t`. Raises what
-# `sample_at(p, t)` raises for a `t` before the first one.
+# The tick value `sample_at(p, t)` resolves: the record anchor (seconds from the
+# time origin) for a `temporal` provider, else the cadence tick in effect at
+# `t`. Raises what `sample_at(p, t)` raises for a `t` before the first one.
 _sample_anchor(p::Provider, t::Real) =
-    p.plan === nothing ? p.times[_tick_index(p, t)] : _unix(_temporal_anchor(p, t))
+    p.plan === nothing ? p.times[_tick_index(p, t)] :
+    _tick(p.plan, _temporal_anchor(p, t))
 
-# The file times (Unix seconds, one per distinct URL) that `sample_at(p, t)`
-# reads: the anchor's file and, for a two-record bracket, the successor's.
+# The file times (ticks, one per distinct URL) that `sample_at(p, t)` reads: the
+# anchor's file and, for a two-record bracket, the successor's.
 function _sample_url_times(p::Provider, t::Real)
     if p.plan === nothing
         tick = _tick_index(p, t)
@@ -1021,10 +1129,10 @@ function _sample_url_times(p::Provider, t::Real)
     end
     s = p.plan.temporal
     a = _temporal_anchor(p, t)
-    ts = Float64[_unix(a)]
+    ts = Float64[_tick(p.plan, a)]
     if p.records_per_sample == 2
         nxt = next_record_anchor(s, a)
-        (s.stop === nothing || nxt < s.stop) && push!(ts, _unix(nxt))
+        (s.stop === nothing || nxt < s.stop) && push!(ts, _tick(p.plan, nxt))
     end
     return ts
 end
@@ -1132,7 +1240,8 @@ function prefetch(p::Provider)
 end
 
 # A `temporal` provider's files over its window, as Python's and Rust's
-# `prefetch`: each file anchor (Unix seconds) from the one at or before `lo`
+# `prefetch`: each file anchor (seconds from the time origin, or Unix seconds
+# when none) from the one at or before `lo`
 # while before `hi`, then the files of the records past the window it needs
 # (`_end_records`): the record at `hi`, which `refresh_times_closed` refreshes
 # at, and a two-record bracket's successor (spec/esm-sources.md §2.6).
@@ -1142,12 +1251,12 @@ function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
     out = Float64[]
     a = period_anchor(F, s.start, k)
     while a < plan.hi
-        push!(out, _unix(a))
+        push!(out, _tick(plan, a))
         k += 1
         a = period_anchor(F, s.start, k)
     end
     for r in _end_records(plan, bracket)
-        fa = _unix(file_anchor(s, r))
+        fa = _tick(plan, file_anchor(s, r))
         (isempty(out) || last(out) != fa) && push!(out, fa)
     end
     return out

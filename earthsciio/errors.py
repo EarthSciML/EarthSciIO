@@ -37,6 +37,8 @@ __all__ = [
     "OfflineError",
     # streaming writer contract (spec/writer.md)
     "RegionNotShardAligned",
+    # a provider's time origin (spec/esm-sources.md §4)
+    "TimeOriginInvalid",
     "TransportError",
     "UnknownReaderOption",
     "Unsupported",
@@ -311,6 +313,14 @@ class WindowNotCovered(EarthSciIOError, ValueError):
     code ``esm_window_uncovered``, the same in every track."""
 
     code = "esm_window_uncovered"
+
+
+class TimeOriginInvalid(EarthSciIOError, ValueError):
+    """A provider's ``time_origin`` that is not a whole-second UTC instant
+    (spec/esm-sources.md §4). The message starts with the code
+    ``time_origin_invalid``, the same in every track."""
+
+    code = "time_origin_invalid"
 
 
 class RegionNotShardAligned(EarthSciIOError, ValueError):

@@ -84,6 +84,7 @@ export NativeField, NativeDataset, variable_names, coord_names
 # cadence provider (component b)
 export Provider, const_provider, discrete_provider, Cadence, CONST, DISCRETE
 export materialize, refresh, refresh_times, refresh_times_closed, window_records, prefetch, is_const, WindowNotCovered
+export TimeOriginInvalid
 
 # calendar cadences (spec/esm-sources.md §2)
 export CalendarPeriod, CalendarPeriodError, SourceTemporal

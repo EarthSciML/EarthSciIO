@@ -26,11 +26,19 @@
 //! The plan sketches `DateTime<Utc>`, but this crate already standardizes on the
 //! `time` crate (see `validate.rs`, the manifest's RFC 3339 stamps); the Provider
 //! uses [`time::OffsetDateTime`] for one consistent time type across the core.
+//!
+//! A time the provider takes is a [`ProviderTime`]: an `OffsetDateTime`, or a
+//! number of seconds (`f64`) from the loader's
+//! [`time_origin`](DataSource::time_origin) — the Unix epoch when it has none.
+//! The times it returns ([`refresh_times`](Provider::refresh_times),
+//! [`window_records`](Provider::window_records), a prefetch group's boundaries
+//! and anchors, a two-record bracket's time coordinate) are seconds from that
+//! same origin (`spec/esm-sources.md` §4).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime, UtcOffset};
 
 use crate::cache::{Cache, FetchRequest};
 use crate::calendar::CalendarPeriod;
@@ -43,6 +51,43 @@ use crate::time_axis::AxisMemo;
 
 /// A run window `(start, end)` — half-open `[start, end)`.
 pub type Window = (OffsetDateTime, OffsetDateTime);
+
+/// A time a [`Provider`] takes (`spec/esm-sources.md` §4): an instant, or a
+/// number of seconds from the loader's [`time_origin`](DataSource::time_origin)
+/// (the Unix epoch when it has none). `OffsetDateTime` and `f64` convert into
+/// it, so `p.sample_at(t)` takes either.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProviderTime {
+    /// An instant.
+    Instant(OffsetDateTime),
+    /// Seconds from the provider's time origin.
+    Seconds(f64),
+}
+
+impl From<OffsetDateTime> for ProviderTime {
+    fn from(t: OffsetDateTime) -> Self {
+        ProviderTime::Instant(t)
+    }
+}
+
+impl From<f64> for ProviderTime {
+    fn from(t: f64) -> Self {
+        ProviderTime::Seconds(t)
+    }
+}
+
+/// The Unix seconds of `t`, to the microsecond, correctly rounded: the value
+/// Python's `(t - epoch).total_seconds()` and Julia's `datetime2unix` give for
+/// the same instant, so the times the tracks return agree to the bit.
+fn unix_seconds(t: OffsetDateTime) -> f64 {
+    let micros = t.unix_timestamp_nanos().div_euclid(1_000);
+    match i64::try_from(micros) {
+        // Exact below 2^53 microseconds (some 285 years either side of 1970),
+        // then one correctly rounded division.
+        Ok(m) if m.unsigned_abs() < (1 << 53) => m as f64 / 1e6,
+        _ => t.unix_timestamp() as f64 + f64::from(t.microsecond()) / 1e6,
+    }
+}
 
 /// The temporal nature of a loader that refreshes at a cadence (plan §4.2).
 ///
@@ -69,7 +114,8 @@ pub struct SourceTemporal {
     /// `Some(1)` (default) returns the single at-or-before record with `time_dim`
     /// dropped (held piecewise-constant); `Some(2)` returns the two bracketing
     /// records (floor + successor) with `time_dim` retained at length 2 and a
-    /// canonical 2-element epoch-seconds `time` coordinate, so a downstream model
+    /// canonical 2-element `time` coordinate (Unix seconds, or seconds from the
+    /// time origin, `spec/esm-sources.md` §4), so a downstream model
     /// interpolates in time. The successor is read across a file boundary when
     /// needed; at the last available record the bracket degenerates to
     /// `[last, last]` so the downstream weight clamps. Only `1` / `2` are
@@ -357,6 +403,10 @@ pub struct DataSource {
     pub esm_substitutions: Option<BTreeMap<String, String>>,
     /// Auth realm to fetch under (resolved by the cache's auth registry).
     pub auth_realm: Option<String>,
+    /// The instant the provider counts time from (`spec/esm-sources.md` §4),
+    /// usually an esm model's time origin; a whole second. `None` is the Unix
+    /// epoch, so times in and out are Unix seconds, as before.
+    pub time_origin: Option<OffsetDateTime>,
     /// Spatial/orthogonal selection for any reader that answers
     /// [`Reader::supports_selection`] — the store-backed `zarr` one (which fetches
     /// only the intersecting chunk objects) and the whole-file `netcdf` one (which
@@ -413,6 +463,7 @@ impl DataSource {
             mirrors: Vec::new(),
             esm_substitutions: None,
             auth_realm: None,
+            time_origin: None,
             select: Selection::All,
             reader_options: serde_json::Map::new(),
             store_access: None,
@@ -512,6 +563,70 @@ impl DataSource {
         self.auth_realm = Some(realm.into());
         self
     }
+
+    /// Count time from `origin` (`spec/esm-sources.md` §4): every `f64` time
+    /// the provider takes is seconds from it, and every time it returns is.
+    /// It must be a whole second, which [`Provider::new`] checks
+    /// ([`Error::Time`], `time_origin_invalid`).
+    pub fn time_origin(mut self, origin: OffsetDateTime) -> Self {
+        self.time_origin = Some(origin);
+        self
+    }
+
+    /// `t` as an instant: an `OffsetDateTime` as given, an `f64` as that many
+    /// seconds from the [`time_origin`](Self::time_origin) (the Unix epoch
+    /// when there is none). [`Error::Time`] (`time_invalid`) for a number that
+    /// names no representable instant.
+    pub fn instant(&self, t: impl Into<ProviderTime>) -> Result<OffsetDateTime> {
+        match t.into() {
+            ProviderTime::Instant(t) => Ok(t),
+            ProviderTime::Seconds(s) => {
+                let origin = self.time_origin.unwrap_or(OffsetDateTime::UNIX_EPOCH);
+                Duration::checked_seconds_f64(s)
+                    .and_then(|d| origin.checked_add(d))
+                    .ok_or_else(|| Error::Time {
+                        code: "time_invalid",
+                        detail: format!("{s} seconds from {origin} is not a representable instant"),
+                    })
+            }
+        }
+    }
+
+    /// A run window from two times, each an `OffsetDateTime` or seconds from
+    /// the [`time_origin`](Self::time_origin) (see [`instant`](Self::instant)).
+    pub fn run_window(
+        &self,
+        start: impl Into<ProviderTime>,
+        end: impl Into<ProviderTime>,
+    ) -> Result<Window> {
+        Ok((self.instant(start)?, self.instant(end)?))
+    }
+
+    /// The seconds from the time origin (the Unix epoch when none) to `t`, as
+    /// the provider returns a time: the Unix seconds of `t` minus those of the
+    /// origin, a fraction of a second included, as every track computes it
+    /// (the inverse of [`instant`](Self::instant)).
+    pub(crate) fn seconds(&self, t: OffsetDateTime) -> f64 {
+        unix_seconds(t) - self.time_origin.map_or(0.0, unix_seconds)
+    }
+
+    /// The CF `units` of a time from the origin: `seconds since
+    /// YYYY-MM-DDTHH:MM:SSZ`.
+    pub(crate) fn time_units(&self) -> String {
+        let o = self
+            .time_origin
+            .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+            .to_offset(UtcOffset::UTC);
+        format!(
+            "seconds since {:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            o.year(),
+            u8::from(o.month()),
+            o.day(),
+            o.hour(),
+            o.minute(),
+            o.second()
+        )
+    }
 }
 
 /// A loader-bound provider of native-grid arrays, refreshed at the loader's
@@ -591,6 +706,12 @@ impl Provider {
         // A cadence step that is not a positive whole number of months or
         // seconds (a zero, negative or fractional-second `Duration`) is refused
         // here, as the Python track refuses it when the temporal is built.
+        if let Some(o) = loader.time_origin.filter(|o| o.nanosecond() != 0) {
+            return Err(Error::Time {
+                code: "time_origin_invalid",
+                detail: format!("the time origin {o} is not a whole second"),
+            });
+        }
         if let Some(t) = &loader.temporal {
             t.check_periods()?;
             // A window some stretch of which no record serves is refused here,
@@ -756,8 +877,12 @@ impl Provider {
     ///
     /// Returns `Some(buffer)` when the anchor changed (the solver must re-read),
     /// `None` when `t` falls in the same cadence interval as the last refresh, and
-    /// `None` for a CONST loader (nothing refreshes).
-    pub fn refresh(&mut self, t: OffsetDateTime) -> Result<Option<HashMap<String, NativeField>>> {
+    /// `None` for a CONST loader (nothing refreshes). `t` is an `OffsetDateTime`
+    /// or seconds from the time origin ([`ProviderTime`]).
+    pub fn refresh(
+        &mut self,
+        t: impl Into<ProviderTime>,
+    ) -> Result<Option<HashMap<String, NativeField>>> {
         self.refresh_with_select(t, None)
     }
 
@@ -772,9 +897,10 @@ impl Provider {
     /// `select` on a reader that cannot honour it is an error.
     pub fn refresh_with_select(
         &mut self,
-        t: OffsetDateTime,
+        t: impl Into<ProviderTime>,
         sel: Option<&Selection>,
     ) -> Result<Option<HashMap<String, NativeField>>> {
+        let t = self.loader.instant(t)?;
         if sel.is_some() && !self.reader.supports_selection() {
             return Err(Error::Format {
                 format: self.loader.format.clone(),
@@ -837,7 +963,8 @@ impl Provider {
     /// file(s) per call; a caller sampling many ticks of one file wants
     /// [`refresh`](Self::refresh) or a [`PrefetchGroup`](crate::PrefetchGroup),
     /// which share decoded files.
-    pub fn sample_at(&self, t: OffsetDateTime) -> Result<NativeDataset> {
+    pub fn sample_at(&self, t: impl Into<ProviderTime>) -> Result<NativeDataset> {
+        let t = self.loader.instant(t)?;
         self.sample_from(t, &self.loader.select, &mut FreshFiles)
     }
 
@@ -894,9 +1021,10 @@ impl Provider {
     /// fetching anything.
     pub fn sample_windows_at(
         &self,
-        t: OffsetDateTime,
+        t: impl Into<ProviderTime>,
         windows: &[Selection],
     ) -> Result<Vec<NativeDataset>> {
+        let t = self.loader.instant(t)?;
         if windows.is_empty() {
             return Ok(Vec::new());
         }
@@ -905,12 +1033,10 @@ impl Provider {
     }
 
     /// The cadence schedule over the window: the solver tstops the refresh
-    /// callback fires on, as **Unix epoch seconds** (`f64`). Empty for a CONST
-    /// loader, or when the loader is open-ended and no window bounds it.
-    ///
-    /// Each value is `anchor.unix_timestamp()`; a solver integrating in
-    /// "seconds since window start" subtracts the window's start epoch.
-    ///
+    /// callback fires on, as seconds (`f64`) from the loader's
+    /// [`time_origin`](DataSource::time_origin) — **Unix epoch seconds** when
+    /// it has none (`spec/esm-sources.md` §4). Empty for a CONST loader, or when
+    /// the loader is open-ended and no window bounds it.
     /// The window is half-open `[lower, upper)`: a refresh at exactly the
     /// window end is not among them;
     /// [`refresh_times_closed`](Self::refresh_times_closed) includes it.
@@ -950,23 +1076,23 @@ impl Provider {
             if anchor >= upper {
                 break;
             }
-            out.push(anchor.unix_timestamp() as f64);
+            out.push(self.loader.seconds(anchor));
             k += 1;
         }
         // The closed end: the record at `upper` itself, when there is one.
         if let Some(a) = temporal.closing_record(upper).filter(|_| closed) {
-            out.push(a.unix_timestamp() as f64);
+            out.push(self.loader.seconds(a));
         }
         out
     }
 
     /// The anchors of the records that serve the run window, in order, as
-    /// **Unix epoch seconds** (`spec/esm-sources.md` §2.6): the record in effect
-    /// at the window start, every record whose anchor is inside the window, the
-    /// record at the window end itself when there is one (the refresh
-    /// [`refresh_times_closed`](Self::refresh_times_closed) adds) and, with
-    /// `records_per_sample = 2`, the record after the last of these that its
-    /// bracket reads (unless that is at or past [`SourceTemporal::end`]).
+    /// seconds from the time origin, as [`refresh_times`](Self::refresh_times)
+    /// (`spec/esm-sources.md` §2.6): the record in effect
+    /// at the window start, every record whose anchor is inside the window and,
+    /// with `records_per_sample = 2`, the record after the window that the
+    /// bracket of its last interval reads (unless that is at or past
+    /// [`SourceTemporal::end`]).
     ///
     /// Unlike [`refresh_times`](Self::refresh_times) it is never empty for a
     /// bounded DISCRETE provider: a window inside one record's interval is
@@ -982,8 +1108,37 @@ impl Provider {
         temporal
             .window_records(self.lower_bound(temporal), upper)
             .into_iter()
-            .map(|a| a.unix_timestamp() as f64)
+            .map(|a| self.loader.seconds(a))
             .collect()
+    }
+
+    /// The instant this provider counts time from, if not the Unix epoch
+    /// (`spec/esm-sources.md` §4): the loader's
+    /// [`time_origin`](DataSource::time_origin).
+    #[must_use]
+    pub fn time_origin(&self) -> Option<OffsetDateTime> {
+        self.loader.time_origin
+    }
+
+    /// [`DataSource::instant`]: `t` as an instant, a number being seconds from
+    /// this provider's time origin.
+    pub fn instant(&self, t: impl Into<ProviderTime>) -> Result<OffsetDateTime> {
+        self.loader.instant(t)
+    }
+
+    /// [`DataSource::run_window`]: a window for [`prefetch`](Self::prefetch)
+    /// from two times, each an instant or seconds from the time origin.
+    pub fn run_window(
+        &self,
+        start: impl Into<ProviderTime>,
+        end: impl Into<ProviderTime>,
+    ) -> Result<Window> {
+        self.loader.run_window(start, end)
+    }
+
+    /// Seconds from this provider's time origin to `t`, as it returns times.
+    pub(crate) fn seconds(&self, t: OffsetDateTime) -> f64 {
+        self.loader.seconds(t)
     }
 
     /// Warm the cache for every file covering `window`, so an offline/HPC run
@@ -1039,9 +1194,9 @@ impl Provider {
         self.window.map_or(temporal.start, |(a, _)| a)
     }
 
-    /// Where this provider's sample can change over its run window, as **Unix
-    /// epoch seconds**: its [`refresh_times_closed`](Self::refresh_times_closed)
-    /// and the window start, where the record in effect there takes over
+    /// Where this provider's sample can change over its run window, as seconds
+    /// from its time origin: its [`refresh_times_closed`](Self::refresh_times_closed) and the
+    /// window start, where the record in effect there takes over
     /// (`spec/esm-sources.md` §2.6) — the schedule a `PrefetchGroup` builds its
     /// epochs from (`spec/prefetch.md` §3.2). Over the closed window, so a run
     /// that ends on a record gets an epoch at its end. Empty for a CONST or
@@ -1049,7 +1204,7 @@ impl Provider {
     pub(crate) fn epoch_starts(&self) -> Vec<f64> {
         let mut times = self.refresh_times_closed();
         if let (Some(_), Some((a, _))) = (&self.loader.temporal, self.window) {
-            let lo = a.unix_timestamp() as f64;
+            let lo = self.loader.seconds(a);
             if times.first() != Some(&lo) {
                 times.insert(0, lo);
             }
@@ -1291,11 +1446,11 @@ impl Provider {
             }
         }
         let (file1, rec1, t1_epoch) = match succ {
-            Some((f, r)) => (f, r, next_anchor.unix_timestamp() as f64),
+            Some((f, r)) => (f, r, self.loader.seconds(next_anchor)),
             // Degenerate bracket: hold the last record, equal timestamps.
-            None => (file0.clone(), rec0, anchor.unix_timestamp() as f64),
+            None => (file0.clone(), rec0, self.loader.seconds(anchor)),
         };
-        let t0_epoch = anchor.unix_timestamp() as f64;
+        let t0_epoch = self.loader.seconds(anchor);
 
         // Stack rec0 (file0) and rec1 (successor file) along the leading time axis.
         let mut variables = HashMap::with_capacity(file0.variables.len());
@@ -1310,7 +1465,8 @@ impl Provider {
             variables.insert(name.clone(), stacked);
         }
         // Carry file0's coords, but replace the time coord with the 2-element
-        // epoch-seconds bracket timestamps (the seam the ESS adapter reads).
+        // bracket timestamps, in seconds from the time origin (the seam the ESS
+        // adapter reads).
         let mut coords = file0.coords.clone();
         coords.insert(
             time_dim.to_string(),
@@ -1322,7 +1478,7 @@ impl Provider {
                     data: ArrayData::F64(vec![t0_epoch, t1_epoch]),
                     fill_value: None,
                 },
-                units: Some("seconds since 1970-01-01T00:00:00Z".to_string()),
+                units: Some(self.loader.time_units()),
                 calendar: Some("standard".to_string()),
             },
         );
