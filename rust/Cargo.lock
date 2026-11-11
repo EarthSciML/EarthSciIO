@@ -93,9 +93,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-cmp"
-version = "60.0.0"
+version = "60.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73a0e9adb28d95739fabcdae637261a2c14e618caf58ba1b88857120f9ee2687"
+checksum = "1913e57a64fbf2c4502fa6d54b547d6a1ae59e3146cbc15321d47468c937abd1"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -117,9 +117,9 @@ dependencies = [
 
 [[package]]
 name = "arrow-ipc"
-version = "60.0.0"
+version = "60.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86c523472d22e31f984df7a44fc36e6323d3c9b05ffe53d267ee4c3aa7c128d2"
+checksum = "45f3e766bccf5a0cb57a5de52a4cba450dea5171547c2cb5939b486d08887cba"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -137,9 +137,9 @@ checksum = "de2c8e714b466404cdc1189e89f892426efea614d938e16c15518c340cd43ba3"
 
 [[package]]
 name = "arrow-select"
-version = "60.0.0"
+version = "60.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba3482b7d03bf4a3bf0b195f08a7f2b071595ccd54897e35b975ac63d3104977"
+checksum = "a5af3f6656c5f2c6944f93d9a357a7f204c93d5f349385a44cf46c4a26fbcf30"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -452,6 +452,15 @@ dependencies = [
  "getrandom 0.2.17",
  "once_cell",
  "tiny-keccak",
+]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb6feb175df65d0a3ccd3e73484e940d0ac664e8034f0519fd49a93db3071d9"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -1647,9 +1656,9 @@ dependencies = [
 
 [[package]]
 name = "netcdf-reader"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a44d971ff734a75233b68148a145bd1103ec9d699351db82e48f50e4e400f3e4"
+checksum = "a9f1a196246124ca06303e9d11ed268f499852277899e52fb47cc74e08fdd11b"
 dependencies = [
  "hdf5-reader",
  "memmap2",
@@ -1871,9 +1880,9 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "60.0.0"
+version = "60.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8af83d2940bc0510f9aef86d865f56fdc6095f87ab115ac885a80b7c5226d3ba"
+checksum = "806eaa0f1c0436dcb43bee8e6a82bf2efff90521a60172f8281cb9ef577b43a4"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -3765,6 +3774,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
 
 [[package]]
 name = "zerotrie"
@@ -3801,18 +3824,21 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.2.0"
+version = "9.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f5b58784007ff6e5f280ec82c8596686a3b9b5dd5836c63288d4479f84728b9"
+checksum = "df3845f734baabdd02de353a20580e30ceccd03897def44a4eb8e9654992e294"
 dependencies = [
+ "constant_time_eq",
  "crc32fast",
  "flate2",
  "getrandom 0.4.3",
  "indexmap",
+ "libc",
  "memchr",
  "nix",
  "typed-path",
  "windows-sys 0.61.2",
+ "zeroize",
  "zopfli",
 ]
 
