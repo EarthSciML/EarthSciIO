@@ -135,7 +135,7 @@ Base.showerror(io::IO, e::WindowNotCovered) = print(io, e.msg)
 # successor of the last of them; they cover it unless `a` precedes `start` (no
 # record is in effect there yet) or `b` is past `stop` (the last record ends
 # there). An empty or reversed window is refused too: no record serves it.
-function _check_window(temporal::SourceTemporal, a::DateTime, b::DateTime)
+function _check_run_window(temporal::SourceTemporal, a::DateTime, b::DateTime)
     span = "the run window [$(a)Z, $(b)Z)"
     b <= a && throw(
         WindowNotCovered("esm_window_uncovered: $span is empty: its end must be after its start")
@@ -159,11 +159,11 @@ end
 # seconds) and its ticks: the record anchors in `[lo, hi)`, where `lo` is the
 # window start (else the source start) and `hi` the window end, else the
 # source's `stop` — exactly Python's and Rust's `refresh_times`. A window some
-# stretch of which no record serves is refused (`_check_window`); one inside a
+# stretch of which no record serves is refused (`_check_run_window`); one inside a
 # single record's interval has no ticks, and is served by that record.
 function _temporal_plan(temporal::SourceTemporal, window)
     if window !== nothing
-        _check_window(temporal, _utc(window[1]), _utc(window[2]))
+        _check_run_window(temporal, _utc(window[1]), _utc(window[2]))
     end
     lo = window === nothing ? temporal.start : _utc(window[1])
     hi = window === nothing ? temporal.stop : _utc(window[2])
@@ -198,8 +198,29 @@ function _window_records(temporal::SourceTemporal, lo::DateTime, hi::DateTime, b
         k += 1
         a = period_anchor(f, s, k + 1)
     end
-    bracket && (temporal.stop === nothing || a < temporal.stop) && push!(out, a)
+    if bracket
+        nxt = _bracket_successor(temporal, hi)
+        nxt === nothing || push!(out, nxt)
+    end
     return out
+end
+
+# The record a two-record bracket needs past the end `hi` of a window: the first
+# anchor at or after `hi` — the successor of the last record in the window —
+# unless it is at or past `stop` (spec/esm-sources.md §2.6).
+function _bracket_successor(temporal::SourceTemporal, hi::DateTime)
+    nxt = first_record_anchor_from(temporal, hi)
+    return temporal.stop === nothing || nxt < temporal.stop ? nxt : nothing
+end
+
+# Where `p`'s sample can change over its run window: its refresh times and, for
+# a `temporal` provider, the window start, where the record in effect there
+# takes over (spec/esm-sources.md §2.6) — the schedule a `PrefetchGroup` builds
+# its epochs from (spec/prefetch.md §3.2).
+function _epoch_starts(p::Provider)
+    p.plan === nothing && return copy(p.times)
+    lo = _unix((p.plan::_TemporalPlan).lo)
+    return !isempty(p.times) && first(p.times) == lo ? copy(p.times) : vcat(lo, p.times)
 end
 
 function Provider(
@@ -513,7 +534,8 @@ shape is not knowable without reading the blob)."""
 function array_shape(p::Provider, var::AbstractString)
     reader = _reader_for(p)
     store_backed(reader) || return nothing
-    t0 = p.cadence == CONST ? 0.0 : p.plan === nothing ? first(p.times) : first(window_records(p))
+    t0 = p.cadence == CONST ? 0.0 :
+        p.plan === nothing ? first(p.times) : _unix(record_anchor(p.plan.temporal, p.plan.lo))
     return array_shape(reader, p.cache, p.url_for(t0), var)
 end
 
@@ -1078,12 +1100,10 @@ function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
         k += 1
         a = period_anchor(F, s.start, k)
     end
-    if bracket
-        nxt = first_record_anchor_from(s, plan.hi)
-        if s.stop === nothing || nxt < s.stop
-            fa = _unix(file_anchor(s, nxt))
-            (isempty(out) || last(out) != fa) && push!(out, fa)
-        end
+    nxt = bracket ? _bracket_successor(s, plan.hi) : nothing
+    if nxt !== nothing
+        fa = _unix(file_anchor(s, nxt))
+        (isempty(out) || last(out) != fa) && push!(out, fa)
     end
     return out
 end

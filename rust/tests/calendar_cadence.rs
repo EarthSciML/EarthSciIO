@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use earthsciio::{
-    ArrayData, Cache, CalendarPeriod, DataSource, Error, NativeField, Provider, SourceTemporal,
+    ArrayData, Cache, CalendarPeriod, DataSource, Error, NativeField, PrefetchGroup, Provider,
+    SourceTemporal,
 };
 use time::OffsetDateTime;
 
@@ -272,6 +273,53 @@ fn windows_are_served_or_refused() {
             secs("refresh_times_s"),
             "{id}: refresh times"
         );
+        // A group schedules it even with no refresh times: its first epoch
+        // starts at the window start (`spec/prefetch.md` §3.2).
+        let mut expected = secs("refresh_times_s");
+        let lo = w[0].as_f64().unwrap();
+        if expected.first() != Some(&lo) {
+            expected.insert(0, lo);
+        }
+        let g = PrefetchGroup::builder()
+            .member("x", Arc::new(p))
+            .build()
+            .unwrap_or_else(|e| panic!("{id}: {e}"));
+        assert_eq!(g.boundaries(), expected, "{id}: group boundaries");
+    }
+}
+
+/// `prefetch(window)` checks the window it is given as the constructor checks
+/// its own: never silently clamped to the data (`spec/esm-sources.md` §2.6).
+#[test]
+fn prefetch_refuses_a_window_the_data_does_not_cover() {
+    let sc = scenario();
+    for c in sc["windows"].as_array().unwrap() {
+        let Some(code) = c.get("error") else {
+            continue;
+        };
+        let id = c["id"].as_str().unwrap();
+        let mut temporal = SourceTemporal::new(
+            at(&c["start_s"]),
+            CalendarPeriod::parse(c["frequency"].as_str().unwrap()).unwrap(),
+            CalendarPeriod::parse(c["file_period"].as_str().unwrap()).unwrap(),
+        )
+        .records_per_sample(c["records_per_sample"].as_u64().unwrap() as u32);
+        if let Some(end) = c.get("end_s") {
+            temporal = temporal.end(at(end));
+        }
+        let w = c["window_s"].as_array().unwrap();
+        let window = (at(&w[0]), at(&w[1]));
+        let loader = DataSource::new("x", "netcdf", "file:///unused.nc").temporal(temporal);
+        let mut p = Provider::new(loader, corpus_cache(), None).unwrap();
+        match p.prefetch(window) {
+            Err(e @ Error::WindowNotCovered { .. }) => {
+                assert!(
+                    e.to_string().starts_with(code.as_str().unwrap()),
+                    "{id}: {e}"
+                )
+            }
+            other => panic!("{id}: expected WindowNotCovered, got {other:?}"),
+        }
     }
 }
 

@@ -164,7 +164,7 @@ impl SourceTemporal {
     /// `start` (no record is in effect there yet) or `b` is past `end` (the
     /// last record ends at `end`). An empty or reversed window is refused too:
     /// no record serves it.
-    fn check_window(&self, (a, b): Window) -> Result<()> {
+    fn check_run_window(&self, (a, b): Window) -> Result<()> {
         let span = format!("the run window [{a}, {b})");
         let detail = if b <= a {
             format!("{span} is empty: its end must be after its start")
@@ -193,13 +193,23 @@ impl SourceTemporal {
             k += 1;
             let a = f.anchor(self.start, k);
             if a >= upper {
-                if self.records_per_sample == Some(2) && self.end.is_none_or(|e| a < e) {
-                    out.push(a);
-                }
-                return out;
+                break;
             }
             out.push(a);
         }
+        if self.records_per_sample == Some(2) {
+            out.extend(self.bracket_successor(upper));
+        }
+        out
+    }
+
+    /// The record a two-record bracket needs past the end `upper` of a window:
+    /// the first anchor at or after `upper` — the successor of the last record
+    /// in the window — unless it is at or past `end` (`spec/esm-sources.md`
+    /// §2.6).
+    fn bracket_successor(&self, upper: OffsetDateTime) -> Option<OffsetDateTime> {
+        let nxt = self.first_record_anchor_from(upper);
+        self.end.is_none_or(|e| nxt < e).then_some(nxt)
     }
 
     /// Both periods positive, else the `esm_period_invalid` error naming the
@@ -567,7 +577,7 @@ impl Provider {
             // A window some stretch of which no record serves is refused here,
             // not mid-run (`spec/esm-sources.md` §2.6).
             if let Some(w) = window {
-                t.check_window(w)?;
+                t.check_run_window(w)?;
             }
         }
         if let Some(subs) = &loader.esm_substitutions {
@@ -923,9 +933,6 @@ impl Provider {
         let Some(temporal) = &self.loader.temporal else {
             return Vec::new();
         };
-        if temporal.check_periods().is_err() {
-            return Vec::new();
-        }
         let Some(upper) = self.window.map(|(_, b)| b).or(temporal.end) else {
             return Vec::new();
         };
@@ -941,7 +948,8 @@ impl Provider {
     /// asserts each file is already present (a miss is [`Error::CacheMiss`]).
     /// With `records_per_sample = 2` that includes the file of the record after
     /// the window, which the bracket of its last interval reads
-    /// (`spec/esm-sources.md` §2.6).
+    /// (`spec/esm-sources.md` §2.6). A window some stretch of which no record
+    /// serves is refused with [`Error::WindowNotCovered`], as at construction.
     pub fn prefetch(&mut self, window: Window) -> Result<()> {
         match self.loader.temporal.clone() {
             None => {
@@ -950,13 +958,9 @@ impl Provider {
             }
             Some(t) => {
                 t.check_periods()?;
+                t.check_run_window(window)?;
                 let period = t.file_period;
-                let start = if window.0 > t.start {
-                    window.0
-                } else {
-                    t.start
-                };
-                let mut k = period.floor_index(t.start, start);
+                let mut k = period.floor_index(t.start, window.0);
                 let mut last = None;
                 loop {
                     let fa = period.anchor(t.start, k);
@@ -970,13 +974,13 @@ impl Provider {
                 // A two-record bracket in the window's last interval also reads
                 // the record after the window, which may sit in a later file
                 // (`spec/esm-sources.md` §2.6).
-                if t.records_per_sample == Some(2) {
-                    let nxt = t.first_record_anchor_from(window.1);
-                    if t.end.is_none_or(|e| nxt < e) {
-                        let fa = t.file_anchor(nxt);
-                        if last != Some(fa) {
-                            self.fetch_blob(&self.resolve(fa)?)?;
-                        }
+                if let Some(nxt) = t
+                    .bracket_successor(window.1)
+                    .filter(|_| t.records_per_sample == Some(2))
+                {
+                    let fa = t.file_anchor(nxt);
+                    if last != Some(fa) {
+                        self.fetch_blob(&self.resolve(fa)?)?;
                     }
                 }
                 Ok(())
@@ -986,12 +990,28 @@ impl Provider {
 
     // --- internals ----------------------------------------------------------
 
-    /// The effective lower bound: the window start clamped to the loader epoch.
+    /// The effective lower bound: the window start, else the loader epoch. The
+    /// constructor has refused a window that starts before the epoch
+    /// (`spec/esm-sources.md` §2.6).
     fn lower_bound(&self, temporal: &SourceTemporal) -> OffsetDateTime {
-        match self.window {
-            Some((a, _)) if a > temporal.start => a,
-            _ => temporal.start,
+        self.window.map_or(temporal.start, |(a, _)| a)
+    }
+
+    /// Where this provider's sample can change over its run window, as **Unix
+    /// epoch seconds**: its [`refresh_times`](Self::refresh_times) and the
+    /// window start, where the record in effect there takes over
+    /// (`spec/esm-sources.md` §2.6) — the schedule a `PrefetchGroup` builds its
+    /// epochs from (`spec/prefetch.md` §3.2). Empty for a CONST or unbounded
+    /// provider.
+    pub(crate) fn epoch_starts(&self) -> Vec<f64> {
+        let mut times = self.refresh_times();
+        if let (Some(_), Some((a, _))) = (&self.loader.temporal, self.window) {
+            let lo = a.unix_timestamp() as f64;
+            if times.first() != Some(&lo) {
+                times.insert(0, lo);
+            }
         }
+        times
     }
 
     /// Resolve a file URL for an anchor. A template without `[` is a literal URL,

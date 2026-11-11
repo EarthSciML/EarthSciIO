@@ -29,8 +29,9 @@ returns it inside an [`EpochSample`]:
     `windows`, the `Vector` [`sample_windows_at`]`(B[k], windows)`; with
     `transform`, `transform(key, <that>)`. **Read-only**: the same object is handed
     to every epoch that shares the anchor, so a caller that mutates copies first.
-  * `anchor` — the member's cadence anchor for `B[k]`: the tick value from its
-    `refresh_times` that `B[k]` snaps down to.
+  * `anchor` — the member's cadence anchor for `B[k]`: the record anchor
+    `sample_at(B[k])` reads (for a provider built from `times`, the tick value
+    that `B[k]` snaps down to).
   * `changed` — whether `anchor` differs from this member's anchor at the
     previous `take!` of the current order; always `true` on the first `take!`
     after `start!`. A caller copies only the changed samples into its forcing
@@ -98,7 +99,8 @@ workers, in a declared order, under a memory budget — bitwise identical to cal
 cadence unit — which the group cannot check. A CONST member (materialize it once,
 outside the group) or an empty map is an error at construction.
 
-  * [`boundaries`]`(g)` — the sorted union `B` of the members' `refresh_times`.
+  * [`boundaries`]`(g)` — the sorted union `B` of the members' `refresh_times`
+    and run-window starts.
     Epoch `k` (1-based) is `[B[k], B[k+1])`; per member it is `sample_at(B[k])`, so
     a coarser member repeats its sample across the epochs that snap to one anchor
     (decoded once, served again: `samples_reused`).
@@ -217,7 +219,7 @@ function PrefetchGroup(
                     "only — materialize a CONST source once, outside the group"
             )
         )
-        isempty(p.times) && throw(
+        isempty(_epoch_starts(p)) && throw(
             ArgumentError(
                 "member \"$key\" has no refresh times to schedule"
             )
@@ -251,7 +253,7 @@ function PrefetchGroup(
             end
         end
     end
-    B = sort!(unique!(reduce(vcat, (p.times for p in provs); init = Float64[])))
+    B = sort!(unique!(reduce(vcat, (_epoch_starts(p) for p in provs); init = Float64[])))
     nm = length(provs)
     lk = ReentrantLock()
     return PrefetchGroup(
@@ -277,8 +279,9 @@ Base.show(io::IO, g::PrefetchGroup) =
 """
     boundaries(g::PrefetchGroup) -> Vector{Float64}
 
-The sorted, de-duplicated union `B` of the members' `refresh_times`, in their own
-cadence unit. Epoch `k` (1-based) is `[B[k], B[k+1])`, the last one open on the
+The sorted, de-duplicated union `B` of the members' `refresh_times` and, for a
+`temporal` member, its run-window start, where the record in effect there takes
+over (spec/esm-sources.md §2.6), in their own cadence unit. Epoch `k` (1-based) is `[B[k], B[k+1])`, the last one open on the
 right. Boundaries are solver tstops, so no step straddles one, and a step's epoch
 is `searchsortedlast(B, t0)` in both directions (spec/prefetch.md §4)."""
 boundaries(g::PrefetchGroup) = copy(g.B)

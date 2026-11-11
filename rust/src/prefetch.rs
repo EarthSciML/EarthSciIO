@@ -2,7 +2,8 @@
 //! `spec/prefetch.md` §3.
 //!
 //! A group holds several DISCRETE [`Provider`]s ("members"), each keyed by a
-//! string, and the sorted union of their refresh times ([`boundaries`]). Epoch
+//! string, and the sorted union of their refresh times and run-window starts
+//! ([`boundaries`]). Epoch
 //! `k` is `[B[k], B[k+1])`, and what epoch `k` IS, per member, is
 //! `member.sample_at(B[k])`. The caller declares the order in which it will take
 //! epochs ([`Order`]: forward, reverse — the adjoint's backward sweep — or an
@@ -214,7 +215,7 @@ impl PrefetchGroup<NativeDataset> {
 
 impl<D, T> PrefetchBuilder<D, T> {
     /// Add member `key`. It must be DISCRETE with an enumerable schedule
-    /// (non-empty [`Provider::refresh_times`]); a CONST source is materialized
+    /// (a run window or a temporal end); a CONST source is materialized
     /// once, outside the group. A window bound with
     /// [`Provider::with_window`] travels with the provider.
     pub fn member(mut self, key: impl Into<String>, provider: Arc<Provider>) -> Self {
@@ -351,7 +352,7 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
                      outside the group"
                 )));
             }
-            let times = provider.refresh_times();
+            let times = provider.epoch_starts();
             if times.is_empty() {
                 return Err(refuse(format!(
                     "member {key:?} has no enumerable schedule (an open-ended loader \
@@ -469,8 +470,9 @@ pub struct PrefetchGroup<T = NativeDataset> {
 }
 
 impl<T: Send + Sync + 'static> PrefetchGroup<T> {
-    /// The sorted, de-duplicated union of the members' refresh times, in Unix
-    /// seconds. Epoch `k` is `[B[k], B[k+1])`; the last is open on the right.
+    /// The sorted, de-duplicated union of the members' refresh times and run-window
+    /// starts (where the record in effect there takes over,
+    /// `spec/esm-sources.md` §2.6), in Unix seconds. Epoch `k` is `[B[k], B[k+1])`; the last is open on the right.
     pub fn boundaries(&self) -> Vec<f64> {
         self.shared.config.boundaries.clone()
     }

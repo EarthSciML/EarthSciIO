@@ -167,7 +167,7 @@ its neighbours' windows in one pass and the integrator scatters them.
 ```
 PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=None,
               workers=1, windows=None, transform=None)
-  boundaries() -> [time]          # sorted ∪ refresh_times of the members; epoch k = [B[k], B[k+1])
+  boundaries() -> [time]          # sorted ∪ of the members' refresh_times and window starts; epoch k = [B[k], B[k+1])
   start(order, from=None)         # "forward" | "reverse" | [epoch, ...]; cancels any previous order
   take(k) -> EpochSample          # blocks; k must be the next entry of the order
   ready(k) -> bool                # non-blocking: k is the next entry and its slot is finished
@@ -180,14 +180,17 @@ PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=
 ### 3.2 Members and epochs
 
 - **Members** are keyed by string and must all be DISCRETE with an enumerable
-  schedule (non-empty `refresh_times`). A CONST member, an unbounded member, or
+  schedule (a run window, or a temporal `end`). A CONST member, an unbounded member, or
   an empty member map is an error at construction: the caller materializes a
   CONST source once, outside the group.
 - All members share one time type and unit (Python `datetime`, Rust Unix
   seconds `f64`, Julia the providers' own `Float64` cadence unit). That is the
   caller's to keep: the group cannot check it in Julia.
 - **`boundaries()`** is the sorted, de-duplicated union of the members'
-  `refresh_times`. Epoch `k` is the interval `[B[k], B[k+1])`, and the last
+  `refresh_times` and, for a member with a run window, the window start, where
+  the record in effect there takes over ([esm-sources.md](esm-sources.md)
+  §2.6). A member whose window holds no record anchor has no refresh times but
+  still one epoch start. Epoch `k` is the interval `[B[k], B[k+1])`, and the last
   epoch is open on the right. Epoch indices are 0-based in Python and Rust and
   on the wire, 1-based in Julia.
 - **What epoch `k` is, per member:** `sample_at(B[k])`. A member whose own

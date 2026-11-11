@@ -22,6 +22,13 @@ package version is independent of the `.esm` format version.
   example a model time read as 1970. New `window_records` lists the records
   serving the window, and `prefetch` with a two-record bracket now also warms
   the file of the record after the window.
+- **fix:** a `PrefetchGroup` schedules a member whose run window holds no
+  record anchor. Its boundaries are now the members' refresh times and
+  run-window starts, so the record in effect at a window start gets an epoch
+  (`spec/prefetch.md` §3.2). `prefetch(window)` (Python, Rust) checks the window
+  it is given as the constructor does, instead of clamping it to the data. In
+  Python, a naive window bound is UTC, as everywhere else, instead of raising
+  `TypeError` against an aware `start`.
 
 ## v0.3.0
 

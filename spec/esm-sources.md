@@ -249,6 +249,8 @@ part of the window is served unless the provider is built with a window that
 which every track refuses when the provider is built, before any I/O, with
 the code `esm_window_uncovered` at the start of the message (Python
 `WindowNotCovered`, Julia `WindowNotCovered`, Rust `Error::WindowNotCovered`).
+A window passed to `prefetch` (Python `prefetch(window=...)`, Rust
+`prefetch(window)`) is checked the same way, never clamped to the data.
 A window before or after the data is never read as an empty run. With no
 `end` there is no upper limit to check: a window past the last file that
 exists fails when its file is read.

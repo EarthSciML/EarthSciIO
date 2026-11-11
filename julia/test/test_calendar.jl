@@ -94,9 +94,12 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                         @test nds.coords[src["time_dim"]].data == Float64.(smp["time_s"])
                     end
                 end
-                # A group's epochs are the refresh times, nothing outside the window.
+                # A group's epochs are the window start (where the record in
+                # effect there takes over) and the refresh times, nothing
+                # outside the window.
                 g = PrefetchGroup(Dict("x" => p))
-                @test boundaries(g) == refresh_times(p)
+                @test boundaries(g) ==
+                    sort!(unique!(vcat(Float64(src["window_s"][1]), refresh_times(p))))
                 # `prefetch` warms the files over the window, as Python and Rust do.
                 @test length(prefetch(p)) == length(
                     unique(file_anchor(temporal, t) for t in refresh_times(p))
@@ -132,6 +135,11 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                 p = make()
                 @test window_records(p) == Float64.(c["window_records_s"])
                 @test refresh_times(p) == Float64.(c["refresh_times_s"])
+                # A group schedules it even with no refresh times: its first
+                # epoch starts at the window start (spec/prefetch.md §3.2).
+                @test boundaries(PrefetchGroup(Dict("x" => p))) == sort!(
+                    unique!(vcat(Float64(c["window_s"][1]), Float64.(c["refresh_times_s"])))
+                )
             end
         end
     end
