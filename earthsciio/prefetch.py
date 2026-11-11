@@ -361,7 +361,7 @@ class PrefetchGroup:
     ----------
     members:
         ``{key: Provider}``, every one DISCRETE with an enumerable schedule
-        (non-empty :meth:`~earthsciio.provider.Provider.refresh_times`). A
+        (a run window or ``SourceTemporal.end``). A
         CONST or unbounded member, or an empty map, is a :class:`ValueError`:
         materialize a CONST source once, outside the group.
     depth:
@@ -423,10 +423,10 @@ class PrefetchGroup:
                     f"member {key!r} is CONST: it has no epochs to prefetch — "
                     "materialize() it once, outside the group"
                 )
-            if not prov.refresh_times():
+            if not prov._epoch_starts():
                 raise ValueError(
-                    f"member {key!r} has no enumerable schedule (empty "
-                    "refresh_times(): give it a run window or SourceTemporal.end)"
+                    f"member {key!r} has no enumerable schedule (it is unbounded: "
+                    "give it a run window or SourceTemporal.end)"
                 )
             self._members[key] = prov
         # Byte-wise string order: the order a multi-member failure is reported in.
@@ -465,7 +465,7 @@ class PrefetchGroup:
 
         bounds = set()
         for prov in self._members.values():
-            bounds.update(prov.refresh_times())
+            bounds.update(prov._epoch_starts())
         self._B: list[_dt.datetime] = sorted(bounds)
 
         select = self._union.select if self._union is not None else None
@@ -528,8 +528,9 @@ class PrefetchGroup:
     # -- the consumer's API ------------------------------------------------- #
 
     def boundaries(self) -> list[_dt.datetime]:
-        """The sorted, de-duplicated union of the members' ``refresh_times``.
-        Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right."""
+        """The sorted, de-duplicated union of the members' ``refresh_times``
+        and run-window starts (where the record in effect there takes over,
+        spec/esm-sources.md §2.6). Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right."""
         return list(self._B)
 
     def start(self, order: Any = "forward", from_: int | None = None) -> None:

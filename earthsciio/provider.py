@@ -173,7 +173,7 @@ class SourceTemporal:
             anchor = p.anchor(self.start, k)
         return out
 
-    def _check_window(self, window: Window) -> None:
+    def _check_window(self, window: Window) -> Window:
         """Refuse a run window some stretch of which no record serves
         (spec/esm-sources.md §2.6), with :class:`WindowNotCovered`.
 
@@ -182,8 +182,12 @@ class SourceTemporal:
         successor of the last of them. They cover it unless ``a`` precedes
         ``start`` (no record is in effect there yet) or ``b`` is past ``end``
         (the last record ends at ``end``). An empty or reversed window is
-        refused too: no record serves it."""
-        a, b = window
+        refused too: no record serves it.
+
+        Returns the window with its bounds made comparable with ``start``: a
+        naive bound is UTC (as everywhere in this module), and is made aware
+        when ``start`` is, or ``start`` naive makes an aware bound naive UTC."""
+        a, b = (_like(window[0], self.start), _like(window[1], self.start))
         if b <= a:
             raise WindowNotCovered(
                 f"esm_window_uncovered: the run window [{a.isoformat()}, {b.isoformat()}) "
@@ -199,6 +203,7 @@ class SourceTemporal:
                 f"esm_window_uncovered: the run window [{a.isoformat()}, {b.isoformat()}) "
                 f"runs past the end of the source's data, at {self.end.isoformat()}"
             )
+        return a, b
 
     def _window_records(self, lower: _dt.datetime, upper: _dt.datetime) -> list[_dt.datetime]:
         """The anchors of the records serving ``[lower, upper)``
@@ -207,14 +212,14 @@ class SourceTemporal:
         of the last of them unless it is at or past ``end``."""
         f = self._frequency
         k = f.floor(self.start, lower)
-        out: list[_dt.datetime] = []
-        anchor = f.anchor(self.start, k)
-        while anchor < upper or not out:
+        out = [f.anchor(self.start, k)]
+        while (anchor := f.anchor(self.start, k + 1)) < upper:
             out.append(anchor)
             k += 1
-            anchor = f.anchor(self.start, k)
-        if self.records_per_sample == 2 and (self.end is None or anchor < self.end):
-            out.append(anchor)
+        if self.records_per_sample == 2:
+            nxt = self._bracket_successor(upper)
+            if nxt is not None:
+                out.append(nxt)
         return out
 
     def _bracket_successor(self, upper: _dt.datetime) -> _dt.datetime | None:
@@ -429,7 +434,7 @@ class Provider:
         # A window some stretch of which no record serves is refused here, not
         # mid-run (spec/esm-sources.md §2.6).
         if window is not None and loader.temporal is not None:
-            loader.temporal._check_window(window)
+            window = loader.temporal._check_window(window)
         self.loader = loader
         self.cache = cache
         self.window = window
@@ -733,14 +738,16 @@ class Provider:
         if temporal is None:
             return [self._fetch(self._resolve(_EPOCH))]
 
-        win = window if window is not None else self.window
+        # A window passed here is checked as the constructor checks its own
+        # (spec/esm-sources.md §2.6): never silently clamped to the data.
+        win = temporal._check_window(window) if window is not None else self.window
         upper = win[1] if win is not None else temporal.end
         if upper is None:
             raise ValueError(
                 "prefetch needs a bounded window: pass window=(start, end) or set "
                 "SourceTemporal.end"
             )
-        start = win[0] if (win is not None and win[0] > temporal.start) else temporal.start
+        start = win[0] if win is not None else temporal.start
         file_anchors = temporal._file_anchors(start, upper)
         # A two-record bracket in the window's last interval also reads the
         # record after the window, which may sit in a later file (§2.6).
@@ -866,13 +873,24 @@ class Provider:
         return refs
 
     def _lower_bound(self) -> _dt.datetime:
-        """The effective lower bound: the window start clamped to the loader
-        epoch (a DISCRETE provider always has a temporal)."""
+        """The effective lower bound: the window start, else the loader epoch (a
+        DISCRETE provider always has a temporal). The constructor has refused a
+        window that starts before the epoch (spec/esm-sources.md §2.6)."""
         temporal = self.loader.temporal
         assert temporal is not None
-        if self.window is not None and self.window[0] > temporal.start:
-            return self.window[0]
-        return temporal.start
+        return self.window[0] if self.window is not None else temporal.start
+
+    def _epoch_starts(self) -> list[_dt.datetime]:
+        """Where this provider's sample can change over its run window: its
+        :meth:`refresh_times` and the window start, where the record in effect
+        there takes over (spec/esm-sources.md §2.6) — the schedule a
+        :class:`~earthsciio.prefetch.PrefetchGroup` builds its epochs from
+        (spec/prefetch.md §3.2). Empty for a CONST or unbounded provider."""
+        times = self.refresh_times()
+        if self.window is None or self.loader.temporal is None:
+            return times
+        lower = self._lower_bound()
+        return times if times and times[0] == lower else [lower, *times]
 
     def _resolve(self, anchor: _dt.datetime) -> _FileRef:
         """The file for a file anchor: its primary URL and its mirrors, both
@@ -1095,6 +1113,14 @@ def _epoch_seconds(d: _dt.datetime) -> float:
     """Unix epoch seconds for a datetime (tz-aware normalized to UTC; naive
     assumed UTC — matching :func:`_record_index`'s comparison convention)."""
     return (_to_naive_utc(d) - _EPOCH_NAIVE).total_seconds()
+
+
+def _like(d: _dt.datetime, ref: _dt.datetime) -> _dt.datetime:
+    """``d`` made comparable with ``ref``: aware (a naive ``d`` taken as UTC)
+    when ``ref`` is aware, else naive UTC."""
+    if getattr(ref, "tzinfo", None) is None:
+        return _to_naive_utc(d)
+    return d if d.tzinfo is not None else d.replace(tzinfo=_dt.timezone.utc)
 
 
 def _to_naive_utc(d: _dt.datetime) -> _dt.datetime:
