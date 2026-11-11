@@ -340,10 +340,14 @@ so a caller passes model time straight through and never converts.
 
 `O` is a UTC instant: a `datetime` (naive is UTC) or an ISO 8601 string in
 Python, a `DateTime` (UTC) or an ISO 8601 string in Julia, an `OffsetDateTime`
-in Rust. It must be a whole second; otherwise, or when a string cannot be read,
-building the provider fails with the code `time_origin_invalid` at the start of
-the message (Python `TimeOriginInvalid`, Julia `TimeOriginInvalid`, Rust
-`Error::Time`).
+in Rust. It must be a whole second: any nonzero fraction is refused, however
+small, so a string's fraction is checked as written (`…00.0004Z` and
+`…00.0000001Z` are refused although a `DateTime` keeps only milliseconds and a
+`datetime` only microseconds; `…00.000Z` is a whole second), as is an object's
+own (a pandas `Timestamp`'s nanoseconds, an `OffsetDateTime`'s). Otherwise, or
+when a string cannot be read, building the provider fails with the code
+`time_origin_invalid` at the start of the message (Python `TimeOriginInvalid`,
+Julia `TimeOriginInvalid`, Rust `Error::Time`).
 
 **No default.** A `data_sources` entry does not carry the model's origin (it is
 in the document's `domain`), so EarthSciIO never guesses one: without a time
@@ -361,11 +365,13 @@ read as that instant. Rust takes either through `ProviderTime` (`f64` and
 `DataSource::run_window(start, end)` or `Provider::run_window`.
 
 **Times out.** With an origin, every time a provider returns is the seconds
-from `O` to the instant (`f64`; whole seconds of the instant minus those of
-`O` in Rust): `refresh_times`, `window_records`, a `PrefetchGroup`'s
+from `O` to the instant: its Unix seconds minus those of `O`, an `f64`
+that keeps a fraction of a second (a window that starts at `0.5` has `0.5` as
+its first boundary), computed so in every track: `refresh_times`, `window_records`, a `PrefetchGroup`'s
 `boundaries()` and each `Sample`'s `anchor`, and the two-element time
 coordinate of a two-record bracket, whose `units` are then
-`seconds since YYYY-MM-DDTHH:MM:SSZ` of `O` (`seconds since
+`seconds since YYYY-MM-DDTHH:MM:SSZ` of `O`, the year zero-padded to four
+digits (`seconds since
 1970-01-01T00:00:00Z` without one). A time before `O` is negative: the record
 in effect at a window start may be anchored before it. Without an origin, Rust
 and Julia return Unix seconds and Python returns `datetime`s, as before.
@@ -375,5 +381,7 @@ they work on the instants. Only the numbers that cross the API are shifted.
 
 **Prefetch groups.** The members of a `PrefetchGroup` share one clock, so a
 group whose members have different time origins is refused when it is built
-(no origin counts as the Unix epoch; Julia checks the members built from a
-`SourceTemporal`, since one built from `times` has the caller's own unit).
+(no origin counts as the Unix epoch). A Julia member built from `times`
+cannot take an origin, so it counts as one without: it joins members without an
+origin, as before, and a group that mixes it with a member on an origin is
+refused.

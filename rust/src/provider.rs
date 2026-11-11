@@ -76,6 +76,19 @@ impl From<f64> for ProviderTime {
     }
 }
 
+/// The Unix seconds of `t`, to the microsecond, correctly rounded: the value
+/// Python's `(t - epoch).total_seconds()` and Julia's `datetime2unix` give for
+/// the same instant, so the times the tracks return agree to the bit.
+fn unix_seconds(t: OffsetDateTime) -> f64 {
+    let micros = t.unix_timestamp_nanos().div_euclid(1_000);
+    match i64::try_from(micros) {
+        // Exact below 2^53 microseconds (some 285 years either side of 1970),
+        // then one correctly rounded division.
+        Ok(m) if m.unsigned_abs() < (1 << 53) => m as f64 / 1e6,
+        _ => t.unix_timestamp() as f64 + f64::from(t.microsecond()) / 1e6,
+    }
+}
+
 /// The temporal nature of a loader that refreshes at a cadence (plan §4.2).
 ///
 /// `frequency` is the cadence step (e.g. 1 hour for ERA5) — it drives the
@@ -570,12 +583,12 @@ impl DataSource {
         Ok((self.instant(start)?, self.instant(end)?))
     }
 
-    /// The whole seconds from the time origin (the Unix epoch when none) to
-    /// `t`, as the provider returns a time (`t`'s fraction of a second is
-    /// dropped, as `unix_timestamp` drops it).
+    /// The seconds from the time origin (the Unix epoch when none) to `t`, as
+    /// the provider returns a time: the Unix seconds of `t` minus those of the
+    /// origin, a fraction of a second included, as every track computes it
+    /// (the inverse of [`instant`](Self::instant)).
     pub(crate) fn seconds(&self, t: OffsetDateTime) -> f64 {
-        let origin = self.time_origin.map_or(0, OffsetDateTime::unix_timestamp);
-        (t.unix_timestamp() - origin) as f64
+        unix_seconds(t) - self.time_origin.map_or(0.0, unix_seconds)
     }
 
     /// The CF `units` of a time from the origin: `seconds since

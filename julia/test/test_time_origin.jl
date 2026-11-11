@@ -95,11 +95,37 @@ using Dates
         p = build(nei)
         w = with_window(p, DimWindow())
         @test refresh_times(w) == refresh_times(p)
-        @test w.plan.origin == DateTime(2016)
+        @test w.plan.clock.origin == DateTime(2016)
     end
     @testset "a group refuses members on two clocks" begin
         a = build(nei)
         b = build(nei; time_origin = DateTime(2016, 1, 2), window = (0.0, 86400.0))
         @test_throws ArgumentError PrefetchGroup(Dict("a" => a, "b" => b))
+    end
+    @testset "a times-based member has no origin" begin
+        # Its ticks are in the caller's unit, with no origin (it cannot take
+        # one): it never joins a member on an origin, as Python and Rust refuse
+        # a member without one beside a member with one.
+        ticks() = Provider(
+            cache, "file:///x.nc"; format = "netcdf", cadence = EarthSciIO.DISCRETE,
+            times = [0.0, 2678400.0]
+        )
+        msg = try
+            PrefetchGroup(Dict("a" => build(nei), "t" => ticks()))
+            ""
+        catch e
+            e isa ArgumentError ? e.msg : sprint(showerror, e)
+        end
+        @test occursin("time origins differ", msg)
+        # Beside a member without an origin it is accepted, as before.
+        o = nei["options"]
+        unix = provider_from_esm(
+            nei["name"], nei["entry"], cache;
+            variables = String.(o["variables"]),
+            substitutions = Dict{String, String}(o["substitutions"]),
+            window = (DateTime(2016), DateTime(2016, 4))
+        )
+        g = PrefetchGroup(Dict("u" => unix, "t" => ticks()))
+        close(g)
     end
 end

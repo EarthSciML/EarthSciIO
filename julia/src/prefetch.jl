@@ -226,16 +226,17 @@ function PrefetchGroup(
         )
         byname[key] = p
     end
-    # One clock for the boundaries: every `temporal` member counts time from the
-    # same origin (spec/esm-sources.md §4). A member built from `times` is in
-    # the caller's own unit, which is the caller's to keep.
-    origins = unique(
-        (p.plan::_TemporalPlan).origin for p in values(byname) if p.plan !== nothing
-    )
+    # One clock for the boundaries: every member counts time from the same
+    # origin (spec/esm-sources.md §4). A member built from `times` has none (it
+    # cannot take one), as Python and Rust count a member without an origin:
+    # it joins members without one, never one with an origin.
+    origin_of(p) = p.plan === nothing ? nothing : (p.plan::_TemporalPlan).clock.origin
+    origins = unique(origin_of(p) for p in values(byname))
     length(origins) <= 1 || throw(
         ArgumentError(
-            "the members' time origins differ ($(join(sort!(string.(origins)), ", "))): a " *
-                "group's boundaries and anchors are on one clock, so build every member " *
+            "the members' time origins differ " *
+                "($(join(sort!([o === nothing ? "none" : string(o) * "Z" for o in origins]), ", "))): " *
+                "a group's boundaries and anchors are on one clock, so build every member " *
                 "with the same time_origin"
         )
     )

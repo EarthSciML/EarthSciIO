@@ -136,3 +136,21 @@ def test_group_refuses_members_with_different_origins():
     b = _build(NEI, time_origin=None, window=(ORIGIN, dt.datetime(2016, 4, 1, tzinfo=UTC)))
     with pytest.raises(ValueError, match="time origins differ"):
         PrefetchGroup({"a": a, "b": b})
+
+
+def test_origin_fraction_is_checked_past_microseconds():
+    """Any nonzero fraction is refused, even one a datetime cannot hold: a
+    string's digits as written, a pandas Timestamp's nanoseconds."""
+    with pytest.raises(TimeOriginInvalid, match="time_origin_invalid"):
+        _build(NEI, time_origin="2016-01-01T00:00:00.0000001Z")
+    pd = pytest.importorskip("pandas")
+    with pytest.raises(TimeOriginInvalid, match="time_origin_invalid"):
+        _build(NEI, time_origin=pd.Timestamp("2016-01-01T00:00:00.000000001Z"))
+    p = _build(NEI, time_origin=pd.Timestamp("2016-01-01T00:00:00Z"))
+    assert p.time_origin == ORIGIN and type(p.time_origin) is dt.datetime
+
+
+def test_units_pad_the_year():
+    from earthsciio.provider import _origin_units
+
+    assert _origin_units(dt.datetime(1, 1, 1, tzinfo=UTC)) == "seconds since 0001-01-01T00:00:00Z"

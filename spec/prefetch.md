@@ -187,8 +187,9 @@ PrefetchGroup(members: {key: Provider}, *, depth=2, max_bytes=None, fetch_ahead=
   seconds `f64`, Julia the providers' own `Float64` cadence unit), or, when
   they are built with a time origin, seconds `f64` from it
   ([esm-sources.md](esm-sources.md) §4). Members with different time origins
-  are refused at construction. Otherwise the unit is the caller's to keep: the
-  group cannot check a Julia member built from `times`.
+  are refused at construction; a Julia member built from `times` has none, so it
+  never joins a member on an origin. Otherwise the unit is the caller's to keep:
+  the group cannot check the unit of a Julia member built from `times`.
 - **`boundaries()`** is the sorted, de-duplicated union of the members'
   `refresh_times` and, for a member with a run window, the window start, where
   the record in effect there takes over ([esm-sources.md](esm-sources.md)

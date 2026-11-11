@@ -252,7 +252,8 @@ impl<D, T> PrefetchBuilder<D, T> {
     }
 
     /// Test hook: sleep `f(key, anchor_seconds)` on the worker before each
-    /// member decode, so a test can randomize completion order (the scenario
+    /// member decode (the anchor in seconds from the members' time origin, as
+    /// [`Sample::anchor`]), so a test can randomize completion order (the scenario
     /// `prefetch-equivalence`) or make decode slower than synthetic compute.
     /// Counted in `decode_s`. Not part of the contract.
     #[doc(hidden)]
@@ -396,7 +397,9 @@ impl<D: 'static, T: Send + Sync + 'static> PrefetchBuilder<D, T> {
 
         let mut times = Vec::with_capacity(boundaries.len());
         for &b in &boundaries {
-            times.push(clock.instant(b)?);
+            times.push(clock.instant(b).map_err(|e| {
+                refuse(format!("boundary {b} is not a representable instant: {e}"))
+            })?);
         }
         let anchors: Vec<Vec<OffsetDateTime>> = built
             .iter()
@@ -1168,7 +1171,7 @@ fn worker<T: Send + Sync + 'static>(shared: Arc<Shared<T>>) {
         let started = Instant::now();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             if let Some(latency) = &cfg.latency {
-                std::thread::sleep(latency(&member.key, key.1.unix_timestamp() as f64));
+                std::thread::sleep(latency(&member.key, member.provider.seconds(key.1)));
             }
             (cfg.produce)(member, key.1)
         }))

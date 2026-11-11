@@ -111,6 +111,26 @@ struct Provider
     plan::Any                     # `nothing`, or the `_TemporalPlan` of a `temporal` provider
 end
 
+# The clock of a `temporal` provider (spec/esm-sources.md §4): the time origin
+# its ticks count from (`nothing` is the Unix epoch), the origin's Unix seconds,
+# and the CF `units` of a tick, each computed once. Every tick it takes goes
+# through `_instant` and every tick it returns through `_tick`: the one place
+# the origin applies.
+struct _Clock
+    origin::Union{Nothing, DateTime}
+    off::Float64
+    units::String
+end
+_Clock(origin::Union{Nothing, DateTime}) =
+    _Clock(origin, origin === nothing ? 0.0 : _unix(origin), _origin_units(origin))
+
+# The tick (seconds from the origin) of the instant `a`: its Unix seconds minus
+# the origin's, as every track computes it.
+_tick(c::_Clock, a::DateTime) = _unix(a) - c.off
+# The instant a tick `t` names; a `DateTime` (or an ISO 8601 string) is one as given.
+_instant(c::_Clock, t::Real) = unix2datetime(Float64(t) + c.off)
+_instant(::_Clock, t) = _utc(t)
+
 # What a provider built from a `SourceTemporal` keeps (spec/esm-sources.md
 # §2.4): the cadence, from which every sample is located on the calendar — any
 # `t` at or after `temporal.start`, inside the window or not, as in Python and
@@ -125,12 +145,12 @@ struct _TemporalPlan
     hi::DateTime
     axes::Vector{Pair{DateTime, Any}}
     lock::ReentrantLock
-    origin::Union{Nothing, DateTime}   # the time origin (spec §4); `nothing` is the Unix epoch
+    clock::_Clock   # the time origin its ticks count from (spec/esm-sources.md §4)
 end
 
-# Unix seconds of the time origin a `temporal` provider counts from: a time `t`
-# it takes or returns is the instant `t + _off(plan)` in Unix seconds.
-_off(plan::_TemporalPlan) = plan.origin === nothing ? 0.0 : _unix(plan.origin)
+# A tick of a `temporal` provider and the instant it names, through its clock.
+_tick(plan::_TemporalPlan, a::DateTime) = _tick(plan.clock, a)
+_instant(plan::_TemporalPlan, t) = _instant(plan.clock, t)
 
 """
     TimeOriginInvalid(msg)
@@ -143,9 +163,20 @@ struct TimeOriginInvalid <: Exception
 end
 Base.showerror(io::IO, e::TimeOriginInvalid) = print(io, e.msg)
 
-# A `time_origin` as a `DateTime`, or `nothing` (spec/esm-sources.md §4).
+# A `time_origin` as a `DateTime`, or `nothing` (spec/esm-sources.md §4). Any
+# nonzero fraction of a second is refused, however small: a string's fraction is
+# checked as written, since a `DateTime` keeps only milliseconds.
 function _time_origin(origin)
     origin === nothing && return nothing
+    if origin isa AbstractString
+        m = match(_ISO_INSTANT, strip(String(origin)))
+        frac = m === nothing ? nothing : m.captures[7]
+        frac === nothing || all(==('0'), frac) || throw(
+            TimeOriginInvalid(
+                "time_origin_invalid: the time origin $(repr(origin)) is not a whole second"
+            )
+        )
+    end
     o = try
         origin isa Union{DateTime, AbstractString} || throw(ArgumentError("not a time"))
         _utc(origin)
@@ -215,8 +246,8 @@ end
 # stretch of which no record serves is refused (`_check_run_window`); one inside a
 # single record's interval has no ticks, and is served by that record.
 function _temporal_plan(temporal::SourceTemporal, window, origin = nothing)
-    off = origin === nothing ? 0.0 : _unix(origin)
-    at(x) = x isa Real ? unix2datetime(x + off) : _utc(x)
+    clock = _Clock(origin)
+    at(x) = _instant(clock, x)
     if window !== nothing
         _check_run_window(temporal, at(window[1]), at(window[2]))
     end
@@ -233,11 +264,11 @@ function _temporal_plan(temporal::SourceTemporal, window, origin = nothing)
     k = period_ceil(f, s, lo)               # one ceil, then each anchor by index
     a = period_anchor(f, s, k)
     while a < hi
-        push!(ticks, _unix(a) - off)
+        push!(ticks, _tick(clock, a))
         k += 1
         a = period_anchor(f, s, k)
     end
-    plan = _TemporalPlan(temporal, lo, hi, Pair{DateTime, Any}[], ReentrantLock(), origin)
+    plan = _TemporalPlan(temporal, lo, hi, Pair{DateTime, Any}[], ReentrantLock(), clock)
     return plan, ticks
 end
 
@@ -276,7 +307,7 @@ end
 function _epoch_starts(p::Provider)
     p.plan === nothing && return copy(p.times)
     plan = p.plan::_TemporalPlan
-    lo = _unix(plan.lo) - _off(plan)
+    lo = _tick(plan, plan.lo)
     return !isempty(p.times) && first(p.times) == lo ? copy(p.times) : vcat(lo, p.times)
 end
 
@@ -306,12 +337,11 @@ function Provider(
         records_per_sample === nothing && (records_per_sample = temporal.records_per_sample)
         # The URL names a FILE: expand it at the tick's file anchor, in Unix
         # seconds (a tick `t` counts from the time origin).
-        off = _off(plan)
         file_url = if url isa AbstractString
             String(url)
         else
-            let f = url
-                t -> f(_unix(file_anchor(temporal, t + off)))
+            let f = url, clock = plan.clock
+                t -> f(_unix(file_anchor(temporal, _instant(clock, t))))
             end
         end
     elseif window !== nothing
@@ -400,8 +430,8 @@ function Provider(
         mirrors_for = if plan === nothing
             t -> esm_mirrors(url, t)
         else
-            let off = _off(plan)
-                t -> esm_mirrors(url, _unix(file_anchor(temporal, t + off)))
+            let clock = plan.clock
+                t -> esm_mirrors(url, _unix(file_anchor(temporal, _instant(clock, t))))
             end
         end
     else
@@ -482,7 +512,7 @@ function window_records(p::Provider)
     p.plan === nothing && return Float64[]
     plan = p.plan::_TemporalPlan
     return Float64[
-        _unix(a) - _off(plan) for a in
+        _tick(plan, a) for a in
             _window_records(plan.temporal, plan.lo, plan.hi, p.records_per_sample == 2)
     ]
 end
@@ -609,7 +639,7 @@ function array_shape(p::Provider, var::AbstractString)
     store_backed(reader) || return nothing
     t0 = p.cadence == CONST ? 0.0 :
         p.plan === nothing ? first(p.times) :
-        _unix(record_anchor(p.plan.temporal, p.plan.lo)) - _off(p.plan)
+        _tick(p.plan, record_anchor(p.plan.temporal, p.plan.lo))
     return array_shape(reader, p.cache, p.url_for(t0), var)
 end
 
@@ -888,7 +918,7 @@ end
 # one) snaps to, as a `DateTime`, or the error for a `t` before the source start.
 function _temporal_anchor(p::Provider, t::Real)
     s = p.plan.temporal
-    a = record_anchor(s, Float64(t) + _off(p.plan))
+    a = record_anchor(s, _instant(p.plan, t))
     a < s.start && throw(
         ArgumentError("t=$t precedes the source start $(s.start)")
     )
@@ -935,7 +965,7 @@ end
 function _load_located(p::Provider, fa::DateTime, anchor::DateTime, choose; select = nothing)
     plan = p.plan::_TemporalPlan
     dim = p.time_dim::String
-    t_url = _unix(anchor) - _off(plan)
+    t_url = _tick(plan, anchor)
     cached, times = _axis_cached(plan, fa)
     decode(axis) = _axis_store!(plan, fa, axis === nothing ? nothing : decode_time_axis(axis))
     if !_records_pushdown(p)
@@ -1009,10 +1039,9 @@ function _temporal_sample(p::Provider, t::Real; select = nothing)
         return Int[r]
     end
     nds0, pos0 = _load_located(p, fa, anchor, choose0; select = select)
-    off = _off(plan)
-    units = _origin_units(plan.origin)
-    t0 = _unix(anchor) - off
-    t1 = _unix(nxt) - off
+    units = plan.clock.units
+    t0 = _tick(plan, anchor)
+    t1 = _tick(plan, nxt)
     if same_file && !held[]
         return _bracket_build(nds0, pos0[1], nds0, pos0[end], dim, t0, t1, units)
     end
@@ -1040,7 +1069,7 @@ end
 # `t`. Raises what `sample_at(p, t)` raises for a `t` before the first one.
 _sample_anchor(p::Provider, t::Real) =
     p.plan === nothing ? p.times[_tick_index(p, t)] :
-    _unix(_temporal_anchor(p, t)) - _off(p.plan)
+    _tick(p.plan, _temporal_anchor(p, t))
 
 # The file times (ticks, one per distinct URL) that `sample_at(p, t)` reads: the
 # anchor's file and, for a two-record bracket, the successor's.
@@ -1054,12 +1083,11 @@ function _sample_url_times(p::Provider, t::Real)
         return ts
     end
     s = p.plan.temporal
-    off = _off(p.plan)
     a = _temporal_anchor(p, t)
-    ts = Float64[_unix(a) - off]
+    ts = Float64[_tick(p.plan, a)]
     if p.records_per_sample == 2
         nxt = next_record_anchor(s, a)
-        (s.stop === nothing || nxt < s.stop) && push!(ts, _unix(nxt) - off)
+        (s.stop === nothing || nxt < s.stop) && push!(ts, _tick(p.plan, nxt))
     end
     return ts
 end
@@ -1173,18 +1201,17 @@ end
 # §2.6).
 function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
     s, F = plan.temporal, plan.temporal.file_period
-    off = _off(plan)
     k = period_floor(F, s.start, plan.lo)
     out = Float64[]
     a = period_anchor(F, s.start, k)
     while a < plan.hi
-        push!(out, _unix(a) - off)
+        push!(out, _tick(plan, a))
         k += 1
         a = period_anchor(F, s.start, k)
     end
     nxt = bracket ? _bracket_successor(s, plan.hi) : nothing
     if nxt !== nothing
-        fa = _unix(file_anchor(s, nxt)) - off
+        fa = _tick(plan, file_anchor(s, nxt))
         (isempty(out) || last(out) != fa) && push!(out, fa)
     end
     return out

@@ -48,6 +48,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as _dt
 import inspect
+import re
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -90,12 +91,19 @@ _EPOCH = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
 _ZERO = _dt.timedelta(0)
 
 
+# The fraction of seconds of an ISO 8601 instant, as written.
+_ORIGIN_FRACTION = re.compile(r"(?<=:\d\d)\.(\d+)")
+
+
 def time_origin_instant(origin: _dt.datetime | str | None) -> _dt.datetime | None:
     """A provider's ``time_origin`` as an aware UTC datetime, or ``None``.
 
-    ``origin`` is a :class:`datetime.datetime` (naive is UTC) or an ISO 8601 /
-    RFC 3339 string. It must be a whole second (spec/esm-sources.md §4), else
-    :class:`~earthsciio.errors.TimeOriginInvalid`."""
+    ``origin`` is a :class:`datetime.datetime` (naive is UTC; a subclass such
+    as a pandas ``Timestamp`` may carry nanoseconds) or an ISO 8601 / RFC 3339
+    string. It must be a whole second (spec/esm-sources.md §4): any nonzero
+    fraction, however small, is :class:`~earthsciio.errors.TimeOriginInvalid`.
+    The fraction of a string is checked as written, since parsing keeps only
+    microseconds."""
     if origin is None:
         return None
     if isinstance(origin, str):
@@ -105,26 +113,34 @@ def time_origin_instant(origin: _dt.datetime | str | None) -> _dt.datetime | Non
             raise TimeOriginInvalid(
                 f"time_origin_invalid: {origin!r} is not an ISO 8601 instant"
             ) from exc
+        m = _ORIGIN_FRACTION.search(origin)
+        fractional = m is not None and m.group(1).strip("0") != ""
     elif isinstance(origin, _dt.datetime):
         d = origin
+        fractional = bool(getattr(origin, "nanosecond", 0))
     else:
         raise TimeOriginInvalid(
             "time_origin_invalid: a time origin is a datetime or an ISO 8601 string, "
             f"got {type(origin).__name__}"
         )
     d = d.replace(tzinfo=_dt.timezone.utc) if d.tzinfo is None else d.astimezone(_dt.timezone.utc)
-    if d.microsecond:
+    if fractional or d.microsecond:
         raise TimeOriginInvalid(
-            f"time_origin_invalid: the time origin {d.isoformat()} is not a whole second"
+            f"time_origin_invalid: the time origin {origin!s} is not a whole second"
         )
-    return d
+    # A plain datetime (a pandas Timestamp is one, without its nanoseconds).
+    return _dt.datetime(d.year, d.month, d.day, d.hour, d.minute, d.second, tzinfo=_dt.timezone.utc)
 
 
 def _origin_units(origin: _dt.datetime | None) -> str:
     """The CF ``units`` of a time in seconds from ``origin`` (the Unix epoch
-    when ``None``): ``seconds since YYYY-MM-DDTHH:MM:SSZ``."""
+    when ``None``): ``seconds since YYYY-MM-DDTHH:MM:SSZ``, the year zero-padded
+    to four digits."""
     o = origin if origin is not None else _EPOCH
-    return f"seconds since {o.strftime('%Y-%m-%dT%H:%M:%S')}Z"
+    return (
+        f"seconds since {o.year:04d}-{o.month:02d}-{o.day:02d}"
+        f"T{o.hour:02d}:{o.minute:02d}:{o.second:02d}Z"
+    )
 
 
 @dataclass(frozen=True)
@@ -494,7 +510,7 @@ class Provider:
         formats: Registry | None = None,
         time_origin: _dt.datetime | str | None = None,
     ) -> None:
-        self.time_origin = time_origin_instant(time_origin)
+        self._set_time_origin(time_origin_instant(time_origin))
         self.loader = loader
         # A window some stretch of which no record serves is refused here, not
         # mid-run (spec/esm-sources.md §2.6).
@@ -673,7 +689,7 @@ class Provider:
         )
         clone.cache = self.cache
         clone.window = self.window
-        clone.time_origin = self.time_origin
+        clone._set_time_origin(self.time_origin)
         clone._reader = self._reader
         check_reader_options(clone._reader, clone.loader)
         clone._init_buffers()
@@ -864,10 +880,19 @@ class Provider:
             )
         return select
 
+    # -- time in and out (spec/esm-sources.md §4) --------------------------- #
+    # Every time the provider takes goes through `_instant`, and every time it
+    # returns through `_out` / `_out_seconds`: the one place the origin applies.
+
+    def _set_time_origin(self, origin: _dt.datetime | None) -> None:
+        """Bind the (validated) ``time_origin`` and what follows from it once."""
+        self.time_origin = origin
+        self._origin_s = 0.0 if origin is None else _epoch_seconds(origin)
+        self._time_units = _origin_units(origin)
+
     def _instant(self, t: TimeLike) -> _dt.datetime:
         """``t`` as an instant: a datetime as given, a number as that many
-        seconds from the ``time_origin`` (the Unix epoch when there is none),
-        spec/esm-sources.md §4."""
+        seconds from the ``time_origin`` (the Unix epoch when there is none)."""
         if isinstance(t, _dt.datetime):
             return t
         if isinstance(t, bool) or not isinstance(t, (int, float, np.integer, np.floating)):
@@ -884,13 +909,13 @@ class Provider:
 
     def _out(self, d: _dt.datetime) -> Any:
         """An instant as this provider returns it: the datetime itself, or with
-        a ``time_origin`` the seconds from it (spec/esm-sources.md §4)."""
+        a ``time_origin`` the seconds from it."""
         return d if self.time_origin is None else self._out_seconds(d)
 
     def _out_seconds(self, d: _dt.datetime) -> float:
-        """Seconds from the ``time_origin`` (the Unix epoch when none)."""
-        origin = 0.0 if self.time_origin is None else _epoch_seconds(self.time_origin)
-        return _epoch_seconds(d) - origin
+        """Seconds from the ``time_origin`` (the Unix epoch when none): the Unix
+        seconds of ``d`` minus those of the origin, as every track computes it."""
+        return _epoch_seconds(d) - self._origin_s
 
     def _anchor_of(self, t: TimeLike) -> _dt.datetime:
         """The cadence anchor ``t`` snaps to, UNVALIDATED (it may precede the
@@ -1123,7 +1148,7 @@ class Provider:
             time_dim,
             self._out_seconds(anchor),
             self._out_seconds(next_anchor),
-            _origin_units(self.time_origin),
+            self._time_units,
         )
 
 

@@ -18,9 +18,14 @@ package version is independent of the `.esm` format version.
   anchors, and a two-record bracket's time coordinate (`units` `seconds since
   <origin>`). A caller no longer converts to Unix seconds on every call. It is
   opt-in: an entry does not carry the model's origin, so without one nothing
-  changes. The origin must be a whole second (`time_origin_invalid`: Python
-  and Julia `TimeOriginInvalid`, Rust `Error::Time`), and a `PrefetchGroup`
-  refuses members on different origins. Python's provider times may now be
+  changes. The origin must be a whole second, any nonzero fraction refused
+  however small (`time_origin_invalid`: Python and Julia `TimeOriginInvalid`,
+  Rust `Error::Time`), and a `PrefetchGroup` refuses members on different
+  origins (a Julia member built from `times` counts as one without). A time
+  returned is the instant's Unix seconds minus the origin's, fraction
+  included, in every track: Rust no longer drops the fraction of a
+  fractional-second window start (its group boundaries, `Sample::anchor`
+  and the `decode_latency` hook's anchor now match Python's and Julia's). Python's provider times may now be
   numbers (seconds from the origin, Unix seconds without one) as well as
   `datetime`s (`TimeLike`); Rust's `sample_at`, `refresh`,
   `refresh_with_select` and `sample_windows_at` take `impl Into<ProviderTime>`

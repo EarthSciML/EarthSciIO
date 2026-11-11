@@ -56,6 +56,7 @@ ceds_opts = {"variables": ["SO2"], "substitutions": {"species": "so2"}}
 
 O_NEI = s(2016, 1, 1)
 O_CEDS = s(2015, 11, 15, 12)  # an origin off the cadence: mid-month, mid-day
+O_YEAR1 = s(1, 1, 1)  # an origin before year 1000: its units pad the year to 4 digits
 
 
 def nei(*a):
@@ -64,6 +65,10 @@ def nei(*a):
 
 def cd(*a):
     return s(*a) - O_CEDS
+
+
+def y1(*a):
+    return s(*a) - O_YEAR1
 
 
 cases = [
@@ -173,6 +178,76 @@ cases = [
         },
     },
     {
+        "id": "window-starts-mid-second",
+        "note": (
+            "A window that starts half a second after the origin: that start is the first "
+            "boundary, kept to the fraction (seconds out are the instant's Unix seconds minus "
+            "the origin's, fractions included), and the January record serves it."
+        ),
+        "name": "NEI2016",
+        "entry": nei_entry,
+        "options": {
+            **nei_opts,
+            "time_origin": "2016-01-01T00:00:00Z",
+            "window": [0.5, nei(2016, 4, 1)],
+        },
+        "expect": {
+            "time_units": "seconds since 2016-01-01T00:00:00Z",
+            "refresh_times": [nei(2016, 2, 1), nei(2016, 3, 1)],
+            "window_records": {
+                "1": [0, nei(2016, 2, 1), nei(2016, 3, 1)],
+                "2": [0, nei(2016, 2, 1), nei(2016, 3, 1)],
+            },
+            "epochs": [
+                {"boundary": 0.5, "anchor": 0},
+                {"boundary": nei(2016, 2, 1), "anchor": nei(2016, 2, 1)},
+                {"boundary": nei(2016, 3, 1), "anchor": nei(2016, 3, 1)},
+            ],
+            "samples": [
+                {
+                    "t": 0.5,
+                    "records_per_sample": 2,
+                    "NOX": [nei_grid(1), nei_grid(2)],
+                    "time": [0, nei(2016, 2, 1)],
+                },
+            ],
+        },
+    },
+    {
+        "id": "origin-year-1",
+        "note": (
+            "An origin before year 1000: the units pad the year to four digits "
+            "(0001-01-01T00:00:00Z)."
+        ),
+        "name": "NEI2016",
+        "entry": nei_entry,
+        "options": {
+            **nei_opts,
+            "time_origin": "0001-01-01T00:00:00Z",
+            "window": [y1(2016, 1, 1), y1(2016, 4, 1)],
+        },
+        "expect": {
+            "time_units": "seconds since 0001-01-01T00:00:00Z",
+            "refresh_times": [y1(2016, 1, 1), y1(2016, 2, 1), y1(2016, 3, 1)],
+            "window_records": {
+                "1": [y1(2016, 1, 1), y1(2016, 2, 1), y1(2016, 3, 1)],
+                "2": [y1(2016, 1, 1), y1(2016, 2, 1), y1(2016, 3, 1)],
+            },
+            "epochs": [
+                {"boundary": b, "anchor": b}
+                for b in (y1(2016, 1, 1), y1(2016, 2, 1), y1(2016, 3, 1))
+            ],
+            "samples": [
+                {
+                    "t": y1(2016, 2, 15),
+                    "records_per_sample": 2,
+                    "NOX": [nei_grid(2), nei_grid(3)],
+                    "time": [y1(2016, 2, 1), y1(2016, 3, 1)],
+                },
+            ],
+        },
+    },
+    {
         "id": "window-before-data",
         "note": "A window in model seconds is checked as any other (spec section 2.6).",
         "name": "NEI2016",
@@ -186,6 +261,44 @@ cases = [
         "entry": nei_entry,
         "options": {**nei_opts, "time_origin": "2016-01-01T00:00:00.500Z", "window": [0, 86400]},
         "error": "time_origin_invalid",
+    },
+    {
+        "id": "origin-fraction-below-a-millisecond",
+        "note": "Any nonzero fraction is refused, however small (a reader at millisecond resolution checks the digits as written).",
+        "name": "NEI2016",
+        "entry": nei_entry,
+        "options": {**nei_opts, "time_origin": "2016-01-01T00:00:00.0004Z", "window": [0, 86400]},
+        "error": "time_origin_invalid",
+    },
+    {
+        "id": "origin-fraction-below-a-microsecond",
+        "note": "Any nonzero fraction is refused, however small (a reader at microsecond resolution checks the digits as written).",
+        "name": "NEI2016",
+        "entry": nei_entry,
+        "options": {
+            **nei_opts,
+            "time_origin": "2016-01-01T00:00:00.0000001Z",
+            "window": [0, 86400],
+        },
+        "error": "time_origin_invalid",
+    },
+    {
+        "id": "origin-fraction-of-zeros",
+        "note": "A fraction of zeros is a whole second.",
+        "name": "NEI2016",
+        "entry": nei_entry,
+        "options": {
+            **nei_opts,
+            "time_origin": "2016-01-01T00:00:00.000Z",
+            "window": [0, nei(2016, 2, 1)],
+        },
+        "expect": {
+            "time_units": "seconds since 2016-01-01T00:00:00Z",
+            "refresh_times": [0],
+            "window_records": {"1": [0], "2": [0, nei(2016, 2, 1)]},
+            "epochs": [{"boundary": 0, "anchor": 0}],
+            "samples": [],
+        },
     },
 ]
 sc = {
@@ -204,5 +317,6 @@ sc = {
     ),
     "cases": cases,
 }
-json.dump(sc, open(sys.argv[1], "w"), indent=2)
-open(sys.argv[1], "a").write("\n")
+with open(sys.argv[1], "w") as f:
+    json.dump(sc, f, indent=2)
+    f.write("\n")
