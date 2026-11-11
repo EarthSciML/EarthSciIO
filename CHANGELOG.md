@@ -4,6 +4,32 @@ All three language tracks (Rust `earthsciio` on crates.io, Python `earthsciio`
 on PyPI, Julia `EarthSciIO` in General) ship under one version number. The
 package version is independent of the `.esm` format version.
 
+## Unreleased
+
+### All tracks
+
+- **fix (breaking):** the three tracks now agree on which records serve a run
+  window, and refuse the same windows (`spec/esm-sources.md` §2.6). A window
+  is served by the record in effect at its start, every record inside it and,
+  with `records_per_sample = 2`, the record after it that the bracket of its
+  last interval reads. Julia no longer refuses a window that holds no record
+  anchor but lies inside one record's interval ("holds no record"); such a
+  window has no refresh times. All three refuse, when the provider is built
+  and with the code `esm_window_uncovered`, a window that starts before the
+  source's `start`, ends past its `end`, or is empty (Python and Julia
+  `WindowNotCovered`, Rust `Error::WindowNotCovered`). Before, Python and Rust
+  clamped such a window to the data and could run on no records at all, for
+  example a model time read as 1970. New `window_records` lists the records
+  serving the window, and `prefetch` with a two-record bracket now also warms
+  the file of the record after the window.
+- **fix:** a `PrefetchGroup` schedules a member whose run window holds no
+  record anchor. Its boundaries are now the members' refresh times and
+  run-window starts, so the record in effect at a window start gets an epoch
+  (`spec/prefetch.md` §3.2). `prefetch(window)` (Python, Rust) checks the window
+  it is given as the constructor does, instead of clamping it to the data. In
+  Python, a naive window bound is UTC, as everywhere else, instead of raising
+  `TypeError` against an aware `start`.
+
 ## v0.3.0
 
 Changes since v0.2.0. A minor bump because of the **breaking** changes

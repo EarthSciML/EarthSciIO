@@ -179,6 +179,15 @@ pub enum Error {
         detail: String,
     },
 
+    /// A provider's run window some stretch of which no record serves
+    /// (`spec/esm-sources.md` §2.6): it starts before the source's first
+    /// record, runs past the end of its data, or is empty. Its message starts
+    /// with the code `esm_window_uncovered`, the same in every track.
+    WindowNotCovered {
+        /// Which window, and why no record serves part of it.
+        detail: String,
+    },
+
     /// An esm `data_sources` entry EarthSciIO cannot read
     /// (`spec/esm-sources.md` §3.3). The message carries `code` and the
     /// source's name.
@@ -266,6 +275,7 @@ impl std::fmt::Display for Error {
                 source,
                 detail,
             } => write!(f, "{code}: data source {source:?}: {detail}"),
+            Error::WindowNotCovered { detail } => write!(f, "esm_window_uncovered: {detail}"),
             Error::BadPeriod { period, detail } => {
                 write!(
                     f,

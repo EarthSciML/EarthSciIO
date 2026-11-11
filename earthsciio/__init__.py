@@ -61,6 +61,7 @@ from .errors import (
     TransportError,
     UnknownReaderOption,
     Unsupported,
+    WindowNotCovered,
 )
 from .esm import EsmTemplate, EsmTemplateError, esm_template_names, expand_esm_template
 from .esm_source import EsmSourceError, provider_from_esm, source_from_esm
@@ -184,6 +185,7 @@ __all__ = [
     "UnknownReaderOption",
     "Unsupported",
     "Window",
+    "WindowNotCovered",
     "all_registries",
     # backend package
     "backends",

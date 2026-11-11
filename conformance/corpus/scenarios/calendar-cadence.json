@@ -1,7 +1,7 @@
 {
   "schema": "earthsciio/scenario/v1",
   "id": "calendar-cadence",
-  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`).",
+  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`). `windows` (spec/esm-sources.md section 2.6): a provider over the run window `window_s` (half-open) with the given cadence, `end` and `records_per_sample` is either refused with the error code `error` or is served by the records anchored at `window_records_s` and refreshes at `refresh_times_s`. A provider's `prefetch` entries: offline over the corpus cache, prefetching `window_s` with `records_per_sample` (and no `end` when `open_ended`) succeeds, or is a cache miss for `missing_url` when it is given.",
   "blobs": [
     {
       "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf",
@@ -845,8 +845,8 @@
       ]
     },
     {
-      "id": "window-past-end",
-      "note": "the window end, not the data end, bounds the refresh times: a window past `end` still lists every anchor in it, and a time past both still locates its record on the calendar",
+      "id": "time-past-end",
+      "note": "a window ending at `end` lists every anchor in it, and a time past the end of the data still locates its record on the calendar (a window past `end` is refused: see `windows`)",
       "start": "2016-01-01T00:00:00Z",
       "start_s": 1451606400,
       "end": "2016-04-01T00:00:00Z",
@@ -855,19 +855,16 @@
       "file_period": "P1M",
       "window": [
         "2016-01-01T00:00:00Z",
-        "2016-07-01T00:00:00Z"
+        "2016-04-01T00:00:00Z"
       ],
       "window_s": [
         1451606400,
-        1467331200
+        1459468800
       ],
       "refresh_times_s": [
         1451606400,
         1454284800,
-        1456790400,
-        1459468800,
-        1462060800,
-        1464739200
+        1456790400
       ],
       "at": [
         {
@@ -898,40 +895,13 @@
           "next_record_anchor_s": 1459468800
         },
         {
-          "t": "2016-04-01T00:00:00Z",
-          "t_s": 1459468800,
-          "record_anchor_s": 1459468800,
-          "file_anchor": "2016-04-01T00:00:00Z",
-          "file_anchor_s": 1459468800,
+          "t": "2016-03-15T00:00:00Z",
+          "t_s": 1458000000,
+          "record_anchor_s": 1456790400,
+          "file_anchor": "2016-03-01T00:00:00Z",
+          "file_anchor_s": 1456790400,
           "record": 0,
-          "next_record_anchor_s": 1462060800
-        },
-        {
-          "t": "2016-05-01T00:00:00Z",
-          "t_s": 1462060800,
-          "record_anchor_s": 1462060800,
-          "file_anchor": "2016-05-01T00:00:00Z",
-          "file_anchor_s": 1462060800,
-          "record": 0,
-          "next_record_anchor_s": 1464739200
-        },
-        {
-          "t": "2016-06-01T00:00:00Z",
-          "t_s": 1464739200,
-          "record_anchor_s": 1464739200,
-          "file_anchor": "2016-06-01T00:00:00Z",
-          "file_anchor_s": 1464739200,
-          "record": 0,
-          "next_record_anchor_s": 1467331200
-        },
-        {
-          "t": "2016-05-15T00:00:00Z",
-          "t_s": 1463270400,
-          "record_anchor_s": 1462060800,
-          "file_anchor": "2016-05-01T00:00:00Z",
-          "file_anchor_s": 1462060800,
-          "record": 0,
-          "next_record_anchor_s": 1464739200
+          "next_record_anchor_s": 1459468800
         },
         {
           "t": "2016-07-15T00:00:00Z",
@@ -943,6 +913,285 @@
           "next_record_anchor_s": 1470009600
         }
       ]
+    }
+  ],
+  "windows": [
+    {
+      "id": "between-two-records",
+      "note": "GEOS-FP I3-like: no record is timestamped inside the window, so the record in effect at its start (00:00) serves it all; no refresh times",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "PT3H",
+      "file_period": "P1D",
+      "records_per_sample": 1,
+      "window": [
+        "2016-01-01T01:30:00Z",
+        "2016-01-01T02:30:01Z"
+      ],
+      "window_s": [
+        1451611800,
+        1451615401
+      ],
+      "window_records_s": [
+        1451606400
+      ],
+      "refresh_times_s": []
+    },
+    {
+      "id": "between-two-records-bracket",
+      "note": "as `between-two-records` with a two-record bracket: the record after the window (03:00) is read too",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "PT3H",
+      "file_period": "P1D",
+      "records_per_sample": 2,
+      "window": [
+        "2016-01-01T01:30:00Z",
+        "2016-01-01T02:30:01Z"
+      ],
+      "window_s": [
+        1451611800,
+        1451615401
+      ],
+      "window_records_s": [
+        1451606400,
+        1451617200
+      ],
+      "refresh_times_s": []
+    },
+    {
+      "id": "bracket-successor-in-next-file",
+      "note": "the record in effect at the start (18:00), the one inside (21:00) and the bracket's successor (00:00 the next day, in the next file)",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "PT3H",
+      "file_period": "P1D",
+      "records_per_sample": 2,
+      "window": [
+        "2016-01-01T19:30:00Z",
+        "2016-01-01T22:30:00Z"
+      ],
+      "window_s": [
+        1451676600,
+        1451687400
+      ],
+      "window_records_s": [
+        1451671200,
+        1451682000,
+        1451692800
+      ],
+      "refresh_times_s": [
+        1451682000
+      ]
+    },
+    {
+      "id": "starts-on-a-record",
+      "note": "a window starting on the first record: that record and the next",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2016-01-01T00:00:00Z",
+        "2016-02-15T00:00:00Z"
+      ],
+      "window_s": [
+        1451606400,
+        1455494400
+      ],
+      "window_records_s": [
+        1451606400,
+        1454284800
+      ],
+      "refresh_times_s": [
+        1451606400,
+        1454284800
+      ]
+    },
+    {
+      "id": "ends-at-the-end-of-the-data",
+      "note": "the last record covers the window up to `end`; its bracket successor would be at `end`, so there is none and the bracket holds",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 2,
+      "window": [
+        "2016-03-10T00:00:00Z",
+        "2016-04-01T00:00:00Z"
+      ],
+      "window_s": [
+        1457568000,
+        1459468800
+      ],
+      "window_records_s": [
+        1456790400
+      ],
+      "refresh_times_s": []
+    },
+    {
+      "id": "open-ended-far-future",
+      "note": "with no `end`, the data is taken to run on: a window after every file that exists is not refused here (its files are missing when read)",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2030-06-10T00:00:00Z",
+        "2030-06-20T00:00:00Z"
+      ],
+      "window_s": [
+        1907280000,
+        1908144000
+      ],
+      "window_records_s": [
+        1906502400
+      ],
+      "refresh_times_s": []
+    },
+    {
+      "id": "entirely-before-the-data",
+      "note": "no record is in effect before the first one",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2015-11-01T00:00:00Z",
+        "2015-12-01T00:00:00Z"
+      ],
+      "window_s": [
+        1446336000,
+        1448928000
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "starts-before-the-data",
+      "note": "the window's first day precedes the first record",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2015-12-31T00:00:00Z",
+        "2016-01-15T00:00:00Z"
+      ],
+      "window_s": [
+        1451520000,
+        1452816000
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "model-time-at-1970",
+      "note": "a model with no time origin whose times are read as Unix seconds: the window lies decades before GEOS-FP's first record",
+      "start": "2013-01-01T00:30:00Z",
+      "start_s": 1357000200,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "records_per_sample": 2,
+      "window": [
+        "1970-01-01T00:30:00Z",
+        "1970-01-01T02:30:01Z"
+      ],
+      "window_s": [
+        1800,
+        9001
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "entirely-after-the-data",
+      "note": "no record is in effect at or after `end`",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2016-05-01T00:00:00Z",
+        "2016-06-01T00:00:00Z"
+      ],
+      "window_s": [
+        1462060800,
+        1464739200
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "partly-past-the-end",
+      "note": "the window runs past `end`, where the last record stops",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2016-03-15T00:00:00Z",
+        "2016-04-15T00:00:00Z"
+      ],
+      "window_s": [
+        1458000000,
+        1460678400
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "one-second-past-the-end",
+      "note": "a run ending at `end`, whose window ends one second later, is past it",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 2,
+      "window": [
+        "2016-03-15T00:00:00Z",
+        "2016-04-01T00:00:01Z"
+      ],
+      "window_s": [
+        1458000000,
+        1459468801
+      ],
+      "error": "esm_window_uncovered"
+    },
+    {
+      "id": "empty",
+      "note": "an empty window is served by no record",
+      "start": "2016-01-01T00:00:00Z",
+      "start_s": 1451606400,
+      "end": "2016-04-01T00:00:00Z",
+      "end_s": 1459468800,
+      "frequency": "P1M",
+      "file_period": "P1M",
+      "records_per_sample": 1,
+      "window": [
+        "2016-02-01T00:00:00Z",
+        "2016-02-01T00:00:00Z"
+      ],
+      "window_s": [
+        1454284800,
+        1454284800
+      ],
+      "error": "esm_window_uncovered"
     }
   ],
   "providers": {
@@ -1113,6 +1362,35 @@
         1448928000,
         1451606400,
         1454284800
+      ],
+      "prefetch": [
+        {
+          "window_s": [
+            1480896000,
+            1481328000
+          ],
+          "records_per_sample": 1,
+          "open_ended": true,
+          "missing_url": null
+        },
+        {
+          "window_s": [
+            1480896000,
+            1481328000
+          ],
+          "records_per_sample": 2,
+          "open_ended": true,
+          "missing_url": "https://data.earthsci.dev/calendar/ceds_so2_2017.nc"
+        },
+        {
+          "window_s": [
+            1480896000,
+            1481328000
+          ],
+          "records_per_sample": 2,
+          "open_ended": false,
+          "missing_url": null
+        }
       ],
       "samples": [
         {

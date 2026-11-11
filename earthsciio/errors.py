@@ -40,6 +40,8 @@ __all__ = [
     "TransportError",
     "UnknownReaderOption",
     "Unsupported",
+    # the run window (spec/esm-sources.md §2.6)
+    "WindowNotCovered",
 ]
 
 
@@ -300,6 +302,15 @@ class AuthError(EarthSciIOError):
         super().__init__(
             f"no auth resolver registered for realm {realm!r}; registered realms: {self.available}"
         )
+
+
+class WindowNotCovered(EarthSciIOError, ValueError):
+    """A provider's run window that some stretch of has no record in effect
+    (spec/esm-sources.md §2.6): it starts before the source's first record,
+    runs past the end of its data, or is empty. The message starts with the
+    code ``esm_window_uncovered``, the same in every track."""
+
+    code = "esm_window_uncovered"
 
 
 class RegionNotShardAligned(EarthSciIOError, ValueError):
