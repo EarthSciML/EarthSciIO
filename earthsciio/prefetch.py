@@ -542,10 +542,15 @@ class PrefetchGroup:
     # -- the consumer's API ------------------------------------------------- #
 
     def boundaries(self) -> list[Any]:
-        """The sorted, de-duplicated union of the members' ``refresh_times``
+        """The sorted, de-duplicated union of the members'
+        ``refresh_times_closed``
         and run-window starts (where the record in effect there takes over,
-        spec/esm-sources.md §2.6). Epoch ``k`` is ``[B[k], B[k+1])``; the last is open on the right.
-        Datetimes, or seconds from the members' ``time_origin`` (§4)."""
+        spec/esm-sources.md §2.6). Epoch ``k`` is
+        ``[B[k], B[k+1])``; the last is open on the right. When a member's
+        window ends on one of its records, the last boundary is that window
+        end: its epoch holds no step of the run, but its sample is the
+        refresh there. Boundaries are datetimes or seconds from the members'
+        ``time_origin`` (§4)."""
         return list(self._B)
 
     def start(self, order: Any = "forward", from_: int | None = None) -> None:

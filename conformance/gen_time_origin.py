@@ -124,13 +124,20 @@ cases = [
             "time_units": "seconds since 2015-11-15T12:00:00Z",
             "refresh_times": [cd(2015, 12, 1), cd(2016, 1, 1), cd(2016, 2, 1)],
             "window_records": {
-                "1": [cd(2015, 11, 1), cd(2015, 12, 1), cd(2016, 1, 1), cd(2016, 2, 1)],
+                "1": [
+                    cd(2015, 11, 1),
+                    cd(2015, 12, 1),
+                    cd(2016, 1, 1),
+                    cd(2016, 2, 1),
+                    cd(2016, 3, 1),
+                ],
                 "2": [
                     cd(2015, 11, 1),
                     cd(2015, 12, 1),
                     cd(2016, 1, 1),
                     cd(2016, 2, 1),
                     cd(2016, 3, 1),
+                    cd(2016, 4, 1),
                 ],
             },
             "epochs": [
@@ -138,6 +145,7 @@ cases = [
                 {"boundary": cd(2015, 12, 1), "anchor": cd(2015, 12, 1)},
                 {"boundary": cd(2016, 1, 1), "anchor": cd(2016, 1, 1)},
                 {"boundary": cd(2016, 2, 1), "anchor": cd(2016, 2, 1)},
+                {"boundary": cd(2016, 3, 1), "anchor": cd(2016, 3, 1)},
             ],
             "samples": [
                 {"t": 0, "records_per_sample": 1, "SO2": ceds(10)},
@@ -295,8 +303,14 @@ cases = [
         "expect": {
             "time_units": "seconds since 2016-01-01T00:00:00Z",
             "refresh_times": [0],
-            "window_records": {"1": [0], "2": [0, nei(2016, 2, 1)]},
-            "epochs": [{"boundary": 0, "anchor": 0}],
+            "window_records": {
+                "1": [0, nei(2016, 2, 1)],
+                "2": [0, nei(2016, 2, 1), nei(2016, 3, 1)],
+            },
+            "epochs": [
+                {"boundary": 0, "anchor": 0},
+                {"boundary": nei(2016, 2, 1), "anchor": nei(2016, 2, 1)},
+            ],
             "samples": [],
         },
     },

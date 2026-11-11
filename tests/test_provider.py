@@ -22,6 +22,7 @@ import pytest
 from earthsciio import (
     BackendNotRegistered,
     Cache,
+    CacheMiss,
     DataSource,
     Provider,
     SourceTemporal,
@@ -292,6 +293,37 @@ def test_refresh_times_window_start_clamped_to_epoch(cache):
     assert p.refresh_times() == [_utc(1), _utc(2)]
 
 
+def test_refresh_times_closed_includes_the_window_end(cache):
+    # A run over [t0, tf] whose tf lands on a record refreshes at tf too
+    # (issue #36); the half-open schedule stays as it was.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    p = Provider(
+        DataSource("era5", "netcdf", ERA5_URL, temporal=temporal),
+        cache,
+        window=(START + dt.timedelta(minutes=30), _utc(3)),
+    )
+    assert p.refresh_times() == [_utc(1), _utc(2)]
+    assert p.refresh_times_closed() == [_utc(1), _utc(2), _utc(3)]
+
+
+def test_refresh_times_closed_never_at_temporal_end(cache):
+    # No record is at `end`: without a window the closed schedule is the
+    # half-open one, and a window ending at `end` gets no refresh there.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY, end=_utc(3))
+    loader = DataSource("era5", "netcdf", ERA5_URL, temporal=temporal)
+    assert Provider(loader, cache).refresh_times_closed() == [_utc(0), _utc(1), _utc(2)]
+    p = Provider(loader, cache, window=(_utc(1), _utc(3)))
+    assert p.refresh_times_closed() == [_utc(1), _utc(2)]
+
+
+def test_refresh_times_closed_empty_for_const_and_unbounded(cache):
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL), cache)
+    assert p.refresh_times_closed() == []
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    p = Provider(DataSource("era5", "netcdf", ERA5_URL, temporal=temporal), cache)
+    assert p.refresh_times_closed() == []
+
+
 # --------------------------------------------------------------------------- #
 # Per-file URL resolution (strftime template + callable) and prefetch.
 # --------------------------------------------------------------------------- #
@@ -310,13 +342,30 @@ def test_prefetch_const_warms_single_file(cache):
 
 
 def test_prefetch_strftime_window_hits_corpus(cache):
-    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    # The data ends with the day, so no record is at the window end.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY, end=START + DAY)
     loader = DataSource(
         "era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc", temporal=temporal
     )
     p = Provider(loader, cache, window=(START, START + DAY))
     entries = p.prefetch()
     assert len(entries) == 1 and entries[0].status == "hit"
+
+
+def test_prefetch_reaches_the_record_at_the_window_end(cache):
+    """With no ``end`` a record is at the window end, which
+    ``refresh_times_closed`` refreshes at, so ``prefetch`` warms its file too
+    (spec/esm-sources.md §2.6): here the next day's, which the corpus lacks."""
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    loader = DataSource(
+        "era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc", temporal=temporal
+    )
+    p = Provider(loader, cache, window=(START, START + DAY))
+    assert p.refresh_times_closed()[-1] == START + DAY
+    assert p.window_records()[-1] == START + DAY
+    with pytest.raises(CacheMiss) as err:
+        p.prefetch()
+    assert err.value.resolved_url == "https://data.earthsci.dev/era5/2018/11/20181109.nc"
 
 
 def test_prefetch_enumerates_file_anchors_and_dedups(cache):
@@ -331,7 +380,9 @@ def test_prefetch_enumerates_file_anchors_and_dedups(cache):
         DataSource("era5", "netcdf", url_for, temporal=temporal), cache, window=(_utc(0), _utc(2))
     )
     entries = p.prefetch()
-    assert seen == [_utc(0), _utc(1)]  # one anchor per file period across the window
+    # One anchor per file period across the window, and the file of the record
+    # at its end, which a run over the closed window refreshes at.
+    assert seen == [_utc(0), _utc(1), _utc(2)]
     assert len(entries) == 1  # collapsed to a single unique fetch
     assert entries[0].status == "hit"
 

@@ -13,7 +13,7 @@ id = "providers"
 title = "Providers"
 description = "Binding a data source to the cache and a reader, and getting native-grid arrays out at the simulation's cadence."
 ops = ["provider", "data_source", "source_temporal", "window", "const_provider", "discrete_provider",
-       "materialize", "refresh", "refresh_times", "prefetch"]
+       "materialize", "refresh", "refresh_times", "refresh_times_closed", "prefetch"]
 
 [[group]]
 id = "prefetch"

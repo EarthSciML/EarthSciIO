@@ -1,7 +1,7 @@
 {
   "schema": "earthsciio/scenario/v1",
   "id": "calendar-cadence",
-  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`). `windows` (spec/esm-sources.md section 2.6): a provider over the run window `window_s` (half-open) with the given cadence, `end` and `records_per_sample` is either refused with the error code `error` or is served by the records anchored at `window_records_s` and refreshes at `refresh_times_s`. A provider's `prefetch` entries: offline over the corpus cache, prefetching `window_s` with `records_per_sample` (and no `end` when `open_ended`) succeeds, or is a cache miss for `missing_url` when it is given.",
+  "description": "Calendar cadences (spec/esm-sources.md section 2). `periods`: each ISO duration parses to `months` and `seconds`; each of `bad_periods` is an esm_period_invalid error. `cadences`: for start/frequency/file_period (and `end`, the exclusive end of the data, where given), refresh_times over the half-open window are `refresh_times_s` and refresh_times_closed over the closed window `refresh_times_closed_s`, and at each `at[].t` the record anchor, the file anchor, the 0-based record in its file and the next record's anchor are as given. All times are UTC; `*_s` are Unix seconds. `providers`: a provider over the committed blobs (offline, the corpus cache), its URL an esm template, returns `samples` at `t_s` (array values in file dimension order; with records_per_sample 2 the time dimension comes first and its coordinate is `time_s`). `windows` (spec/esm-sources.md section 2.6): a provider over the run window `window_s` with the given cadence, `end` and `records_per_sample` is either refused with the error code `error` or is served by the records anchored at `window_records_s` (those of the closed window), refreshes at `refresh_times_s` and, over the closed window, at `refresh_times_closed_s`, and a PrefetchGroup over it alone has the boundaries `boundaries_s`. A provider's `prefetch` entries: offline over the corpus cache, prefetching `window_s` with `records_per_sample` (and no `end` when `open_ended`) succeeds, or is a cache miss for `missing_url` when it is given.",
   "blobs": [
     {
       "url": "https://data.earthsci.dev/calendar/nei2016_agr_month_01.ncf",
@@ -130,6 +130,12 @@
         1459468800,
         1462060800
       ],
+      "refresh_times_closed_s": [
+        1456790400,
+        1459468800,
+        1462060800,
+        1464739200
+      ],
       "at": [
         {
           "t": "2016-03-01T00:00:00Z",
@@ -216,6 +222,13 @@
         1448928000,
         1451606400,
         1454284800
+      ],
+      "refresh_times_closed_s": [
+        1446336000,
+        1448928000,
+        1451606400,
+        1454284800,
+        1456790400
       ],
       "at": [
         {
@@ -327,6 +340,37 @@
         1456786800,
         1456790400,
         1456794000
+      ],
+      "refresh_times_closed_s": [
+        1456696800,
+        1456700400,
+        1456704000,
+        1456707600,
+        1456711200,
+        1456714800,
+        1456718400,
+        1456722000,
+        1456725600,
+        1456729200,
+        1456732800,
+        1456736400,
+        1456740000,
+        1456743600,
+        1456747200,
+        1456750800,
+        1456754400,
+        1456758000,
+        1456761600,
+        1456765200,
+        1456768800,
+        1456772400,
+        1456776000,
+        1456779600,
+        1456783200,
+        1456786800,
+        1456790400,
+        1456794000,
+        1456797600
       ],
       "at": [
         {
@@ -623,6 +667,13 @@
         1461974400,
         1464652800
       ],
+      "refresh_times_closed_s": [
+        1454198400,
+        1456704000,
+        1459382400,
+        1461974400,
+        1464652800
+      ],
       "at": [
         {
           "t": "2016-01-31T00:00:00Z",
@@ -705,6 +756,12 @@
         1462154400
       ],
       "refresh_times_s": [
+        1462141800,
+        1462145400,
+        1462149000,
+        1462152600
+      ],
+      "refresh_times_closed_s": [
         1462141800,
         1462145400,
         1462149000,
@@ -796,6 +853,11 @@
         1462152600,
         1462163400
       ],
+      "refresh_times_closed_s": [
+        1462141800,
+        1462152600,
+        1462163400
+      ],
       "at": [
         {
           "t": "2016-05-01T22:30:00Z",
@@ -862,6 +924,11 @@
         1459468800
       ],
       "refresh_times_s": [
+        1451606400,
+        1454284800,
+        1456790400
+      ],
+      "refresh_times_closed_s": [
         1451606400,
         1454284800,
         1456790400
@@ -935,7 +1002,11 @@
       "window_records_s": [
         1451606400
       ],
-      "refresh_times_s": []
+      "refresh_times_s": [],
+      "refresh_times_closed_s": [],
+      "boundaries_s": [
+        1451611800
+      ]
     },
     {
       "id": "between-two-records-bracket",
@@ -957,7 +1028,11 @@
         1451606400,
         1451617200
       ],
-      "refresh_times_s": []
+      "refresh_times_s": [],
+      "refresh_times_closed_s": [],
+      "boundaries_s": [
+        1451611800
+      ]
     },
     {
       "id": "bracket-successor-in-next-file",
@@ -981,6 +1056,13 @@
         1451692800
       ],
       "refresh_times_s": [
+        1451682000
+      ],
+      "refresh_times_closed_s": [
+        1451682000
+      ],
+      "boundaries_s": [
+        1451676600,
         1451682000
       ]
     },
@@ -1009,6 +1091,14 @@
       "refresh_times_s": [
         1451606400,
         1454284800
+      ],
+      "refresh_times_closed_s": [
+        1451606400,
+        1454284800
+      ],
+      "boundaries_s": [
+        1451606400,
+        1454284800
       ]
     },
     {
@@ -1032,7 +1122,11 @@
       "window_records_s": [
         1456790400
       ],
-      "refresh_times_s": []
+      "refresh_times_s": [],
+      "refresh_times_closed_s": [],
+      "boundaries_s": [
+        1457568000
+      ]
     },
     {
       "id": "open-ended-far-future",
@@ -1053,7 +1147,102 @@
       "window_records_s": [
         1906502400
       ],
-      "refresh_times_s": []
+      "refresh_times_s": [],
+      "refresh_times_closed_s": [],
+      "boundaries_s": [
+        1907280000
+      ]
+    },
+    {
+      "id": "run-ends-on-a-record",
+      "note": "a run over [00:00, 04:00] with hourly data (issue #36): the half-open refresh times stop at 03:00, the closed ones also refresh at 04:00",
+      "start": "1970-01-01T00:00:00Z",
+      "start_s": 0,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "records_per_sample": 1,
+      "window": [
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T04:00:00Z"
+      ],
+      "window_s": [
+        0,
+        14400
+      ],
+      "window_records_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400
+      ],
+      "refresh_times_s": [
+        0,
+        3600,
+        7200,
+        10800
+      ],
+      "refresh_times_closed_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400
+      ],
+      "boundaries_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400
+      ]
+    },
+    {
+      "id": "run-ends-on-a-record-before-the-end",
+      "note": "as `run-ends-on-a-record` with an `end` after the window and a two-record bracket: 04:00 is the bracket's successor and a closed refresh time",
+      "start": "1970-01-01T00:00:00Z",
+      "start_s": 0,
+      "end": "1970-01-02T00:00:00Z",
+      "end_s": 86400,
+      "frequency": "PT1H",
+      "file_period": "P1D",
+      "records_per_sample": 2,
+      "window": [
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T04:00:00Z"
+      ],
+      "window_s": [
+        0,
+        14400
+      ],
+      "window_records_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400,
+        18000
+      ],
+      "refresh_times_s": [
+        0,
+        3600,
+        7200,
+        10800
+      ],
+      "refresh_times_closed_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400
+      ],
+      "boundaries_s": [
+        0,
+        3600,
+        7200,
+        10800,
+        14400
+      ]
     },
     {
       "id": "entirely-before-the-data",
@@ -1390,6 +1579,42 @@
           "records_per_sample": 2,
           "open_ended": false,
           "missing_url": null
+        },
+        {
+          "window_s": [
+            1477958400,
+            1483228800
+          ],
+          "records_per_sample": 1,
+          "open_ended": true,
+          "missing_url": "https://data.earthsci.dev/calendar/ceds_so2_2017.nc"
+        },
+        {
+          "window_s": [
+            1477958400,
+            1483228800
+          ],
+          "records_per_sample": 1,
+          "open_ended": false,
+          "missing_url": null
+        },
+        {
+          "window_s": [
+            1464739200,
+            1480550400
+          ],
+          "records_per_sample": 1,
+          "open_ended": true,
+          "missing_url": null
+        },
+        {
+          "window_s": [
+            1464739200,
+            1480550400
+          ],
+          "records_per_sample": 2,
+          "open_ended": true,
+          "missing_url": "https://data.earthsci.dev/calendar/ceds_so2_2017.nc"
         }
       ],
       "samples": [

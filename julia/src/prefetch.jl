@@ -99,8 +99,8 @@ workers, in a declared order, under a memory budget — bitwise identical to cal
 cadence unit — which the group cannot check. A CONST member (materialize it once,
 outside the group) or an empty map is an error at construction.
 
-  * [`boundaries`]`(g)` — the sorted union `B` of the members' `refresh_times`
-    and run-window starts.
+  * [`boundaries`]`(g)` — the sorted union `B` of the members'
+    [`refresh_times_closed`](@ref) and run-window starts.
     Epoch `k` (1-based) is `[B[k], B[k+1])`; per member it is `sample_at(B[k])`, so
     a coarser member repeats its sample across the epochs that snap to one anchor
     (decoded once, served again: `samples_reused`).
@@ -293,10 +293,12 @@ Base.show(io::IO, g::PrefetchGroup) =
 """
     boundaries(g::PrefetchGroup) -> Vector{Float64}
 
-The sorted, de-duplicated union `B` of the members' `refresh_times` and, for a
-`temporal` member, its run-window start, where the record in effect there takes
-over (spec/esm-sources.md §2.6), in their own cadence unit. Epoch `k` (1-based) is `[B[k], B[k+1])`, the last one open on the
-right. Boundaries are solver tstops, so no step straddles one, and a step's epoch
+The sorted, de-duplicated union `B` of the members' [`refresh_times_closed`](@ref)
+and, for a `temporal` member, its run-window start, where the record in effect
+there takes over (spec/esm-sources.md §2.6), in their own cadence unit. Epoch `k`
+(1-based) is `[B[k], B[k+1])`, the last one open on the right. When a member's
+window ends on one of its records, the last boundary is that window end: its
+epoch holds no step of the run, but its sample is the refresh there. Boundaries are solver tstops, so no step straddles one, and a step's epoch
 is `searchsortedlast(B, t0)` in both directions (spec/prefetch.md §4)."""
 boundaries(g::PrefetchGroup) = copy(g.B)
 

@@ -354,6 +354,7 @@ fn const_materialize_reads_whole_file_and_never_refreshes() {
         .unwrap()
         .is_none());
     assert!(provider.refresh_times().is_empty());
+    assert!(provider.refresh_times_closed().is_empty());
 }
 
 // --- registry plumbing ------------------------------------------------------

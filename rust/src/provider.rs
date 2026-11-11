@@ -227,10 +227,9 @@ impl SourceTemporal {
         Err(Error::WindowNotCovered { detail })
     }
 
-    /// The anchors of the records serving `[lower, upper)`
-    /// (`spec/esm-sources.md` §2.6): the one in effect at `lower`, each one
-    /// after it while `< upper` and, for a two-record bracket, the successor of
-    /// the last of them unless it is at or past `end`.
+    /// The anchors of the records serving the run window from `lower` to
+    /// `upper` (`spec/esm-sources.md` §2.6): the one in effect at `lower`, each
+    /// one after it while `< upper`, then [`end_records`](Self::end_records).
     fn window_records(&self, lower: OffsetDateTime, upper: OffsetDateTime) -> Vec<OffsetDateTime> {
         let f = self.frequency;
         let mut k = f.floor_index(self.start, lower);
@@ -243,16 +242,36 @@ impl SourceTemporal {
             }
             out.push(a);
         }
+        out.extend(self.end_records(upper));
+        out
+    }
+
+    /// The records a run window ending at `upper` needs at or after `upper`
+    /// (`spec/esm-sources.md` §2.6, items 3 and 4): the record at `upper`
+    /// itself when there is one ([`closing_record`](Self::closing_record), the
+    /// refresh at the window end that `refresh_times_closed` adds), then, for
+    /// a two-record bracket, the successor of the last record, unless it is at
+    /// or past `end`.
+    fn end_records(&self, upper: OffsetDateTime) -> Vec<OffsetDateTime> {
+        let closing = self.closing_record(upper);
+        let mut out: Vec<OffsetDateTime> = closing.into_iter().collect();
         if self.records_per_sample == Some(2) {
-            out.extend(self.bracket_successor(upper));
+            let after = closing.map_or(upper, |c| self.next_record_anchor(c));
+            out.extend(self.bracket_successor(after));
         }
         out
     }
 
-    /// The record a two-record bracket needs past the end `upper` of a window:
-    /// the first anchor at or after `upper` — the successor of the last record
-    /// in the window — unless it is at or past `end` (`spec/esm-sources.md`
-    /// §2.6).
+    /// `upper` when a record is anchored there — it is a cadence anchor before
+    /// `end` — else `None`: the refresh a closed window `[lower, upper]` adds
+    /// (`spec/esm-sources.md` §2.3).
+    fn closing_record(&self, upper: OffsetDateTime) -> Option<OffsetDateTime> {
+        self.bracket_successor(upper).filter(|&a| a == upper)
+    }
+
+    /// The first record anchor at or after `upper`, unless it is at or past
+    /// `end` (no record is there): the record a two-record bracket needs past
+    /// a window ending at `upper` (`spec/esm-sources.md` §2.6).
     fn bracket_successor(&self, upper: OffsetDateTime) -> Option<OffsetDateTime> {
         let nxt = self.first_record_anchor_from(upper);
         self.end.is_none_or(|e| nxt < e).then_some(nxt)
@@ -1018,7 +1037,25 @@ impl Provider {
     /// [`time_origin`](DataSource::time_origin) — **Unix epoch seconds** when
     /// it has none (`spec/esm-sources.md` §4). Empty for a CONST loader, or when
     /// the loader is open-ended and no window bounds it.
+    /// The window is half-open `[lower, upper)`: a refresh at exactly the
+    /// window end is not among them;
+    /// [`refresh_times_closed`](Self::refresh_times_closed) includes it.
     pub fn refresh_times(&self) -> Vec<f64> {
+        self.refresh_times_over(false)
+    }
+
+    /// [`refresh_times`](Self::refresh_times) over the **closed** window
+    /// `[lower, upper]` (`spec/esm-sources.md` §2.3): the same anchors plus the
+    /// one at the window end itself, when the window end is a cadence anchor
+    /// before [`SourceTemporal::end`]. The tstops of a solver that integrates
+    /// over `[t0, tf]` and must refresh at `tf` when `tf` lands on a record.
+    /// With no window (`upper` is the source's end, where no record is) it
+    /// equals [`refresh_times`](Self::refresh_times).
+    pub fn refresh_times_closed(&self) -> Vec<f64> {
+        self.refresh_times_over(true)
+    }
+
+    fn refresh_times_over(&self, closed: bool) -> Vec<f64> {
         let Some(temporal) = &self.loader.temporal else {
             return Vec::new(); // CONST: no refreshes
         };
@@ -1041,6 +1078,10 @@ impl Provider {
             }
             out.push(self.loader.seconds(anchor));
             k += 1;
+        }
+        // The closed end: the record at `upper` itself, when there is one.
+        if let Some(a) = temporal.closing_record(upper).filter(|_| closed) {
+            out.push(self.loader.seconds(a));
         }
         out
     }
@@ -1103,9 +1144,10 @@ impl Provider {
     /// Warm the cache for every file covering `window`, so an offline/HPC run
     /// never blocks on the network mid-integration (plan §4.5). Offline, this
     /// asserts each file is already present (a miss is [`Error::CacheMiss`]).
-    /// With `records_per_sample = 2` that includes the file of the record after
-    /// the window, which the bracket of its last interval reads
-    /// (`spec/esm-sources.md` §2.6). A window some stretch of which no record
+    /// That includes the files of the records past the window that it needs
+    /// (`spec/esm-sources.md` §2.6): the record at the window end, which
+    /// [`refresh_times_closed`](Self::refresh_times_closed) refreshes at, and,
+    /// with `records_per_sample = 2`, the successor its bracket reads. A window some stretch of which no record
     /// serves is refused with [`Error::WindowNotCovered`], as at construction.
     pub fn prefetch(&mut self, window: Window) -> Result<()> {
         match self.loader.temporal.clone() {
@@ -1128,16 +1170,14 @@ impl Provider {
                     last = Some(fa);
                     k += 1;
                 }
-                // A two-record bracket in the window's last interval also reads
-                // the record after the window, which may sit in a later file
-                // (`spec/esm-sources.md` §2.6).
-                if let Some(nxt) = t
-                    .bracket_successor(window.1)
-                    .filter(|_| t.records_per_sample == Some(2))
-                {
-                    let fa = t.file_anchor(nxt);
+                // The record at the window end (a refresh over the closed
+                // window) and a two-record bracket's successor may sit in a
+                // later file (`spec/esm-sources.md` §2.6).
+                for r in t.end_records(window.1) {
+                    let fa = t.file_anchor(r);
                     if last != Some(fa) {
                         self.fetch_blob(&self.resolve(fa)?)?;
+                        last = Some(fa);
                     }
                 }
                 Ok(())
@@ -1155,13 +1195,14 @@ impl Provider {
     }
 
     /// Where this provider's sample can change over its run window, as seconds
-    /// from its time origin: its [`refresh_times`](Self::refresh_times) and the
+    /// from its time origin: its [`refresh_times_closed`](Self::refresh_times_closed) and the
     /// window start, where the record in effect there takes over
     /// (`spec/esm-sources.md` §2.6) — the schedule a `PrefetchGroup` builds its
-    /// epochs from (`spec/prefetch.md` §3.2). Empty for a CONST or unbounded
-    /// provider.
+    /// epochs from (`spec/prefetch.md` §3.2). Over the closed window, so a run
+    /// that ends on a record gets an epoch at its end. Empty for a CONST or
+    /// unbounded provider.
     pub(crate) fn epoch_starts(&self) -> Vec<f64> {
-        let mut times = self.refresh_times();
+        let mut times = self.refresh_times_closed();
         if let (Some(_), Some((a, _))) = (&self.loader.temporal, self.window) {
             let lo = self.loader.seconds(a);
             if times.first() != Some(&lo) {
