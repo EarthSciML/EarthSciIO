@@ -292,17 +292,17 @@ fn windows_are_served_or_refused() {
             "{id}: closed refresh times"
         );
         // A group schedules it even with no refresh times: its first epoch
-        // starts at the window start (`spec/prefetch.md` §3.2).
-        let mut expected = secs("refresh_times_s");
-        let lo = w[0].as_f64().unwrap();
-        if expected.first() != Some(&lo) {
-            expected.insert(0, lo);
-        }
+        // starts at the window start, and a run ending on a record has an
+        // epoch at its end (`spec/prefetch.md` §3.2).
         let g = PrefetchGroup::builder()
             .member("x", Arc::new(p))
             .build()
             .unwrap_or_else(|e| panic!("{id}: {e}"));
-        assert_eq!(g.boundaries(), expected, "{id}: group boundaries");
+        assert_eq!(
+            g.boundaries(),
+            secs("boundaries_s"),
+            "{id}: group boundaries"
+        );
     }
 }
 

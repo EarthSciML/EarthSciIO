@@ -22,6 +22,7 @@ import pytest
 from earthsciio import (
     BackendNotRegistered,
     Cache,
+    CacheMiss,
     DataSource,
     Provider,
     SourceTemporal,
@@ -341,13 +342,30 @@ def test_prefetch_const_warms_single_file(cache):
 
 
 def test_prefetch_strftime_window_hits_corpus(cache):
-    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    # The data ends with the day, so no record is at the window end.
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY, end=START + DAY)
     loader = DataSource(
         "era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc", temporal=temporal
     )
     p = Provider(loader, cache, window=(START, START + DAY))
     entries = p.prefetch()
     assert len(entries) == 1 and entries[0].status == "hit"
+
+
+def test_prefetch_reaches_the_record_at_the_window_end(cache):
+    """With no ``end`` a record is at the window end, which
+    ``refresh_times_closed`` refreshes at, so ``prefetch`` warms its file too
+    (spec/esm-sources.md §2.6): here the next day's, which the corpus lacks."""
+    temporal = SourceTemporal(start=START, frequency=HOUR, file_period=DAY)
+    loader = DataSource(
+        "era5", "netcdf", "https://data.earthsci.dev/era5/%Y/%m/%Y%m%d.nc", temporal=temporal
+    )
+    p = Provider(loader, cache, window=(START, START + DAY))
+    assert p.refresh_times_closed()[-1] == START + DAY
+    assert p.window_records()[-1] == START + DAY
+    with pytest.raises(CacheMiss) as err:
+        p.prefetch()
+    assert err.value.resolved_url == "https://data.earthsci.dev/era5/2018/11/20181109.nc"
 
 
 def test_prefetch_enumerates_file_anchors_and_dedups(cache):
@@ -362,7 +380,9 @@ def test_prefetch_enumerates_file_anchors_and_dedups(cache):
         DataSource("era5", "netcdf", url_for, temporal=temporal), cache, window=(_utc(0), _utc(2))
     )
     entries = p.prefetch()
-    assert seen == [_utc(0), _utc(1)]  # one anchor per file period across the window
+    # One anchor per file period across the window, and the file of the record
+    # at its end, which a run over the closed window refreshes at.
+    assert seen == [_utc(0), _utc(1), _utc(2)]
     assert len(entries) == 1  # collapsed to a single unique fetch
     assert entries[0].status == "hit"
 

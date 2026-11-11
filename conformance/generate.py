@@ -2727,23 +2727,31 @@ def _calendar_window_case(cid, start, end, freq, fp, rps, lower, upper, note):
     )
     if hi <= lo or lo < st or (en is not None and hi > en):
         return case | {"error": "esm_window_uncovered"}
-    # The record in effect at the window start, each one after it inside the
-    # window, and for a bracket the next one unless it is at or past `end`.
+
+    # The records in effect at some time of the closed window [lo, hi] that
+    # exist (anchored before `end`): the one in effect at the window start, each
+    # one after it up to and including one at `hi`. Then, for a bracket, the
+    # next one unless it is at or past `end`.
+    def exists(r):
+        return en is None or _cal_anchor(st, fm, fs, r) < en
+
     k = _cal_floor(st, fm, fs, lo)
     records = [k]
-    while _cal_anchor(st, fm, fs, records[-1] + 1) < hi:
+    while _cal_anchor(st, fm, fs, records[-1] + 1) <= hi and exists(records[-1] + 1):
         records.append(records[-1] + 1)
-    nxt = _cal_anchor(st, fm, fs, records[-1] + 1)
-    if rps == 2 and (en is None or nxt < en):
+    if rps == 2 and exists(records[-1] + 1):
         records.append(records[-1] + 1)
-    refresh = [r for r in records if lo <= _cal_anchor(st, fm, fs, r) < hi]
-    refresh_closed = [_cal_s(_cal_anchor(st, fm, fs, r)) for r in refresh]
-    if _cal_closes(st, fm, fs, hi, end):
-        refresh_closed.append(_cal_s(hi))
+    anchors = [_cal_anchor(st, fm, fs, r) for r in records]
+    refresh = [_cal_s(a) for a in anchors if lo <= a < hi]
+    refresh_closed = [_cal_s(a) for a in anchors if lo <= a <= hi]
     return case | {
-        "window_records_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in records],
-        "refresh_times_s": [_cal_s(_cal_anchor(st, fm, fs, r)) for r in refresh],
+        "window_records_s": [_cal_s(a) for a in anchors],
+        "refresh_times_s": refresh,
         "refresh_times_closed_s": refresh_closed,
+        # A PrefetchGroup over this one provider: its epochs start at the
+        # window start and at each refresh time over the closed window
+        # (spec/prefetch.md section 3.2).
+        "boundaries_s": sorted({_cal_s(lo), *refresh_closed}),
     }
 
 
@@ -2863,7 +2871,11 @@ def emit_calendar_scenario():
             "refresh_times_s": [s(2015, 11), s(2015, 12), s(2016, 1), s(2016, 2)],
             # The files are 2015 and 2016 only. A bracket over a window in the
             # last month of 2016 also reads January 2017 (spec/esm-sources.md
-            # §2.6), so prefetching it reaches for the 2017 file.
+            # §2.6), so prefetching it reaches for the 2017 file. So does a
+            # window ending on 2017-01-01 with no `end`: a run over it refreshes
+            # there (refresh_times_closed), and with an `end` there it does not.
+            # A window ending on 2016-12-01 reads December from the 2016 file,
+            # and with a bracket its successor, January 2017.
             "prefetch": [
                 {
                     "window_s": [s(2016, 12, 5), s(2016, 12, 10)],
@@ -2882,6 +2894,30 @@ def emit_calendar_scenario():
                     "records_per_sample": 2,
                     "open_ended": False,
                     "missing_url": None,
+                },
+                {
+                    "window_s": [s(2016, 11), s(2017, 1)],
+                    "records_per_sample": 1,
+                    "open_ended": True,
+                    "missing_url": CALENDAR_BASE + "/ceds_so2_2017.nc",
+                },
+                {
+                    "window_s": [s(2016, 11), s(2017, 1)],
+                    "records_per_sample": 1,
+                    "open_ended": False,
+                    "missing_url": None,
+                },
+                {
+                    "window_s": [s(2016, 6), s(2016, 12)],
+                    "records_per_sample": 1,
+                    "open_ended": True,
+                    "missing_url": None,
+                },
+                {
+                    "window_s": [s(2016, 6), s(2016, 12)],
+                    "records_per_sample": 2,
+                    "open_ended": True,
+                    "missing_url": CALENDAR_BASE + "/ceds_so2_2017.nc",
                 },
             ],
             "samples": [
@@ -2926,11 +2962,13 @@ def emit_calendar_scenario():
                 "at `t_s` (array values in file dimension order; with records_per_sample "
                 "2 the time dimension comes first and its coordinate is `time_s`). "
                 "`windows` (spec/esm-sources.md section 2.6): a provider over the run "
-                "window `window_s` (half-open) with the given cadence, `end` and "
+                "window `window_s` with the given cadence, `end` and "
                 "`records_per_sample` is either refused with the error code `error` "
-                "or is served by the records anchored at `window_records_s`, "
-                "refreshes at `refresh_times_s` and, over the closed window, at "
-                "`refresh_times_closed_s`. A provider's `prefetch` entries: "
+                "or is served by the records anchored at `window_records_s` (those "
+                "of the closed window), refreshes at `refresh_times_s` and, over the "
+                "closed window, at `refresh_times_closed_s`, and a PrefetchGroup "
+                "over it alone has the boundaries `boundaries_s`. A provider's "
+                "`prefetch` entries: "
                 "offline over the corpus cache, prefetching `window_s` with "
                 "`records_per_sample` (and no `end` when `open_ended`) succeeds, or "
                 "is a cache miss for `missing_url` when it is given."

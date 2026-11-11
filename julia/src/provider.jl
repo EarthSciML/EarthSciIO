@@ -104,15 +104,17 @@ end
 # What a provider built from a `SourceTemporal` keeps (spec/esm-sources.md
 # §2.4): the cadence, from which every sample is located on the calendar — any
 # `t` at or after `temporal.start`, inside the window or not, as in Python and
-# Rust — and the window `[lo, hi)` that `refresh_times` and `prefetch` walk. The
-# record of an anchor in its file is found when the file is read, by the file's
-# own time axis (§2.5, `_temporal_sample`); `axes` keeps the decoded axes of the
-# last two files read, so a file's axis is decoded once however many samples it
-# serves.
+# Rust — and the window `[lo, hi)` that `refresh_times` and `prefetch` walk.
+# `closing` is the record at `hi` itself when there is one (`_closing_record`),
+# which the closed window `[lo, hi]` adds. The record of an anchor in its file is
+# found when the file is read, by the file's own time axis (§2.5,
+# `_temporal_sample`); `axes` keeps the decoded axes of the last two files read,
+# so a file's axis is decoded once however many samples it serves.
 struct _TemporalPlan
     temporal::SourceTemporal
     lo::DateTime
     hi::DateTime
+    closing::Union{Nothing, DateTime}
     axes::Vector{Pair{DateTime, Any}}
     lock::ReentrantLock
 end
@@ -182,45 +184,66 @@ function _temporal_plan(temporal::SourceTemporal, window)
         k += 1
         a = period_anchor(f, s, k)
     end
-    return _TemporalPlan(temporal, lo, hi, Pair{DateTime, Any}[], ReentrantLock()), ticks
+    closing = _closing_record(temporal, hi)
+    return _TemporalPlan(temporal, lo, hi, closing, Pair{DateTime, Any}[], ReentrantLock()), ticks
 end
 
-# The anchors (`DateTime`) of the records serving `[lo, hi)` (spec/esm-sources.md
-# §2.6): the one in effect at `lo`, each one after it while `< hi` and, for a
-# two-record bracket, the successor of the last of them unless at or past `stop`.
-function _window_records(temporal::SourceTemporal, lo::DateTime, hi::DateTime, bracket::Bool)
-    f, s = temporal.frequency, temporal.start
-    k = period_floor(f, s, lo)
+# The anchors (`DateTime`) of the records serving the run window of `plan`
+# (spec/esm-sources.md §2.6): the one in effect at `lo`, each one after it while
+# `< hi`, then `_end_records`.
+function _window_records(plan::_TemporalPlan, bracket::Bool)
+    f, s = plan.temporal.frequency, plan.temporal.start
+    k = period_floor(f, s, plan.lo)
     out = DateTime[period_anchor(f, s, k)]
     a = period_anchor(f, s, k + 1)
-    while a < hi
+    while a < plan.hi
         push!(out, a)
         k += 1
         a = period_anchor(f, s, k + 1)
     end
+    return append!(out, _end_records(plan, bracket))
+end
+
+# The records the run window of `plan` needs at or after its end `hi`
+# (spec/esm-sources.md §2.6, items 3 and 4): the record at `hi` itself when there
+# is one (`plan.closing`, the refresh at the window end that
+# `refresh_times_closed` adds), then, for a two-record bracket, the successor of
+# the last record, unless it is at or past `stop`.
+function _end_records(plan::_TemporalPlan, bracket::Bool)
+    s, closing = plan.temporal, plan.closing
+    out = closing === nothing ? DateTime[] : DateTime[closing]
     if bracket
-        nxt = _bracket_successor(temporal, hi)
+        after = closing === nothing ? plan.hi : next_record_anchor(s, closing)
+        nxt = _bracket_successor(s, after)
         nxt === nothing || push!(out, nxt)
     end
     return out
 end
 
-# The record a two-record bracket needs past the end `hi` of a window: the first
-# anchor at or after `hi` — the successor of the last record in the window —
-# unless it is at or past `stop` (spec/esm-sources.md §2.6).
+# `hi` when a record is anchored there — it is a cadence anchor before `stop` —
+# else `nothing`: the refresh a closed window `[lo, hi]` adds
+# (spec/esm-sources.md §2.3).
+_closing_record(temporal::SourceTemporal, hi::DateTime) =
+    _bracket_successor(temporal, hi) == hi ? hi : nothing
+
+# The first record anchor at or after `hi`, unless it is at or past `stop` (no
+# record is there): the record a two-record bracket needs past a window ending
+# at `hi` (spec/esm-sources.md §2.6).
 function _bracket_successor(temporal::SourceTemporal, hi::DateTime)
     nxt = first_record_anchor_from(temporal, hi)
     return temporal.stop === nothing || nxt < temporal.stop ? nxt : nothing
 end
 
-# Where `p`'s sample can change over its run window: its refresh times and, for
-# a `temporal` provider, the window start, where the record in effect there
-# takes over (spec/esm-sources.md §2.6) — the schedule a `PrefetchGroup` builds
-# its epochs from (spec/prefetch.md §3.2).
+# Where `p`'s sample can change over its run window: its refresh times over the
+# closed window (`refresh_times_closed`, so a run that ends on a record gets an
+# epoch at its end) and, for a `temporal` provider, the window start, where the
+# record in effect there takes over (spec/esm-sources.md §2.6) — the schedule a
+# `PrefetchGroup` builds its epochs from (spec/prefetch.md §3.2).
 function _epoch_starts(p::Provider)
-    p.plan === nothing && return copy(p.times)
+    times = refresh_times_closed(p)
+    p.plan === nothing && return times
     lo = _unix((p.plan::_TemporalPlan).lo)
-    return !isempty(p.times) && first(p.times) == lo ? copy(p.times) : vcat(lo, p.times)
+    return !isempty(times) && first(times) == lo ? times : pushfirst!(times, lo)
 end
 
 function Provider(
@@ -409,13 +432,8 @@ as it does for a provider over a caller-made `times` grid, which has no window."
 function refresh_times_closed(p::Provider)
     times = refresh_times(p)
     p.plan === nothing && return times
-    plan = p.plan::_TemporalPlan
-    temporal, hi = plan.temporal, plan.hi
-    f, s = temporal.frequency, temporal.start
-    at_anchor = period_anchor(f, s, period_ceil(f, s, hi)) == hi
-    if at_anchor && (temporal.stop === nothing || hi < temporal.stop)
-        push!(times, _unix(hi))
-    end
+    closing = (p.plan::_TemporalPlan).closing
+    closing === nothing || push!(times, _unix(closing))
     return times
 end
 
@@ -424,9 +442,11 @@ end
 
 The anchors, in Unix seconds, of the records that serve a `temporal`
 provider's run window, in order (spec/esm-sources.md §2.6): the record in
-effect at the window start, every record whose anchor is inside the window and,
-with `records_per_sample = 2`, the record after the window that the bracket of
-its last interval reads (unless that is at or past the source's `stop`).
+effect at the window start, every record whose anchor is inside the window, the
+record at the window end itself when there is one (the refresh
+[`refresh_times_closed`](@ref) adds) and, with `records_per_sample = 2`, the
+record after the last of these that its bracket reads (unless that is at or
+past the source's `stop`).
 
 Unlike [`refresh_times`](@ref) it is never empty for a `temporal` provider: a
 window inside one record's interval has no refresh times and is served by that
@@ -436,7 +456,7 @@ function window_records(p::Provider)
     plan = p.plan::_TemporalPlan
     return Float64[
         _unix(a) for a in
-            _window_records(plan.temporal, plan.lo, plan.hi, p.records_per_sample == 2)
+            _window_records(plan, p.records_per_sample == 2)
     ]
 end
 
@@ -1113,9 +1133,9 @@ end
 
 # A `temporal` provider's files over its window, as Python's and Rust's
 # `prefetch`: each file anchor (Unix seconds) from the one at or before `lo`
-# while before `hi` and, for a two-record bracket, the file of the record after
-# the window, which the bracket of its last interval reads (spec/esm-sources.md
-# §2.6).
+# while before `hi`, then the files of the records past the window it needs
+# (`_end_records`): the record at `hi`, which `refresh_times_closed` refreshes
+# at, and a two-record bracket's successor (spec/esm-sources.md §2.6).
 function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
     s, F = plan.temporal, plan.temporal.file_period
     k = period_floor(F, s.start, plan.lo)
@@ -1126,9 +1146,8 @@ function _plan_file_times(plan::_TemporalPlan, bracket::Bool = false)
         k += 1
         a = period_anchor(F, s.start, k)
     end
-    nxt = bracket ? _bracket_successor(s, plan.hi) : nothing
-    if nxt !== nothing
-        fa = _unix(file_anchor(s, nxt))
+    for r in _end_records(plan, bracket)
+        fa = _unix(file_anchor(s, r))
         (isempty(out) || last(out) != fa) && push!(out, fa)
     end
     return out

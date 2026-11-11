@@ -96,14 +96,14 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                     end
                 end
                 # A group's epochs are the window start (where the record in
-                # effect there takes over) and the refresh times, nothing
-                # outside the window.
+                # effect there takes over) and the refresh times over the
+                # closed window, nothing outside it.
                 g = PrefetchGroup(Dict("x" => p))
                 @test boundaries(g) ==
-                    sort!(unique!(vcat(Float64(src["window_s"][1]), refresh_times(p))))
+                    sort!(unique!(vcat(Float64(src["window_s"][1]), refresh_times_closed(p))))
                 # `prefetch` warms the files over the window, as Python and Rust do.
                 @test length(prefetch(p)) == length(
-                    unique(file_anchor(temporal, t) for t in refresh_times(p))
+                    unique(file_anchor(temporal, t) for t in refresh_times_closed(p))
                 )
             end
         end
@@ -140,10 +140,9 @@ _cal_corder(a::AbstractArray) = vec(permutedims(a, reverse(1:ndims(a))))
                 # when a record is there (spec/esm-sources.md §2.3).
                 @test refresh_times_closed(p) == Float64.(c["refresh_times_closed_s"])
                 # A group schedules it even with no refresh times: its first
-                # epoch starts at the window start (spec/prefetch.md §3.2).
-                @test boundaries(PrefetchGroup(Dict("x" => p))) == sort!(
-                    unique!(vcat(Float64(c["window_s"][1]), Float64.(c["refresh_times_s"])))
-                )
+                # epoch starts at the window start, and a run ending on a
+                # record has an epoch at its end (spec/prefetch.md §3.2).
+                @test boundaries(PrefetchGroup(Dict("x" => p))) == Float64.(c["boundaries_s"])
             end
         end
     end
