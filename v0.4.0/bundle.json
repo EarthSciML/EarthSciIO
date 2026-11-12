@@ -1,0 +1,22 @@
+{
+  "id": "io",
+  "title": "EarthSciIO",
+  "description": "Data-provider library: URL download, a shared content-addressed cache, and native-grid readers for Python, Julia and Rust.",
+  "repo": "EarthSciML/EarthSciIO",
+  "nav": [
+    {
+      "title": "Overview",
+      "path": "overview/"
+    },
+    {
+      "title": "Spec",
+      "path": "generated/spec/"
+    },
+    {
+      "title": "API",
+      "path": "generated/api/"
+    }
+  ],
+  "sha": "770dbc22d557e6e2ae87d9bccd7386f45764e9d0",
+  "version": "v0.4.0"
+}
